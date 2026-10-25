@@ -84,6 +84,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
     ball: { r: 7, density: 1, restitution: 0.4, friction: 0.1, maxOnField: 5,
             laneRestSpeed: 0.3,   // m/s。レールの底でこれより遅い玉は待機中とみなす
+            maxSpeed: 22,           // m/s。台の上の玉の速さの上限
             stuckSpeed: 0.4, stuckSec: 1.2, unstickKick: 6 }, // 台の上でこの速さ未満が stuckSec 続いたら弾き出す（m/s）
     gravity: 14,               // m/s^2（台の傾きを含めた見かけの重力）
 
@@ -107,6 +108,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       restitution: 0.6,
       boost: 1.1,              // ブロックで跳ね返る速さ = 入ってきた速さ × boost（以上）
       kickMin: 7,              // m/s。ブロックで跳ね返る速さの最低値（ゆっくり落ちても必ず跳ねる）
+      english: 5,              // m/s。ブロックの端に当たったときに足す横向きの速さ（中心で0）
+      jitterDeg: 10,           // 跳ね返る向きのランダムな揺らぎ（±度）
       startRows: 4,            // 始まったときにある列数
     },
 
@@ -653,9 +656,21 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       let nx = bp.x - qx, ny = bp.y - qy;
       const d = Math.hypot(nx, ny);
       if (d < 1e-6) { nx = 0; ny = bp.y < cp.y ? -1 : 1; } else { nx /= d; ny /= d; }
-      const lv = bb.getLinearVelocity(), vn = lv.x * nx + lv.y * ny;
+      let lv = bb.getLinearVelocity();
+      const vn = lv.x * nx + lv.y * ny;
       const want = Math.max(k.inSpeed * cfg.blocks.boost, cfg.blocks.kickMin);
-      if (vn < want) bb.setLinearVelocity(Vec2(lv.x + (want - vn) * nx, lv.y + (want - vn) * ny));
+      let vx = lv.x, vy = lv.y;
+      if (vn < want) { vx += (want - vn) * nx; vy += (want - vn) * ny; }
+      // 当たった位置で角度を変える（ブロック崩しのパドルと同じ。端に当たるほど横へ）＋少しの揺らぎ
+      // 上下の面なら横へ、左右の面なら縦へ。中心からのずれ（-1..1）に比例
+      if (Math.abs(ny) >= Math.abs(nx)) vx += ((bp.x - cp.x) / hw) * cfg.blocks.english;
+      else vy += ((bp.y - cp.y) / hh) * cfg.blocks.english;
+      const sp = Math.hypot(vx, vy);
+      const jit = (Math.random() - 0.5) * 2 * cfg.blocks.jitterDeg * Math.PI / 180;
+      const c = Math.cos(jit), s = Math.sin(jit);
+      [vx, vy] = [vx * c - vy * s, vx * s + vy * c];
+      const sp2 = Math.hypot(vx, vy) || 1;
+      bb.setLinearVelocity(Vec2(vx / sp2 * sp, vy / sp2 * sp)); // 速さは保ち、向きだけ変える
       bb.setAwake(true);
     }
 
@@ -678,11 +693,21 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       }
     }
 
+    // 台の上の玉の速さに上限（打ち出しレールの中は除く。届かなくなるため）
+    function capSpeed() {
+      for (const body of balls.values()) {
+        if (body.getPosition().x * S > L.laneL) continue;
+        const lv = body.getLinearVelocity(), sp = lv.length();
+        if (sp > BA.maxSpeed) body.setLinearVelocity(Vec2(lv.x / sp * BA.maxSpeed, lv.y / sp * BA.maxSpeed));
+      }
+    }
+
     function step(dt) {
       time += dt;
       world.step(dt, 8, 3);
       applyKicks();
       unstick(dt);
+      capSpeed();
       for (const [id, body] of balls) {
         const p = body.getPosition(), x = p.x * S, y = p.y * S;
         if (y > L.drainY) {
@@ -1750,6 +1775,9 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     ['fx.trail', '玉の尾', 0, 3, 0.1],
     ['fx.particleMax', '粒の上限（再生成）', 100, 5000, 100],
     ['gravity', '重力', 6, 30, 0.5],
+    ['ball.maxSpeed', '玉の最高速度', 10, 50, 1],
+    ['blocks.english', 'ブロックの端で横へ曲がる強さ', 0, 15, 0.5],
+    ['blocks.jitterDeg', '跳ね返りの揺らぎ（度）', 0, 30, 1],
     ['blocks.boost', 'ブロックで跳ねる倍率', 0.8, 1.6, 0.05],
     ['blocks.kickMin', 'ブロックで跳ねる最低の速さ', 0, 15, 0.5],
     ['plunger.maxSpeed', '打ち出しの最大速度', 15, 45, 1],
