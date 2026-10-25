@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>probe — ドーパミン・ピンボール実機確認</title>
+<style>
+html, body { margin: 0; height: 100%; background: #0b0b18; color: #eee; font: 14px/1.5 system-ui, sans-serif; overflow: hidden; }
+body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
+canvas { position: fixed; inset: 0; width: 100vw; height: 100dvh; }
+#panel { position: fixed; left: 8px; right: 8px; top: 8px; background: rgba(0,0,0,.6); padding: 8px 10px; border-radius: 8px; pointer-events: none; }
+#panel b { color: #ffd54a; }
+#btns { position: fixed; left: 8px; right: 8px; bottom: 12px; display: flex; gap: 6px; flex-wrap: wrap; }
+#btns button { flex: 1; min-width: 30%; padding: 12px 4px; font-size: 14px; border: 0; border-radius: 8px; background: #2a2a4a; color: #fff; }
+#btns button.on { background: #6a3cff; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="panel">
+  <div>1. 指の数: <b id="touches">0</b>（左右同時に押して 2 になるか）</div>
+  <div>2. 長押し: <b id="hold">-</b></div>
+  <div>3. 音: <b id="audio">まだ（どこかを1回タップ）</b></div>
+  <div>4. 粒: <b id="count">0</b> 個 / <b id="fps">-</b> fps / 判定 <b id="verdict">-</b></div>
+  <div>5. スクロール・ズームが起きなければOK</div>
+</div>
+<div id="btns">
+  <button data-n="200">200</button><button data-n="500">500</button><button data-n="1000">1000</button>
+  <button data-n="2000">2000</button><button data-n="4000">4000</button><button id="auto">自動で測る</button>
+  <button id="beep">音をもう一度</button>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const cv = $('c'), g = cv.getContext('2d');
+let W, H, dpr;
+function resize() { dpr = devicePixelRatio || 1; W = innerWidth; H = innerHeight; cv.width = W * dpr; cv.height = H * dpr; g.setTransform(dpr, 0, 0, dpr, 0, 0); }
+addEventListener('resize', resize); resize();
+
+// 1・2: タッチ
+const fingers = new Map();
+function onTouch(e) {
+  for (const t of e.changedTouches) {
+    if (e.type === 'touchstart') fingers.set(t.identifier, { x: t.clientX, y: t.clientY, t0: performance.now() });
+    else if (e.type === 'touchmove') { const f = fingers.get(t.identifier); if (f) { f.x = t.clientX; f.y = t.clientY; } }
+    else fingers.delete(t.identifier);
+  }
+  $('touches').textContent = fingers.size;
+  e.preventDefault();
+}
+['touchstart', 'touchmove', 'touchend', 'touchcancel'].forEach((n) => cv.addEventListener(n, onTouch, { passive: false }));
+
+// 3: 音（最初のユーザー操作で開始）
+let ac = null;
+function beep(freq = 660) {
+  if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+  ac.resume();
+  const o = ac.createOscillator(), v = ac.createGain();
+  o.type = 'square'; o.frequency.value = freq;
+  v.gain.setValueAtTime(0.2, ac.currentTime); v.gain.exponentialRampToValueAtTime(0.001, ac.currentTime + 0.25);
+  o.connect(v).connect(ac.destination); o.start(); o.stop(ac.currentTime + 0.25);
+  $('audio').textContent = '鳴らした（' + ac.state + '）。聞こえた？ マナースイッチONでも試す';
+}
+addEventListener('pointerdown', () => { if (!ac) beep(); }, { once: true });
+$('beep').onclick = () => beep(880);
+
+// 4: 粒（加算合成）
+let target = 200;
+const P = [];
+function spawn(n) {
+  while (P.length < n) P.push({ x: Math.random() * W, y: Math.random() * H, vx: (Math.random() - .5) * 300, vy: (Math.random() - .5) * 300, h: Math.random() * 360 });
+  P.length = n;
+}
+document.querySelectorAll('[data-n]').forEach((b) => b.onclick = () => { target = +b.dataset.n; stopAuto(); mark(b); });
+function mark(b) { document.querySelectorAll('#btns button').forEach((x) => x.classList.toggle('on', x === b)); }
+
+// 自動で測る: 粒を増やしていき、55fps を割る直前の数を出す
+let auto = null;
+function stopAuto() { auto = null; }
+$('auto').onclick = (e) => { auto = { n: 100, t: 0, best: 0 }; target = 100; mark(e.target); $('verdict').textContent = '測定中…'; };
+
+let last = performance.now(), frames = 0, acc = 0, fps = 60;
+function loop(now) {
+  const dt = Math.min(0.05, (now - last) / 1000); last = now;
+  frames++; acc += dt;
+  if (acc >= 0.5) {
+    fps = frames / acc; frames = 0; acc = 0; $('fps').textContent = fps.toFixed(0);
+    if (auto) {
+      auto.t += 0.5;
+      if (auto.t >= 1.5) { // 1.5秒ごとに判定
+        if (fps >= 55) { auto.best = auto.n; auto.n = Math.round(auto.n * 1.4); target = auto.n; auto.t = 0; }
+        else { $('verdict').textContent = '60fps を保てる上限 ≒ ' + auto.best + ' 個'; target = auto.best; stopAuto(); }
+        if (auto && auto.n > 20000) { $('verdict').textContent = '20000 個超でも余裕'; stopAuto(); }
+      }
+    }
+  }
+  spawn(target); $('count').textContent = P.length;
+
+  g.globalCompositeOperation = 'source-over';
+  g.fillStyle = '#0b0b18'; g.fillRect(0, 0, W, H);
+  g.globalCompositeOperation = 'lighter';
+  for (const p of P) {
+    p.x += p.vx * dt; p.y += p.vy * dt;
+    if (p.x < 0 || p.x > W) p.vx *= -1;
+    if (p.y < 0 || p.y > H) p.vy *= -1;
+    g.fillStyle = `hsla(${p.h},90%,60%,0.6)`;
+    g.beginPath(); g.arc(p.x, p.y, 4, 0, 6.283); g.fill();
+  }
+  g.globalCompositeOperation = 'source-over';
+  for (const [, f] of fingers) {
+    const held = (now - f.t0) / 1000;
+    g.strokeStyle = held > 0.4 ? '#ffd54a' : '#fff'; g.lineWidth = 3;
+    g.beginPath(); g.arc(f.x, f.y, 36 + Math.min(held, 1) * 20, 0, 6.283); g.stroke();
+  }
+  const longest = Math.max(0, ...[...fingers.values()].map((f) => (now - f.t0) / 1000));
+  $('hold').textContent = fingers.size ? longest.toFixed(1) + ' 秒' : '-';
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
