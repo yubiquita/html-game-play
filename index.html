@@ -153,7 +153,9 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       chainWindowSec: 3,       // 同じ側の前の爆発から何秒以内の再爆発を連鎖とみなすか
       drainMultKeep: 0.8,      // 玉を落としたとき倍率を何倍に減らすか（切り捨て、最低 ×1。0 なら ×1 に戻す）
       drainRows: 2,            // 玉を落としたら、すぐに生えるブロックの列数（ペナルティ）
-      drainOjama: false,       // 玉を落としたら、おじゃま破片も入れるか
+      drainOjama: false,
+      cashMultPer: 1,          // 上をタップして玉を半分にしたとき、消した玉1個あたり増える倍率
+      cashRowsPer: 0.5,        // 同じく消した玉1個あたり増える列数（合計は切り上げ。落とすと1個 drainRows 列）       // 玉を落としたら、おじゃま破片も入れるか
       clearBonus: 300,         // 全消しのボーナス（× 倍率）
       clearGadgets: { peg: 4, bumper: 1, sling: 1 }, // 全消しで即座に増える役物
       clearRows: 2,            // 全消しのあと、すぐに生やす列数
@@ -396,6 +398,17 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       return ev;
     }
 
+    // 玉を自分で減らす（換金）。消した玉の数に応じて倍率が上がる。段の増加は呼ぶ側（spawner.forceRows）
+    function cashOut(removed) {
+      if (state.over || !removed.length) return [];
+      const gain = Math.round(removed.length * RU.cashMultPer);
+      state.mult += gain;
+      const ev = [];
+      for (const r of removed) ev.push(...ballGone(r.id));
+      ev.push({ type: 'cashOut', n: removed.length, gain, mult: state.mult, balls: removed });
+      return ev;
+    }
+
     function drain(side) {
       if (state.over) return [];
       // 倍率は ×1 に戻さず、drainMultKeep 倍に減らす（切り捨て、1 より下にはしない）。玉が多いと落ちるのは当たり前なので
@@ -448,7 +461,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
     return {
       useGauge, release, comboReset, blockHitBy, flipperHit, ballGone, blocksOver, pierceEnded,
-      allClear, state, addFragment, blockBroken, fragmentsTouch, gadgetHit, drain, tick };
+      allClear, state, addFragment, blockBroken, fragmentsTouch, gadgetHit, drain, cashOut, tick };
   }
 
   Game.rules = { create, pickIndex };
@@ -838,6 +851,15 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     }
     const ballCount = () => balls.size;
 
+    // 下にある（落ちそうな）玉から n 個消す。穴に捕まっている玉は除く。消した玉 [{ id, x, y }] を返す
+    function removeLowestBalls(n) {
+      const list = [...balls].filter(([id]) => !captured.has(id))
+        .map(([id, b]) => ({ id, b, x: b.getPosition().x * S, y: b.getPosition().y * S }))
+        .sort((a, c) => c.y - a.y).slice(0, n);
+      for (const r of list) { world.destroyBody(r.b); balls.delete(r.id); holeCooldown.delete(r.id); }
+      return list.map(({ id, x, y }) => ({ id, x, y }));
+    }
+
     // 役物に当たった玉を弾く（コールバック内では速度をいじらない）
     function applyKicks() {
       for (const k of kicks.splice(0, kicks.length)) {
@@ -1123,7 +1145,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
     return {
       captureBall, holePos,
-      world, step, drainEvents, setFlipper, serveBall, addBall, ballCount, splitBall, setPierce, setHyper,
+      world, step, drainEvents, setFlipper, serveBall, addBall, ballCount, removeLowestBalls, splitBall, setPierce, setHyper,
       syncBlocks, addGadget, removeGadget, addFragment, removeFragments, mergeFragment, tankTopY, snapshot, sideOf,
     };
   }
@@ -1388,9 +1410,22 @@ canvas { display: block; width: 100vw; height: 100dvh; }
               if (on('background')) { dangerA = 1; }
               popup(V.w / 2, cfg.blocks.firstRowY + 30, `+${e.n} ROWS`, '#ff5a5a', 28, 1.1);
               for (let i = 0; i < 24; i++) burst(L.fieldL + Math.random() * (L.fieldR - L.fieldL), cfg.blocks.firstRowY, 1, 200, 0, 0.5, 3, 400, 1.2, Math.PI / 2);
+            } else if (e.reason === 'cash') {
+              shake(0.25); sink = 6 + 3 * e.n;
+              popup(V.w / 2, cfg.blocks.firstRowY + 30, `+${e.n} ROWS`, '#ff9a6b', 20, 0.9);
             } else {
               sink = 6;
             }
+            break;
+          case 'cashOut':
+            // 消した玉が金の粒になって倍率へ吸い込まれる
+            multPop = 1; stop(0.05);
+            for (const b of e.balls) {
+              burst(b.x, b.y, 14, 160, 50, 0.45, 3);
+              const dx = V.w / 2 - b.x, dy = L.hudH / 2 - b.y;
+              burst(b.x, b.y, 6, Math.hypot(dx, dy) * 1.6, 50, 0.6, 3, 0, 0.3, Math.atan2(dy, dx));
+            }
+            popup(V.w / 2, 125, `CASH +×${e.gain}`, '#ffd54a', 22 + Math.min(16, e.gain * 2), 1.0);
             break;
           case 'allClear':
             stop(0.08); shake(0.4); doFlash(0.5, 55);
@@ -1784,6 +1819,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
             for (let i = 0; i < 6; i++) tone(noteHz(8 + i * 2), { type: 'sawtooth', vol: 0.08, dec: 0.2, delay: 0.05 * i });
             break;
           case 'forceRows':
+            if (e.reason === 'cash') tone(80, { type: 'sine', vol: 0.4, dec: 0.25, slide: 0.5, delay: 0.25 });
             if (e.reason === 'drain') for (let i = 0; i < e.n; i++) { tone(70 - i * 10, { type: 'sine', vol: 0.6, dec: 0.3, slide: 0.5, delay: 0.12 * i }); noise({ vol: 0.25, dec: 0.15, freq: 300, type: 'lowpass', delay: 0.12 * i }); }
             break;
           case 'allClear':
@@ -1792,6 +1828,10 @@ canvas { display: block; width: 100vw; height: 100dvh; }
             break;
           case 'multiball':
             for (let i = 0; i < 6; i++) tone(noteHz(15 + i), { type: 'square', vol: 0.07, dec: 0.1, delay: 0.05 * i });
+            break;
+          case 'cashOut':
+            for (let i = 0; i < Math.min(8, e.n); i++) tone(noteHz(12 + i * 2), { type: 'triangle', vol: 0.12, dec: 0.12, delay: 0.035 * i });
+            tone(noteHz(5 + Math.min(e.mult, 15)), { type: 'square', vol: 0.1, dec: 0.25, delay: 0.035 * Math.min(8, e.n) });
             break;
           case 'drain':
             pegRun = 0; pegT = 0;
@@ -1860,7 +1900,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
   const Game = (window.Game = window.Game || {});
 
   Game.input = {
-    // handlers: { flipper(side, up), tap(x, y), secret() }
+    // handlers: { flipper(side, up), tap(x, y), secret(), cash() }
     attach(canvas, handlers) {
       const pointers = new Map(); // pointerId -> { role, t0, x, y }
       const flipperHold = { left: 0, right: 0 }; // 押している指の数
@@ -1877,11 +1917,13 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         const p = Game.render.toLogical(e.clientX, e.clientY);
         let role;
         if (p.x < 50 && p.y < 50) role = 'secret';
+        else if (p.y < Game.config.layout.fieldTop) role = 'cash'; // 画面の上（スコアの帯）は玉の換金
         else role = p.x < Game.config.view.w / 2 ? 'left' : 'right';
         pointers.set(e.pointerId, { role, t0: performance.now(), x: p.x, y: p.y });
         handlers.tap(p.x, p.y);
         if (role === 'left' || role === 'right') setFlipper(role, +1);
         else if (role === 'secret') setFlipper('left', +1);
+        else if (role === 'cash' && handlers.cash) handlers.cash();
       }
 
       function up(e) {
@@ -1907,6 +1949,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       }, 100);
 
       // PC（デバッグ用）: Z / ← 左、/ / → 右
+      // PC: ↑ / Space で換金
+      addEventListener('keydown', (e) => { if ((e.code === 'ArrowUp' || e.code === 'Space') && !e.repeat && handlers.cash) handlers.cash(); });
       const keyMap = { KeyZ: 'left', ArrowLeft: 'left', Slash: 'right', ArrowRight: 'right' };
       const keysDown = new Set();
       addEventListener('keydown', (e) => {
@@ -2215,8 +2259,19 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       g.textAlign = 'center'; g.fillStyle = st.mult > 1 ? '#ffd54a' : 'rgba(255,255,255,0.6)';
       g.font = 'bold 24px system-ui'; g.fillText('×' + st.mult, 0, 0);
       g.restore();
-      g.textAlign = 'right'; g.fillStyle = 'rgba(255,255,255,0.6)'; g.font = '14px system-ui';
-      g.fillText('BEST ' + app.best.toLocaleString(), V.w - 12, L.hudH / 2);
+      // 玉が2つ以上あれば、右上に換金の見込み（タップで半分を倍率に換える）。なければ BEST
+      const nb = app.mode === 'play' && app.phys ? app.phys.ballCount() : 0;
+      g.textAlign = 'right';
+      if (nb >= 2) {
+        const RU = Game.config.rules, k = Math.floor(nb / 2);
+        g.fillStyle = '#ffd54a'; g.font = 'bold 15px system-ui';
+        g.fillText(`TAP ▲ +×${Math.round(k * RU.cashMultPer)}`, V.w - 12, L.hudH / 2 - 9);
+        g.fillStyle = 'rgba(255,154,107,0.9)'; g.font = '12px system-ui';
+        g.fillText(`玉 -${k} / +${Math.ceil(k * RU.cashRowsPer)}段`, V.w - 12, L.hudH / 2 + 9);
+      } else {
+        g.fillStyle = 'rgba(255,255,255,0.6)'; g.font = '14px system-ui';
+        g.fillText('BEST ' + app.best.toLocaleString(), V.w - 12, L.hudH / 2);
+      }
       // ゲージ（合体でたまる）。満タンで光り、穴へ誘う
       const G = Game.config.gauge, gv = app.rules ? app.rules.state.gauge : 0, k = Math.min(1, gv / G.max);
       const full = k >= 1, t = performance.now() / 1000;
@@ -2336,6 +2391,17 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       '　横へ弾く。玉が 2 個ふえる',
       '',
       '倍率は玉を落とすと少し下がる（2割減）。',
+    ] },
+    { title: '換金', lines: [
+      '#画面の上（スコアの帯）をタップ',
+      '台の玉が半分になる。',
+      '落ちそうな（下にある）玉から消える。',
+      '',
+      '[#ffd54a]消した玉 1 個につき 倍率 +1',
+      '[#ff9a6b]ブロックが少しふえる（2 個で 1 段）',
+      '',
+      '落とすと 1 個で 2 段ふえるので、',
+      '捌ききれないと思ったら換金！',
     ] },
     { title: '玉をふやす・貫通', lines: [
       '#分裂',
@@ -2499,6 +2565,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     ['gadgets.bandBottom', '役物が出る帯の下端', 205, 600, 5],
     ['rules.drainMultKeep', '落としたときに残る倍率の割合', 0, 1, 0.05],
     ['rules.drainRows', '落としたときに増える列数', 0, 5, 1],
+    ['rules.cashMultPer', '換金: 消した玉1個で増える倍率', 0, 5, 0.25],
+    ['rules.cashRowsPer', '換金: 消した玉1個で増える列数', 0, 2, 0.25],
     ['rules.clearRows', '全消しのあと生やす列数', 1, 5, 1],
     ['gauge.max', 'ゲージ満タンの量', 5, 150, 5],
     ['hole.amp', '穴が左右に動く幅（px）', 0, 110, 5],
@@ -2732,6 +2800,15 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       }
       case 'ballHit': return e.what === 'flipper' ? R.comboReset(e.ballId).concat(R.flipperHit(e.ballId)) : [];
       case 'fragTouch': return R.fragmentsTouch(e.side, e.a, e.b);
+      // 上をタップ: 落ちそうな玉から半分を消して倍率に換える。少しだけ段が増える
+      case 'cashTap': {
+        const n = P.ballCount();
+        if (n < 2) return [];
+        const out = R.cashOut(P.removeLowestBalls(Math.floor(n / 2)));
+        const rows = Math.ceil(out.length ? out[out.length - 1].n * cfg.rules.cashRowsPer : 0);
+        if (rows > 0) out.push(...S.forceRows(rows, 'cash'));
+        return out;
+      }
       case 'ballDrained': {
         const out = R.ballGone(e.ballId).concat(R.drain(e.side));
         if (out.length) out.push(...S.forceRows(cfg.rules.drainRows, 'drain'));
@@ -2864,6 +2941,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       if (up && app.mode === 'play') dispatch([{ type: 'flip', side }]);
     },
     secret() { if (Game.tuner) Game.tuner.toggle(app); },
+    cash() { if (app.mode === 'play' && app.phys) dispatch([{ type: 'cashTap' }]); },
   };
 
   // --- 起動 ---
