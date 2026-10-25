@@ -979,8 +979,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
     // 溢れ判定に使う山の高さ。タンクの底から「触れ合っている破片」をたどって届くものだけを数える
     // （落ちている途中で別の破片に触れたものは数えない。玉が次々に壊すと破片は上で重なって生まれる）
-    function tankTopY() {
-      const top = { left: Infinity, right: Infinity };
+    function groundedSet() {
       const grounded = new Set(), queue = [];
       for (const body of fragments.values()) {
         const u = body.getUserData();
@@ -996,7 +995,11 @@ canvas { display: block; width: 100vw; height: 100dvh; }
           grounded.add(o); queue.push(o);
         }
       }
-      for (const body of grounded) {
+      return grounded;
+    }
+    function tankTopY() {
+      const top = { left: Infinity, right: Infinity };
+      for (const body of groundedSet()) {
         const u = body.getUserData();
         top[u.side] = Math.min(top[u.side], body.getPosition().y * S - u.r);
       }
@@ -1019,10 +1022,13 @@ canvas { display: block; width: 100vw; height: 100dvh; }
           return { side, ...pivot[side], angle: f.dir > 0 ? a : Math.PI + a, len: L.flipperLen, w: L.flipperW };
         }),
         blocks: [...blocks].map(([id, b]) => { const u = b.getUserData(); return { id, ...pos(b), w: u.w, h: u.h }; }),
-        fragments: [...fragments].map(([id, b]) => {
-          const u = b.getUserData();
-          return { id, side: u.side, ...pos(b), r: u.r, tier: u.tier };
-        }),
+        fragments: (() => {
+          const gs = groundedSet(); // 底からつながっている（溢れ判定に数える）破片
+          return [...fragments].map(([id, b]) => {
+            const u = b.getUserData();
+            return { id, side: u.side, ...pos(b), r: u.r, tier: u.tier, grounded: gs.has(b) };
+          });
+        })(),
         gadgets: [...gadgets].map(([id, b]) => {
           const u = b.getUserData();
           return { id, kind: u.gkind, ...pos(b), r: u.r ?? null, angle: u.angle ?? 0,
@@ -1938,18 +1944,36 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       }
 
       // 破片
+      // 底からつながった破片（＝溢れ判定に数える山）は縁取りで強調し、落ちている途中の破片は半透明にする
       const tanks = app.rules.state.tanks;
+      const C = Game.config, warnY = C.layout.overflowY + C.rules.warnMargin;
+      const pileTop = { left: Infinity, right: Infinity };
+      for (const f of snap.fragments) if (f.grounded) pileTop[f.side] = Math.min(pileTop[f.side], f.y - f.r);
       for (const f of snap.fragments) {
         const info = tanks[f.side].get(f.id);
         const ojama = info && info.ojama;
         const k = fx ? fx.fragScale(f.id) : 1;
+        g.globalAlpha = f.grounded ? 1 : 0.45;
         g.fillStyle = ojama ? OJAMA_COLOR : TIER_COLOR[f.tier] || '#fff';
         g.beginPath(); g.arc(f.x, f.y, f.r * k, 0, TAU); g.fill();
+        if (f.grounded) {
+          g.strokeStyle = pileTop[f.side] < warnY ? '#ff6b6b' : 'rgba(255,255,255,0.75)'; g.lineWidth = 1.5;
+          g.beginPath(); g.arc(f.x, f.y, f.r * k - 0.75, 0, TAU); g.stroke();
+        }
         if (!ojama && f.tier >= 2) {
           g.fillStyle = 'rgba(0,0,0,0.45)';
           g.font = `bold ${Math.round(f.r)}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle';
           g.fillText(f.tier, f.x, f.y + 1);
         }
+        g.globalAlpha = 1;
+      }
+      // 山のてっぺんの線（溢れ線に近づくと赤）
+      for (const side of ['left', 'right']) {
+        const y = pileTop[side];
+        if (!isFinite(y)) continue;
+        const x0 = side === 'left' ? 0 : C.view.w - C.layout.tankW;
+        g.strokeStyle = y < warnY ? '#ff6b6b' : 'rgba(255,255,255,0.5)'; g.lineWidth = 2;
+        g.beginPath(); g.moveTo(x0 + 3, y); g.lineTo(x0 + C.layout.tankW - 3, y); g.stroke();
       }
 
       // フリッパー
