@@ -151,6 +151,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       baseScore: 10,
       explodeBonus: 500,       // 爆発ボーナス = explodeBonus × 連鎖の深さ
       chainWindowSec: 3,       // 同じ側の前の爆発から何秒以内の再爆発を連鎖とみなすか
+      drainMultKeep: 0.8,      // 玉を落としたとき倍率を何倍に減らすか（切り捨て、最低 ×1。0 なら ×1 に戻す）
       drainRows: 2,            // 玉を落としたら、すぐに生えるブロックの列数（ペナルティ）
       drainOjama: false,       // 玉を落としたら、おじゃま破片も入れるか
       clearBonus: 300,         // 全消しのボーナス（× 倍率）
@@ -397,8 +398,10 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
     function drain(side) {
       if (state.over) return [];
-      state.mult = 1;
-      const ev = [{ type: 'drain', side }];
+      // 倍率は ×1 に戻さず、drainMultKeep 倍に減らす（切り捨て、1 より下にはしない）。玉が多いと落ちるのは当たり前なので
+      const before = state.mult;
+      state.mult = Math.max(1, Math.floor(state.mult * RU.drainMultKeep));
+      const ev = [{ type: 'drain', side, mult: state.mult, lost: before - state.mult }];
       if (RU.drainOjama) ev.push(...addFragment(side, { ojama: true }));
       return ev;
     }
@@ -1445,7 +1448,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
             break;
           case 'drain':
             shake(0.25);
-            popup(e.side === 'left' ? 90 : V.w - 90, 780, '×1', '#ff6b6b', 20, 0.9);
+            if (e.lost > 0) popup(e.side === 'left' ? 90 : V.w - 90, 780, '×' + e.mult, '#ff6b6b', 20, 0.9);
             burst(e.side === 'left' ? L.tankW / 2 : V.w - L.tankW / 2, L.tankTop + 10, 12, 120, 0, 0.5, 3);
             break;
           case 'spawn':
@@ -2332,7 +2335,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       '[#ffe14a]／ スリング',
       '　横へ弾く。玉が 2 個ふえる',
       '',
-      '倍率は玉を落とすと ×1 に戻る。',
+      '倍率は玉を落とすと少し下がる（2割減）。',
     ] },
     { title: '玉をふやす・貫通', lines: [
       '#分裂',
@@ -2494,6 +2497,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     ['gadgets.sling.balls', 'スリングで増える玉', 0, 4, 1],
     ['ball.maxOnField', '台の玉の上限', 1, 30, 1],
     ['gadgets.bandBottom', '役物が出る帯の下端', 205, 600, 5],
+    ['rules.drainMultKeep', '落としたときに残る倍率の割合', 0, 1, 0.05],
     ['rules.drainRows', '落としたときに増える列数', 0, 5, 1],
     ['rules.clearRows', '全消しのあと生やす列数', 1, 5, 1],
     ['gauge.max', 'ゲージ満タンの量', 5, 150, 5],
