@@ -82,7 +82,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       guideTopY: 690,          // フリッパー軸へ向かう斜めガイドが壁から離れる高さ
     },
 
-    ball: { r: 7, density: 1, restitution: 0.4, friction: 0.1, maxOnField: 5,
+    ball: { r: 7, density: 1, restitution: 0.4, friction: 0.1, maxOnField: 8,
             laneRestSpeed: 0.3,   // m/s。レールの底でこれより遅い玉は待機中とみなす
             maxSpeed: 22,           // m/s。台の上の玉の速さの上限
             stuckSpeed: 0.4, stuckSec: 1.2, unstickKick: 6 }, // 台の上でこの速さ未満が stuckSec 続いたら弾き出す（m/s）
@@ -121,7 +121,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
     fragments: {
       radius: [0, 7, 10, 14, 19, 25], // 段1〜5 の半径（添字=段）
-      newTierWeights: [0.7, 0.3],     // 新しい破片が段1・段2 になる割合
+      newTierWeights: [0.4, 0.45, 0.15], // 新しい破片が段1・段2・段3 になる割合（大きいほどタンクが早くたまる）
       maxTier: 5,
       ojamaTier: 3,                   // おじゃまの大きさ（段3相当）
       density: 1, restitution: 0.1, friction: 0.4,
@@ -130,17 +130,18 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
     // 役物。爆発で増え、当たるたびに効果。hp 回当たると消える
     gadgets: {
-      bandTop: 100, bandBottom: 205,   // 出る帯（天井の下・ブロックが生える位置より上）
+      bandTop: 100, bandBottom: 560,   // 出る帯（天井の下〜限界線の少し上。ブロックと重なってよい）
+      holeClear: 14,                    // 穴の通り道（y = hole.y）から上下に空ける余白（px、穴の半径に足す）
       marginX: 14,                      // 台の左右の壁からの余白
       marginRight: 46,                  // 右の余白（打ち出した玉が入ってくる湾曲ガイドを塞がない）
       minDist: 34,                      // 役物どうしの最小距離（中心間）
-      max: 18,                          // 台の役物の総数の上限
+      max: 26,                          // 台の役物の総数の上限
       tries: 30,                        // 置き場所の抽選回数（置けなければ置かない）
-      initial: { peg: 6, bumper: 2, sling: 1 }, // 始まったときに置いておく役物
+      initial: { peg: 10, bumper: 3, sling: 2 }, // 始まったときに置いておく役物
       spawn: { peg: 4, bumper: 1, sling: 0, slingFromChain: 2, pegPerExtraChain: 2 },
       peg:    { hp: 2, r: 5,  score: 20, restitution: 0.6 },
       bumper: { hp: 3, r: 14, score: 50, kick: 12 },          // kick: 弾き返す速さ（m/s）
-      sling:  { hp: 2, len: 36, w: 6, score: 30, kick: 10, angleDeg: 60 }, // 斜めの壁。左右どちら向きかは置いた側で決める
+      sling:  { hp: 2, len: 36, w: 6, score: 30, kick: 10, angleDeg: 60, balls: 2 }, // balls: 当たるたびに増える玉の数 // 斜めの壁。左右どちら向きかは置いた側で決める
     },
 
     // 穴: ゲージ満タンのときに玉を入れると、危ないほうのタンクを放出（強制爆発）
@@ -156,6 +157,9 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       clearBonus: 300,         // 全消しのボーナス（× 倍率）
       clearGadgets: { peg: 4, bumper: 1, sling: 1 }, // 全消しで即座に増える役物
       clearRows: 2,            // 全消しのあと、すぐに生やす列数
+      comboNeed: 12,           // 1つの玉がフリッパーに触れずに役物へ当たった回数がこれに届くとタンク放出
+      releaseBalls: 2,         // タンク放出（穴・コンボ・全消し）で増える玉の数
+      clearRelease: true,      // 全消しでもタンクを放出するか
       overflowSec: 2,          // 溢れ線を何秒越え続けたら終了
       warnMargin: 40,          // 溢れ線の何 px 手前から警告
     },
@@ -205,6 +209,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       overflowT: { left: 0, right: 0 },
       chain: { side: null, depth: 0, until: 0 },
       gauge: 0,
+      combo: new Map(), // ballId -> フリッパーに触れずに役物へ当たった回数
     };
     let nextId = 1;
 
@@ -254,7 +259,22 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     function useGauge(side) {
       if (state.over || state.gauge < cfg.gauge.max) return [];
       state.gauge = 0;
-      return [{ type: 'tankRelease', side }, { type: 'gauge', value: 0, max: cfg.gauge.max }, ...explode(side)];
+      return [{ type: 'gauge', value: 0, max: cfg.gauge.max }, ...release(side, 'hole')];
+    }
+
+    // タンク放出（強制爆発）。via = hole | combo | clear。玉も増える
+    function release(side, via, x, y) {
+      if (state.over) return [];
+      const ev = [{ type: 'tankRelease', side, via, x, y }, ...explode(side)];
+      if (RU.releaseBalls > 0) ev.push({ type: 'multiball', count: RU.releaseBalls, x, y });
+      return ev;
+    }
+
+    // 玉がフリッパーに触れた・落ちた：その玉のコンボは0から
+    function comboReset(ballId) {
+      if (!state.combo.has(ballId)) return [];
+      state.combo.delete(ballId);
+      return [{ type: 'combo', ballId, n: 0, need: RU.comboNeed }];
     }
 
     // そのタンクを空にして（おじゃまも含む）、爆発ボーナスと役物
@@ -283,14 +303,24 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     }
 
     // 玉が役物に当たった。g = {kind, side, x, y}
-    function gadgetHit(g) {
+    function gadgetHit(g, ballId) {
       if (state.over) return [];
       const points = cfg.gadgets[g.kind].score * state.mult;
       state.score += points;
       const ev = [{ type: 'gadgetScore', kind: g.kind, side: g.side, points }];
       if (g.kind === 'peg') ev.push({ type: 'pegShock', side: g.side, x: g.x, y: g.y });
       else if (g.kind === 'bumper') { state.mult += 1; ev.push({ type: 'mult', mult: state.mult }); }
-      else if (g.kind === 'sling') ev.push({ type: 'multiball', count: 1 });
+      else if (g.kind === 'sling') ev.push({ type: 'multiball', count: cfg.gadgets.sling.balls, x: g.x, y: g.y });
+      if (ballId != null && RU.comboNeed > 0) {
+        const n = (state.combo.get(ballId) || 0) + 1;
+        if (n >= RU.comboNeed) {
+          state.combo.delete(ballId);
+          ev.push({ type: 'combo', ballId, n, need: RU.comboNeed }, { type: 'comboFull', ballId, x: g.x, y: g.y });
+        } else {
+          state.combo.set(ballId, n);
+          ev.push({ type: 'combo', ballId, n, need: RU.comboNeed });
+        }
+      }
       return ev;
     }
 
@@ -335,7 +365,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     }
 
     return {
-      useGauge,
+      useGauge, release, comboReset,
       allClear, state, addFragment, blockBroken, fragmentsTouch, gadgetHit, drain, tick };
   }
 
@@ -473,8 +503,9 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       for (let i = 0; i < GD.tries; i++) {
         const x = x0 + rng() * (x1 - x0);
         const y = GD.bandTop + rng() * (GD.bandBottom - GD.bandTop);
-        let ok = true;
-        for (const g of items.values()) {
+        const H = cfg.hole;
+        let ok = !H || Math.abs(y - H.y) >= H.r + (GD.holeClear || 0); // 穴の通り道は空けておく
+        if (ok) for (const g of items.values()) {
           if ((g.x - x) ** 2 + (g.y - y) ** 2 < GD.minDist ** 2) { ok = false; break; }
         }
         if (ok) return { x, y };
@@ -1167,11 +1198,11 @@ canvas { display: block; width: 100vw; height: 100dvh; }
             shake(0.15);
             break;
           case 'tankRelease': {
-            const h = app.phys.holePos();
+            const h = e.x != null ? { x: e.x, y: e.y } : app.phys.holePos();
             stop(0.15); shake(0.7); doFlash(0.6, 50);
             rings.push({ x: h.x, y: h.y, r: 4, vr: 1200, life: 0.6, max: 0.6, hue: 50, w: 14 });
             burst(h.x, h.y, 80, 500, 50, 0.9, 4);
-            popup(V.w / 2, 236, 'TANK RELEASE!', '#ffd54a', 30, 1.4);
+            popup(V.w / 2, 236, { combo: 'COMBO RELEASE!', clear: 'CLEAR RELEASE!' }[e.via] || 'TANK RELEASE!', '#ffd54a', 30, 1.4);
             // 穴 → 放出するタンクへ光の筋
             if (on('comets')) for (let i = 0; i < 6; i++) comets.push({ x0: h.x, y0: h.y, x1: tankCx(e.side), y1: 500 + i * 50, t: -i * 0.04, dur: 0.35, hue: 50 });
             break;
@@ -1227,8 +1258,15 @@ canvas { display: block; width: 100vw; height: 100dvh; }
             multPop = 1;
             popup(V.w / 2, 90, '×' + e.mult, '#ffd54a', 22 + Math.min(20, e.mult * 2), 0.9);
             break;
-          case 'multiball':
-            popup(V.w / 2, 380, 'MULTI BALL', '#7cf2c4', 24, 1.2);
+          case 'multiball': {
+            const x = e.x != null ? e.x : V.w / 2, y = e.y != null ? e.y : 120;
+            popup(x, y - 22, e.count > 1 ? `+${e.count} BALLS` : '+1 BALL', '#7cf2c4', 20 + e.count * 3, 1.1);
+            rings.push({ x, y, r: 6, vr: 500, life: 0.35, max: 0.35, hue: 160, w: 6 });
+            burst(x, y, 30 * e.count, 380, 160, 0.5, 3.5);
+            break;
+          }
+          case 'combo':
+            if (e.n >= 4 && _lastHit) popup(_lastHit.x, _lastHit.y - 30, `COMBO ${e.n}`, e.n >= e.need - 3 ? '#ffd54a' : '#9fe8ff', 12 + Math.min(14, e.n), 0.6);
             break;
           case 'drain':
             shake(0.25);
@@ -1540,6 +1578,9 @@ canvas { display: block; width: 100vw; height: 100dvh; }
             for (let i = 0; i < 3; i++) tone(noteHz(13 + i * 2), { type: 'triangle', vol: 0.1, dec: 0.15, delay: 0.04 * i });
             break;
           case 'mult': tone(noteHz(5 + Math.min(e.mult, 15)), { type: 'square', vol: 0.12, dec: 0.2 }); tone(noteHz(7 + Math.min(e.mult, 15)), { type: 'square', vol: 0.08, dec: 0.2, delay: 0.06 }); break;
+          case 'combo':
+            if (e.n >= 4) tone(noteHz(8 + e.n), { type: 'square', vol: 0.05, dec: 0.08, delay: 0.03 });
+            break;
           case 'gaugeFull':
             for (let i = 0; i < 4; i++) tone(noteHz(12 + i * 2), { type: 'square', vol: 0.1, dec: 0.15, delay: 0.07 * i });
             break;
@@ -1903,6 +1944,16 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         g.font = 'bold 13px system-ui'; g.textAlign = 'center'; g.fillStyle = '#ffd54a';
         g.fillText('TANK RELEASE READY — 穴をねらえ', V.w / 2, L.hudH + 12);
       }
+      // 役物コンボ（フリッパーに触れずに役物へ当て続けた回数。いちばん伸びている玉）
+      const RU = Game.config.rules;
+      let cn = 0;
+      if (app.rules) for (const n of app.rules.state.combo.values()) cn = Math.max(cn, n);
+      if (cn > 0 && RU.comboNeed > 0 && app.mode === 'play') {
+        const ck = Math.min(1, cn / RU.comboNeed);
+        g.fillStyle = '#ff3d8b'; g.fillRect(0, L.hudH, V.w * ck, 3);
+        g.font = 'bold 11px system-ui'; g.textAlign = 'right'; g.fillStyle = '#ff8fbd';
+        g.fillText(`COMBO ${cn}/${RU.comboNeed}`, L.fieldR - 4, L.hudH + (full ? 26 : 12));
+      }
     },
 
     drawScreens(g, app) {
@@ -1974,7 +2025,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     ['blocks.kickMin', 'ブロックで跳ねる最低の速さ', 0, 15, 0.5],
     ['plunger.maxSpeed', '打ち出しの最大速度', 15, 45, 1],
     ['flipper.motorSpeed', 'フリッパーの速さ', 10, 60, 1],
-    ['fragments.newTierWeights.1', '新しい破片が段2になる重み（段1=0.7）', 0, 2, 0.05],
+    ['fragments.newTierWeights.1', '新しい破片が段2になる重み（段1=0.4）', 0, 2, 0.05],
+    ['fragments.newTierWeights.2', '新しい破片が段3になる重み', 0, 2, 0.05],
     ['gadgets.spawn.peg', '爆発で出るペグの数', 0, 12, 1],
     ['gadgets.spawn.bumper', '爆発で出るバンパーの数', 0, 4, 1],
     ['gadgets.peg.hp', 'ペグが消えるまでの回数', 1, 6, 1],
@@ -1982,6 +2034,11 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     ['gadgets.sling.hp', 'スリングが消えるまでの回数', 1, 6, 1],
     ['gadgets.bumper.kick', 'バンパーの弾く強さ', 4, 25, 1],
     ['gadgets.sling.kick', 'スリングの弾く強さ', 4, 25, 1],
+    ['rules.comboNeed', 'コンボ放出に要る役物の連続ヒット', 3, 40, 1],
+    ['rules.releaseBalls', 'タンク放出で増える玉', 0, 5, 1],
+    ['gadgets.sling.balls', 'スリングで増える玉', 0, 4, 1],
+    ['ball.maxOnField', '台の玉の上限', 1, 12, 1],
+    ['gadgets.bandBottom', '役物が出る帯の下端', 205, 600, 5],
     ['rules.drainRows', '落としたときに増える列数', 0, 5, 1],
     ['rules.clearRows', '全消しのあと生やす列数', 1, 5, 1],
     ['gauge.max', 'ゲージ満タンの量', 5, 150, 5],
@@ -2006,6 +2063,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     out['fx.enabled'] = Game.config.fx.enabled;
     out['audio.enabled'] = Game.config.audio.enabled;
     out['rules.drainOjama'] = Game.config.rules.drainOjama;
+    out['rules.clearRelease'] = Game.config.rules.clearRelease;
     for (const t of TOGGLES) out['fx.on.' + t] = Game.config.fx.on[t];
     return out;
   }
@@ -2053,6 +2111,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       el.append(row('演出を全部 ON（OFF で掛け算前と比べる）', all));
       const oj = h('input', { type: 'checkbox', checked: C.rules.drainOjama, onchange: (e) => { C.rules.drainOjama = e.target.checked; T.persist(); } });
       el.append(row('落としたらおじゃま破片も入れる', oj));
+      const cr = h('input', { type: 'checkbox', checked: C.rules.clearRelease, onchange: (e) => { C.rules.clearRelease = e.target.checked; T.persist(); } });
+      el.append(row('全消しでもタンクを放出する', cr));
       const snd = h('input', { type: 'checkbox', checked: C.audio.enabled, onchange: (e) => { C.audio.enabled = e.target.checked; T.persist(); } });
       el.append(row('音', snd));
 
@@ -2166,12 +2226,13 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       case 'ballHitGadget': {
         const g = app.gadgets.items.get(e.gadgetId);
         if (!g) return [];
-        const hit = R.gadgetHit(Object.assign({}, g));
+        const hit = R.gadgetHit(Object.assign({}, g), e.ballId);
         return hit.concat(app.gadgets.hit(g.id));
       }
+      case 'ballHit': return e.what === 'flipper' ? R.comboReset(e.ballId) : [];
       case 'fragTouch': return R.fragmentsTouch(e.side, e.a, e.b);
       case 'ballDrained': {
-        const out = R.drain(e.side);
+        const out = R.comboReset(e.ballId).concat(R.drain(e.side));
         if (out.length) out.push(...S.forceRows(cfg.rules.drainRows, 'drain'));
         if (P.ballCount() === 0 && !P.ballReady()) P.newBallInLane();
         return out;
@@ -2191,21 +2252,25 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       case 'ballInHole': {
         if (R.state.gauge < cfg.gauge.max) return [];
         // 危ないほう（破片の山が高い = 上端の y が小さい）のタンクを放出
-        const top = P.tankTopY();
-        const side = top.left <= top.right ? 'left' : 'right';
         P.captureBall(e.ballId, cfg.hole.captureSec);
-        return R.useGauge(side);
+        const h = P.holePos();
+        return R.useGauge(riskierSide()).map((x) => (x.type === 'tankRelease' || x.type === 'multiball' ? Object.assign(x, { x: h.x, y: h.y }) : x));
       }
+      case 'comboFull': return R.release(riskierSide(), 'combo', e.x, e.y);
       case 'pegShock': {
         const out = S.breakNearest(e.side, e.x, e.y, 1).map((b) => Object.assign(b, { cause: 'shockwave' }));
         if (out.length) P.syncBlocks(S.blocks.values());
         return out;
       }
       case 'multiball': {
+        // 出来事の場所（なければ台の上のほう）から放射状に飛び出す
         const L = cfg.layout;
+        const x0 = e.x != null ? Math.min(L.fieldR - 12, Math.max(L.fieldL + 12, e.x)) : (L.fieldL + L.fieldR) / 2;
+        const y0 = e.y != null ? Math.min(L.limitY - 20, Math.max(L.fieldTop + 30, e.y)) : 110;
         for (let i = 0; i < e.count; i++) {
           if (P.ballCount() >= cfg.ball.maxOnField) break;
-          P.addBall((L.fieldL + L.fieldR) / 2 + (Math.random() - 0.5) * 60, 110, (Math.random() - 0.5) * 240, 80); // px/s
+          const a = -Math.PI / 2 + (e.count > 1 ? (i / (e.count - 1) - 0.5) * 2.2 : 0) + (Math.random() - 0.5) * 0.3;
+          P.addBall(x0 + (Math.random() - 0.5) * 8, y0, Math.cos(a) * 320, Math.sin(a) * 320); // px/s
         }
         return [];
       }
@@ -2219,6 +2284,12 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     return [];
   }
 
+  // 危ないほう（破片の山が高い = 上端の y が小さい）のタンク
+  function riskierSide() {
+    const top = app.phys.tankTopY();
+    return top.left <= top.right ? 'left' : 'right';
+  }
+
   // 固定刻み1つぶん
   function stepOnce(h) {
     const P = app.phys;
@@ -2227,7 +2298,9 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     dispatch(app.spawner.tick(h));
     dispatch(app.rules.tick(h, P.tankTopY()));
     if (app.mode === 'play' && app.spawner.blocks.size === 0) {
-      dispatch(app.rules.allClear().concat(app.spawner.forceRows(cfg.rules.clearRows, 'clear')));
+      const ev = app.rules.allClear().concat(app.spawner.forceRows(cfg.rules.clearRows, 'clear'));
+      if (cfg.rules.clearRelease) ev.push(...app.rules.release(riskierSide(), 'clear', (cfg.layout.fieldL + cfg.layout.fieldR) / 2, 330));
+      dispatch(ev);
     }
     if (P.ballCount() === 0 && !P.ballReady() && app.mode === 'play') P.newBallInLane();
   }
