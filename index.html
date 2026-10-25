@@ -131,7 +131,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
     // 役物。爆発で増え、当たるたびに効果。hp 回当たると消える
     gadgets: {
-      bandTop: 100, bandBottom: 560,   // 出る帯（天井の下〜限界線の少し上。ブロックと重なってよい）
+      bandTop: 100, bandBottom: 440,   // 出る帯（天井の下〜台の中ほど。ブロックと重なってよい。下げすぎるとフリッパーで返した玉が役物に弾かれて貫通の往復が数えられない）
       holeClear: 14,                    // 穴の通り道（y = hole.y）から上下に空ける余白（px、穴の半径に足す）
       marginX: 14,                      // 台の左右の壁からの余白
       marginRight: 46,                  // 右の余白（打ち出した玉が入ってくる湾曲ガイドを塞がない）
@@ -2246,8 +2246,17 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         g.font = 'bold 30px system-ui'; g.fillText('おわり', V.w / 2, 300);
         const os = app.rules.state.overSide;
         if (app.rules.state.overReason === 'blocks') {
-          g.font = 'bold 15px system-ui'; g.fillStyle = '#ff6b6b';
-          g.fillText('ブロックが限界線に届いた ↓', V.w / 2, 250);
+          // 限界線と、越えたブロックを暗幕の上に描き直して強調する
+          const L = Game.config.layout, pulse = 0.5 + 0.5 * Math.sin(performance.now() / 1000 * 6);
+          g.strokeStyle = `rgba(255,80,80,${0.7 + 0.3 * pulse})`; g.lineWidth = 4;
+          g.beginPath(); g.moveTo(L.fieldL, L.limitY); g.lineTo(L.fieldR, L.limitY); g.stroke();
+          for (const b of app.spawner.blocks.values()) {
+            if (b.y + b.h / 2 < L.limitY) continue;
+            g.fillStyle = HP_COLOR[b.hp] || '#fff';
+            roundRect(g, b.x - b.w / 2, b.y - b.h / 2, b.w, b.h, 4); g.fill();
+            g.strokeStyle = `rgba(255,80,80,${0.7 + 0.3 * pulse})`; g.lineWidth = 3;
+            roundRect(g, b.x - b.w / 2 - 2, b.y - b.h / 2 - 2, b.w + 4, b.h + 4, 5); g.stroke();
+          }
           g.fillStyle = '#fff';
         } else if (os) {
           // どちらのタンクが溢れたか（矢印つき）
