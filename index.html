@@ -66,8 +66,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       tankW: 60,               // 左タンク x:0–60、右タンク x:330–390
       tankTop: 80,             // タンクの天井（破片はここから落ちてくる）
       overflowY: 230,          // タンクの溢れ線（これより上に破片の上端が出ると危険）
-      fieldL: 60, fieldR: 306, // 台（打ち出しレールを除く）
-      laneL: 306, laneR: 330,  // 打ち出しレール
+      fieldL: 60, fieldR: 330, // 台（2026-10-25 打ち出しレールを廃止して右へ広げた）
+      cornerCut: 20,           // 台の上の角を斜めに落とす大きさ
       fieldTop: 64,
       limitY: 630,             // 台の限界線（ここまで下がったブロックは自動で壊れる）
       flipperY: 760,           // フリッパーの軸の高さ
@@ -75,16 +75,10 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       flipperW: 12,
       flipperGap: 34,          // 左右のフリッパーの先端どうしの隙間（ここから落ちる）
       drainY: 844,
-      laneFloorY: 800,         // 打ち出しレールの底（待機中の玉が乗る）
-      laneWallTop: 120,        // レールと台の仕切りの上端（これより上は開いていて玉が台へ入る）
-      laneGuideR: 60,          // レール上部の湾曲ガイド（右上の角）の半径
-      laneGuideSeg: 8,         // 湾曲ガイドを何本の線分で近似するか
       guideTopY: 690,          // フリッパー軸へ向かう斜めガイドが壁から離れる高さ
     },
 
     ball: { r: 7, density: 1, restitution: 0.4, friction: 0.1, maxOnField: 16,
-            laneRestSpeed: 0.3,   // m/s。レールの底でこれより遅い玉は待機中とみなす
-            laneBackSpeed: 5,     // m/s。レールの上から落ちてこようとした玉を台へ押し戻す速さ（一方通行）
             maxSpeed: 22,           // m/s。台の上の玉の速さの上限
             stuckSpeed: 0.4, stuckSec: 1.2, unstickKick: 6 }, // 台の上でこの速さ未満が stuckSec 続いたら弾き出す（m/s）
     gravity: 14,               // m/s^2（台の傾きを含めた見かけの重力）
@@ -99,10 +93,14 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       friction: 0.3,
     },
 
-    plunger: { maxChargeSec: 1.0, minSpeed: 22, maxSpeed: 30 }, // m/s
+    // 台に玉がなくなったら、天井のランダムな位置からランダムな向きに玉を出す（打ち出しレールの代わり）
+    serve: { delay: 0.8,       // 秒。出る場所を見せてから出すまで
+             speed: 8,         // m/s
+             spreadDeg: 55,    // 真下から左右に何度までずらすか
+             margin: 30 },     // 台の左右の壁からの余白（px）
 
     blocks: {
-      cols: 7, w: 30, h: 16, gapX: 4, rowPitch: 22,
+      cols: 7, w: 34, h: 16, gapX: 4, rowPitch: 22,
       firstRowY: 232,          // 生えた列が出てくる y（上の役物の帯のすぐ下）
       hpWeights: [0.6, 0.3, 0.1], // 硬さ1,2,3 の出やすさ
       fillRate: 0.75,          // 1列のうちブロックがあるマスの割合
@@ -134,7 +132,6 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       bandTop: 100, bandBottom: 440,   // 出る帯（天井の下〜台の中ほど。ブロックと重なってよい。下げすぎるとフリッパーで返した玉が役物に弾かれて貫通の往復が数えられない）
       holeClear: 14,                    // 穴の通り道（y = hole.y）から上下に空ける余白（px、穴の半径に足す）
       marginX: 14,                      // 台の左右の壁からの余白
-      marginRight: 46,                  // 右の余白（打ち出した玉が入ってくる湾曲ガイドを塞がない）
       minDist: 34,                      // 役物どうしの最小距離（中心間）
       max: 40,                          // 台の役物の総数の上限
       tries: 30,                        // 置き場所の抽選回数（置けなければ置かない）
@@ -161,6 +158,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       clearRows: 2,            // 全消しのあと、すぐに生やす列数
       pierceNeed: 4,           // 落とさずに「フリッパーで弾く→ブロックに当たる」をこの回数くり返すと貫通（天井に当たるまで。ブロックを硬さに関係なく壊して素通り、役物には当たる）
       limitGameOver: true,     // ブロックが限界線に届いたら終わり（false なら自動で壊れる）
+      hyperNeed: 3,            // 貫通中の玉が落ちずに役物へこの回数当たると、役物も貫通（天井で切れる）
       splitNeed: 5,            // 1つの玉がフリッパーに触れずにブロックへ当たった回数がこれに届くと2つに分裂
       splitDeg: 22,            // 分裂した2つの玉が開く角度（進む向きから左右に、度）
       comboNeed: 12,           // 1つの玉がフリッパーに触れずに役物へ当たった回数がこれに届くとタンク放出
@@ -220,6 +218,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       gauge: 0,
       combo: new Map(), // ballId -> フリッパーに触れずに役物へ当たった回数
       blockRun: new Map(), // ballId -> フリッパーに触れずにブロックへ当たった回数（分裂用）
+      pierceGadget: new Map(), // ballId -> 貫通中に役物へ当たった回数（hyper 用）
       rally: new Map(),    // ballId -> { n, armed }。フリッパーで弾く→ブロックに当たる、の往復の回数（貫通用）
       overReason: null, overSide: null,
     };
@@ -353,8 +352,10 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       r.n = 0;
       return [{ type: 'rally', ballId, n: RU.pierceNeed, need: RU.pierceNeed }, { type: 'pierce', ballId }];
     }
+    function pierceEnded(ballId) { state.pierceGadget.delete(ballId); return []; }
     function ballGone(ballId) {
       state.rally.delete(ballId);
+      state.pierceGadget.delete(ballId);
       return comboReset(ballId);
     }
 
@@ -367,7 +368,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     }
 
     // 玉が役物に当たった。g = {kind, side, x, y}
-    function gadgetHit(g, ballId) {
+    // pierce: 貫通中の玉。hyperNeed 回で役物も貫通（hyper）
+    function gadgetHit(g, ballId, pierce, hyper) {
       if (state.over) return [];
       const points = cfg.gadgets[g.kind].score * state.mult;
       state.score += points;
@@ -375,6 +377,11 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       if (g.kind === 'peg') ev.push({ type: 'pegShock', side: g.side, x: g.x, y: g.y });
       else if (g.kind === 'bumper') { state.mult += 1; ev.push({ type: 'mult', mult: state.mult }); }
       else if (g.kind === 'sling') ev.push({ type: 'multiball', count: cfg.gadgets.sling.balls, x: g.x, y: g.y });
+      if (ballId != null && pierce && !hyper && RU.hyperNeed > 0) {
+        const n = (state.pierceGadget.get(ballId) || 0) + 1;
+        if (n >= RU.hyperNeed) { state.pierceGadget.delete(ballId); ev.push({ type: 'hyper', ballId }); }
+        else state.pierceGadget.set(ballId, n);
+      }
       if (ballId != null && RU.comboNeed > 0) {
         const n = (state.combo.get(ballId) || 0) + 1;
         if (n >= RU.comboNeed) {
@@ -437,7 +444,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     }
 
     return {
-      useGauge, release, comboReset, blockHitBy, flipperHit, ballGone, blocksOver,
+      useGauge, release, comboReset, blockHitBy, flipperHit, ballGone, blocksOver, pierceEnded,
       allClear, state, addFragment, blockBroken, fragmentsTouch, gadgetHit, drain, tick };
   }
 
@@ -582,7 +589,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
     // ほかの全役物と minDist 以上離れた場所を tries 回まで探す。だめなら null
     function findSpot() {
-      const x0 = L.fieldL + GD.marginX, x1 = L.fieldR - (GD.marginRight != null ? GD.marginRight : GD.marginX);
+      const x0 = L.fieldL + GD.marginX, x1 = L.fieldR - GD.marginX;
       for (let i = 0; i < GD.tries; i++) {
         const x = x0 + rng() * (x1 - x0);
         const y = GD.bandTop + rng() * (GD.bandBottom - GD.bandTop);
@@ -668,7 +675,6 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       return { x: cx + HO.amp * Math.sin((time / HO.period) * Math.PI * 2), y: HO.y, r: HO.r };
     }
     let nextBallId = 1;
-    let laneBall = null;          // 打ち出し待ちの玉の body
 
     // ---- 台（静的な壁） ----
     const ground = world.createBody();
@@ -687,19 +693,12 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       right: { x: midX + L.flipperGap / 2 + reach, y: L.flipperY },
     };
 
-    const R = L.laneGuideR, arcCx = L.laneR - R, arcCy = L.fieldTop + R;
-    edge(L.fieldL, L.fieldTop, arcCx, L.fieldTop);                  // 天井
-    const arc = [];
-    for (let i = 0; i <= L.laneGuideSeg; i++) {                      // 右上の湾曲ガイド
-      const th = (Math.PI / 2) * (i / L.laneGuideSeg);
-      arc.push({ x: arcCx + R * Math.cos(th), y: arcCy - R * Math.sin(th) });
-    }
-    for (let i = 1; i < arc.length; i++) statics.push({ x1: arc[i - 1].x, y1: arc[i - 1].y, x2: arc[i].x, y2: arc[i].y });
-    ground.createFixture(pl.Chain(arc.map((p) => v(p.x, p.y)), false), { friction: 0.1 });
-    edge(L.laneR, arcCy, L.laneR, L.laneFloorY);                     // レールの外側の壁
-    edge(L.laneL, L.laneWallTop, L.laneL, L.laneFloorY);             // レールと台の仕切り（下部のみ）
-    edge(L.laneL, L.laneFloorY, L.laneR, L.laneFloorY);              // レールの底
-    edge(L.fieldL, L.fieldTop, L.fieldL, L.guideTopY);               // 台の左の壁
+    const C = L.cornerCut;                                            // 上の角は斜めに落とす（玉が角で止まらない）
+    edge(L.fieldL + C, L.fieldTop, L.fieldR - C, L.fieldTop);        // 天井
+    edge(L.fieldL, L.fieldTop + C, L.fieldL + C, L.fieldTop);        // 左上の角
+    edge(L.fieldR - C, L.fieldTop, L.fieldR, L.fieldTop + C);        // 右上の角
+    edge(L.fieldR, L.fieldTop + C, L.fieldR, L.guideTopY);           // 台の右の壁
+    edge(L.fieldL, L.fieldTop + C, L.fieldL, L.guideTopY);           // 台の左の壁
     const lip = L.flipperW / 2;
     edge(L.fieldL, L.guideTopY, pivot.left.x, pivot.left.y - lip);   // 左の斜めガイド
     edge(L.fieldR, L.guideTopY, pivot.right.x, pivot.right.y - lip); // 右の斜めガイド
@@ -767,13 +766,13 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         const last = lastGadgetHit.get(key);
         if (last !== undefined && time - last < REHIT_SEC) return;
         lastGadgetHit.set(key, time);
-        events.push({ type: 'ballHitGadget', ballId: ball.id, gadgetId: other.id, speed });
-        if (other.gkind !== 'peg') kicks.push({ ballId: ball.id, gadgetId: other.id });
+        events.push({ type: 'ballHitGadget', ballId: ball.id, gadgetId: other.id, speed, pierce: !!ball.pierce, hyper: !!ball.hyper });
+        if (other.gkind !== 'peg' && !ball.hyper) kicks.push({ ballId: ball.id, gadgetId: other.id });
       } else if (other.kind === 'wall') {
         events.push({ type: 'ballHit', ballId: ball.id, what: 'wall', speed });
         // 天井（右上の湾曲ガイドの上のほうも含む）に当たったら貫通が終わる
         if (ball.pierce && bBody.getPosition().y * S < L.fieldTop + BA.r + 8) {
-          ball.pierce = false;
+          ball.pierce = false; ball.hyper = false;
           const p = bBody.getPosition();
           events.push({ type: 'pierceEnd', ballId: ball.id, x: p.x * S, y: p.y * S });
         }
@@ -786,11 +785,17 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       const ball = ua.kind === 'ball' ? ua : ub.kind === 'ball' ? ub : null;
       const other = ball === ua ? ub : ua;
       if (ball && other.kind === 'block' && ball.pierce) contact.setEnabled(false);
+      if (ball && other.kind === 'gadget' && ball.hyper) contact.setEnabled(false); // 役物も貫通（当たった効果は起きる）
     });
     // 貫通は天井に当たるまで続く
     function setPierce(id, on = true) {
       const body = balls.get(id);
       if (body) body.getUserData().pierce = on;
+    }
+    // 役物も貫通（貫通中の玉だけ。天井で一緒に切れる）
+    function setHyper(id, on = true) {
+      const body = balls.get(id);
+      if (body && body.getUserData().pierce) body.getUserData().hyper = on;
     }
 
     // ---- 玉 ----
@@ -812,7 +817,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     // 玉を2つに分ける。元の玉と新しい玉を、進む向きから左右に deg 度ずつ開く。新しい玉の id（できなければ null）
     function splitBall(id, deg) {
       const body = balls.get(id);
-      if (!body || body === laneBall || captured.has(id)) return null;
+      if (!body || captured.has(id)) return null;
       const p = body.getPosition(), vel = body.getLinearVelocity();
       let sp = Math.hypot(vel.x, vel.y), ang = Math.atan2(vel.y, vel.x);
       if (sp < 4) { sp = 6; ang = -Math.PI / 2; } // ほぼ止まっていたら上へ
@@ -823,21 +828,12 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       return nb.getUserData().id;
     }
 
-    const laneX = (L.laneL + L.laneR) / 2;
-    function newBallInLane() {
-      if (!laneBall) laneBall = makeBall(laneX, L.laneFloorY - BA.r);
-      return laneBall.getUserData().id;
+    // 天井から玉を出す（x は論理 px、angle は真下から何度ずらすか、speed は m/s）
+    function serveBall(x, angleDeg, speed) {
+      const a = angleDeg * DEG;
+      return addBall(x, L.fieldTop + BA.r + 4, Math.sin(a) * speed * S, Math.cos(a) * speed * S);
     }
-    const ballReady = () => laneBall !== null;
-    function launch(charge) {
-      if (!laneBall) return;
-      const c = Math.min(1, Math.max(0, charge));
-      const speed = cfg.plunger.minSpeed + (cfg.plunger.maxSpeed - cfg.plunger.minSpeed) * c; // m/s
-      laneBall.setLinearVelocity(Vec2(0, -speed));
-      laneBall.setAwake(true);
-      laneBall = null;
-    }
-    const ballCount = () => balls.size - (laneBall ? 1 : 0);
+    const ballCount = () => balls.size;
 
     // 役物に当たった玉を弾く（コールバック内では速度をいじらない）
     function applyKicks() {
@@ -897,7 +893,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     // 台の上で玉がほぼ止まったまま一定時間たったら、上向きに軽く弾き出す（どこかに乗って静止するのを防ぐ）
     function unstick(dt) {
       for (const body of balls.values()) {
-        if (body === laneBall || captured.has(body.getUserData().id)) continue;
+        if (captured.has(body.getUserData().id)) continue;
         // フリッパーの上で玉を止めて狙う（キャッチ）のは正しい遊び方なので対象外
         if (body.getPosition().y * S > L.guideTopY) continue;
         const u = body.getUserData();
@@ -916,7 +912,6 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     function holeStep() {
       const h = holePos();
       for (const [id, body] of balls) {
-        if (body === laneBall) continue;
         const until = captured.get(id);
         if (until !== undefined) {
           if (time >= until) {
@@ -948,23 +943,11 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       body.setLinearVelocity(Vec2(0, 0));
     }
 
-    // 台の上の玉の速さに上限（打ち出しレールの中は除く。届かなくなるため）
+    // 台の上の玉の速さに上限
     function capSpeed() {
       for (const body of balls.values()) {
-        if (body.getPosition().x * S > L.laneL) continue;
         const lv = body.getLinearVelocity(), sp = lv.length();
         if (sp > BA.maxSpeed) body.setLinearVelocity(Vec2(lv.x / sp * BA.maxSpeed, lv.y / sp * BA.maxSpeed));
-      }
-    }
-
-    // 打ち出しレールは一方通行: 仕切りの上端より上でレールの上に来て、下へ向かっている玉は台へ押し戻す
-    function oneWayLane() {
-      for (const body of balls.values()) {
-        if (body === laneBall) continue;
-        const p = body.getPosition(), x = p.x * S, y = p.y * S, vel = body.getLinearVelocity();
-        if (x > L.laneL && y < L.laneWallTop && vel.y > 0) {
-          body.setLinearVelocity(Vec2(-Math.max(BA.laneBackSpeed, Math.abs(vel.x)), -1));
-        }
       }
     }
 
@@ -975,17 +958,12 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       unstick(dt);
       capSpeed();
       holeStep();
-      oneWayLane();
       for (const [id, body] of balls) {
         const p = body.getPosition(), x = p.x * S, y = p.y * S;
         if (y > L.drainY) {
-          if (body === laneBall) laneBall = null;
           world.destroyBody(body);
           balls.delete(id);
           events.push({ type: 'ballDrained', ballId: id, side: sideOf(x) });
-        } else if (!laneBall && body !== laneBall && x > L.laneL && y > L.laneFloorY - BA.r - 3
-          && body.getLinearVelocity().length() < BA.laneRestSpeed) {
-          laneBall = body;   // 届かずに戻った玉・台から落ちてきた玉は、待機中に戻す
         }
       }
     }
@@ -1115,7 +1093,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         hole: holePos(),
         balls: [...balls].map(([id, b]) => {
           const lv = b.getLinearVelocity();
-          return { id, ...pos(b), r: BA.r, vx: lv.x * S, vy: lv.y * S, waiting: b === laneBall, pierce: !!b.getUserData().pierce };
+          const u = b.getUserData();
+          return { id, ...pos(b), r: BA.r, vx: lv.x * S, vy: lv.y * S, pierce: !!u.pierce, hyper: !!u.hyper };
         }),
         statics: statics.map((e) => ({ ...e })),
         // angle は軸から先端へ向かう向き（画面の座標、ラジアン）
@@ -1136,13 +1115,12 @@ canvas { display: block; width: 100vw; height: 100dvh; }
           return { id, kind: u.gkind, ...pos(b), r: u.r ?? null, angle: u.angle ?? 0,
             len: u.len ?? null, w: u.w ?? null, flip: u.flip };
         }),
-        lane: { x: L.laneL, w: L.laneR - L.laneL, top: L.fieldTop, wallTop: L.laneWallTop, floorY: L.laneFloorY, ready: ballReady() },
       };
     }
 
     return {
       captureBall, holePos,
-      world, step, drainEvents, setFlipper, ballReady, newBallInLane, launch, addBall, ballCount, splitBall, setPierce,
+      world, step, drainEvents, setFlipper, serveBall, addBall, ballCount, splitBall, setPierce, setHyper,
       syncBlocks, addGadget, removeGadget, addFragment, removeFragments, mergeFragment, tankTopY, snapshot, sideOf,
     };
   }
@@ -1439,6 +1417,15 @@ canvas { display: block; width: 100vw; height: 100dvh; }
             popup(bs.x, bs.y - 24, 'PIERCE!', '#ff8a3d', 24, 1.0);
             break;
           }
+          case 'hyper': {
+            const bs = app.phys.snapshot().balls.find((x) => x.id === e.ballId);
+            if (!bs) break;
+            stop(0.08); shake(0.4);
+            rings.push({ x: bs.x, y: bs.y, r: 6, vr: 640, life: 0.45, max: 0.45, hue: 275, w: 10 });
+            burst(bs.x, bs.y, 70, 480, 275, 0.7, 4);
+            popup(bs.x, bs.y - 26, 'HYPER PIERCE!', '#d9a3ff', 24, 1.1);
+            break;
+          }
           case 'pierceEnd':
             burst(e.x, e.y, 24, 260, 25, 0.4, 3, 0, 1.4, Math.PI / 2);
             rings.push({ x: e.x, y: e.y, r: 4, vr: 300, life: 0.25, max: 0.25, hue: 25, w: 4 });
@@ -1471,7 +1458,12 @@ canvas { display: block; width: 100vw; height: 100dvh; }
           }
           case 'beat': beatPhase = e.phase; break;
           case 'overflowWarn': warn[e.side] = Math.max(warn[e.side], e.level); break;
-          case 'launch': burst(L.laneL + 12, 790, 14, 260 * (0.5 + e.power), 45, 0.4, 3, 0, 0.8, -Math.PI / 2); break;
+          case 'serve': {
+            const a = e.ang * Math.PI / 180;
+            burst(e.x, e.y + 10, 20, 260, 160, 0.4, 3, 0, 0.9, Math.PI / 2 - a);
+            rings.push({ x: e.x, y: e.y + 10, r: 4, vr: 220, life: 0.3, max: 0.3, hue: 160, w: 4 });
+            break;
+          }
           case 'flip': break;
           case 'gameOver': shake(0.5); doFlash(0.4, 0); break;
         }
@@ -1802,7 +1794,11 @@ canvas { display: block; width: 100vw; height: 100dvh; }
             pegRun = 0; pegT = 0;
             tone(330, { type: 'sawtooth', vol: 0.15, dec: 0.45, slide: 0.4 });
             break;
-          case 'launch':
+          case 'hyper':
+            tone(60, { type: 'sawtooth', vol: 0.35, dec: 0.7, slide: 6 });
+            for (let i = 0; i < 5; i++) tone(noteHz(15 + i * 2), { type: 'triangle', vol: 0.1, dec: 0.15, delay: 0.05 * i });
+            break;
+          case 'serve':
             noise({ vol: 0.2, dec: 0.25, freq: 400, sweep: 6 });
             break;
           case 'spawn':
@@ -1856,14 +1852,13 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 })();
 </script>
 <script>
-// タッチ・マウス・キーを「左フリッパー / 右フリッパー / 打ち出し / タップ」にまとめる
+// タッチ・マウス・キーを「左フリッパー / 右フリッパー / タップ」にまとめる
 (function () {
   const Game = (window.Game = window.Game || {});
 
   Game.input = {
-    // handlers: { flipper(side, up), chargeStart(), chargeEnd(), tap(x, y), canCharge() -> bool, secret() }
+    // handlers: { flipper(side, up), tap(x, y), secret() }
     attach(canvas, handlers) {
-      const L = Game.config.layout;
       const pointers = new Map(); // pointerId -> { role, t0, x, y }
       const flipperHold = { left: 0, right: 0 }; // 押している指の数
 
@@ -1879,12 +1874,10 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         const p = Game.render.toLogical(e.clientX, e.clientY);
         let role;
         if (p.x < 50 && p.y < 50) role = 'secret';
-        else if (p.x >= L.laneL - 12 && p.y > L.hudH && handlers.canCharge()) role = 'charge';
         else role = p.x < Game.config.view.w / 2 ? 'left' : 'right';
         pointers.set(e.pointerId, { role, t0: performance.now(), x: p.x, y: p.y });
         handlers.tap(p.x, p.y);
-        if (role === 'charge') handlers.chargeStart();
-        else if (role === 'left' || role === 'right') setFlipper(role, +1);
+        if (role === 'left' || role === 'right') setFlipper(role, +1);
         else if (role === 'secret') setFlipper('left', +1);
       }
 
@@ -1892,8 +1885,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         const ptr = pointers.get(e.pointerId);
         if (!ptr) return;
         pointers.delete(e.pointerId);
-        if (ptr.role === 'charge') handlers.chargeEnd();
-        else if (ptr.role === 'left' || ptr.role === 'right') setFlipper(ptr.role, -1);
+        if (ptr.role === 'left' || ptr.role === 'right') setFlipper(ptr.role, -1);
         else if (ptr.role === 'secret') setFlipper('left', -1);
       }
 
@@ -1911,7 +1903,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         }
       }, 100);
 
-      // PC（デバッグ用）: Z / ← 左、/ / → 右、Space 打ち出し
+      // PC（デバッグ用）: Z / ← 左、/ / → 右
       const keyMap = { KeyZ: 'left', ArrowLeft: 'left', Slash: 'right', ArrowRight: 'right' };
       const keysDown = new Set();
       addEventListener('keydown', (e) => {
@@ -1919,12 +1911,10 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         keysDown.add(e.code);
         handlers.tap(-1, -1);
         if (keyMap[e.code]) setFlipper(keyMap[e.code], +1);
-        if (e.code === 'Space' && handlers.canCharge()) handlers.chargeStart();
       });
       addEventListener('keyup', (e) => {
         keysDown.delete(e.code);
         if (keyMap[e.code]) setFlipper(keyMap[e.code], -1);
-        if (e.code === 'Space') handlers.chargeEnd();
       });
     },
   };
@@ -2020,7 +2010,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       }
       // 台の枠・限界線・中心線
       g.strokeStyle = 'rgba(255,255,255,0.18)'; g.lineWidth = 2;
-      g.strokeRect(L.fieldL, L.fieldTop, L.laneR - L.fieldL, V.h - L.fieldTop + 4);
+      g.strokeRect(L.fieldL, L.fieldTop, L.fieldR - L.fieldL, V.h - L.fieldTop + 4);
       // 限界線。ブロックが届くと終わり。あと3段以内で赤く脈打ち、残りの段数を出す
       const C0 = Game.config;
       let lowest = -Infinity;
@@ -2157,7 +2147,13 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       // 玉
       const need = Game.config.rules.splitNeed, run = app.rules ? app.rules.state.blockRun : null;
       for (const b of snap.balls) {
-        if (b.pierce) {
+        if (b.hyper) {
+          // 役物も貫通: 紫に燃える大きめの光（天井に当たるまで）
+          const p = 0.5 + 0.5 * Math.sin(performance.now() / 60);
+          g.fillStyle = `rgba(190,110,255,${0.3 + 0.2 * p})`;
+          g.beginPath(); g.arc(b.x, b.y, b.r * (2.6 + 0.4 * p), 0, TAU); g.fill();
+          g.fillStyle = '#e2c4ff';
+        } else if (b.pierce) {
           // 貫通中: 燃える玉（天井に当たるまで）
           g.fillStyle = 'rgba(255,120,40,0.35)';
           g.beginPath(); g.arc(b.x, b.y, b.r * 2.1, 0, TAU); g.fill();
@@ -2165,6 +2161,16 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         } else g.fillStyle = '#ffffff';
         g.beginPath(); g.arc(b.x, b.y, b.r, 0, TAU); g.fill();
         // 貫通までの往復（フリッパー→ブロック）の数を玉の下の点で
+        // 貫通中は、役物も貫通するまでの数を紫の点で
+        const pg = b.pierce && !b.hyper && app.rules ? app.rules.state.pierceGadget.get(b.id) || 0 : 0, hn = Game.config.rules.hyperNeed;
+        if (b.pierce && !b.hyper && hn > 0) {
+          g.fillStyle = '#c58bff';
+          for (let i = 0; i < hn; i++) {
+            g.globalAlpha = i < pg ? 1 : 0.25;
+            g.beginPath(); g.arc(b.x + (i - (hn - 1) / 2) * 5, b.y + b.r + 9, 1.8, 0, TAU); g.fill();
+          }
+          g.globalAlpha = 1;
+        }
         const rl = app.rules ? app.rules.state.rally.get(b.id) : null, pn = Game.config.rules.pierceNeed;
         if (rl && rl.n > 0 && !b.pierce) {
           g.fillStyle = '#ff8a3d';
@@ -2182,11 +2188,14 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         }
       }
 
-      // 打ち出しの溜め
-      if (app.charging) {
-        const k = Math.min(1, app.chargeT / Game.config.plunger.maxChargeSec);
-        g.fillStyle = `rgba(255,213,74,${0.4 + 0.6 * k})`;
-        g.fillRect(L.laneL + 4, Game.config.view.h - 8 - 120 * k, L.laneR - L.laneL - 8, 120 * k);
+      // 次に玉が出る場所（天井）と向き。出るまでの残り時間で円が縮む
+      if (app.serve && app.mode === 'play') {
+        const sv = app.serve, SV = Game.config.serve, y0 = L.fieldTop + 4;
+        const k = Math.max(0, Math.min(1, sv.t / SV.delay)), a = sv.ang * Math.PI / 180;
+        g.strokeStyle = '#7cf2c4'; g.lineWidth = 2;
+        g.beginPath(); g.arc(sv.x, y0 + 8, 8 + 18 * k, 0, TAU); g.stroke();
+        g.beginPath(); g.moveTo(sv.x, y0 + 8); g.lineTo(sv.x + Math.sin(a) * 40, y0 + 8 + Math.cos(a) * 40); g.stroke();
+        g.fillStyle = '#7cf2c4'; g.beginPath(); g.arc(sv.x, y0 + 8, 4, 0, TAU); g.fill();
       }
     },
 
@@ -2227,23 +2236,38 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       }
     },
 
+    // 画面ごとのボタン（main.js の onTap がこれで当たり判定をする）
+    buttons(app) {
+      const V = Game.config.view, cx = V.w / 2;
+      const btn = (id, label, y, w = 200, h = 48, x = cx - w / 2) => ({ id, label, x, y, w, h });
+      if (app.mode === 'title') return [btn('start', 'スタート', 470), btn('help', 'あそびかた', 538), btn('ranking', 'TOP 10', 606)];
+      if (app.mode === 'help') {
+        const last = app.helpPage >= HELP_PAGES.length - 1;
+        return [btn('prev', '← もどる', 760, 150, 48, 30), btn(last ? 'close' : 'next', last ? 'とじる' : 'つぎへ →', 760, 150, 48, V.w - 180)];
+      }
+      if (app.mode === 'ranking') return [btn('back', 'もどる', 760)];
+      if (app.mode === 'over' && app.overT > 0.8) return [btn('again', 'もう一回', 560), btn('ranking', 'TOP 10', 628, 150, 44, cx - 155), btn('title', 'タイトル', 628, 150, 44, cx + 5)];
+      return [];
+    },
+
     drawScreens(g, app) {
-      const V = Game.config.view;
+      const V = Game.config.view, cx = V.w / 2;
       if (app.mode === 'play') return;
-      g.fillStyle = 'rgba(5,5,12,0.72)'; g.fillRect(0, 0, V.w, V.h);
+      g.fillStyle = app.mode === 'help' || app.mode === 'ranking' ? 'rgba(5,5,12,0.95)' : 'rgba(5,5,12,0.72)';
+      g.fillRect(0, 0, V.w, V.h);
       g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff';
       if (app.mode === 'title') {
-        g.font = 'bold 44px system-ui'; g.fillStyle = '#ffd54a'; g.fillText('FEVER', V.w / 2, 296);
-        g.fillStyle = '#ff3d8b'; g.fillText('TANK', V.w / 2, 346); g.fillStyle = '#fff';
-        g.font = '16px system-ui'; g.fillStyle = 'rgba(255,255,255,0.8)';
-        g.fillText('左右タップでフリッパー', V.w / 2, 430);
-        g.fillText('右のレールを長押し→離して打ち出し', V.w / 2, 456);
-        g.font = 'bold 20px system-ui'; g.fillStyle = '#ffd54a';
-        g.fillText('タップでスタート', V.w / 2, 540);
+        g.font = 'bold 52px system-ui'; g.fillStyle = '#ffd54a'; g.fillText('FEVER', cx, 270);
+        g.fillStyle = '#ff3d8b'; g.fillText('TANK', cx, 330);
+        g.font = '15px system-ui'; g.fillStyle = 'rgba(255,255,255,0.75)';
+        g.fillText('左右の半分をタップでフリッパー', cx, 400);
+      } else if (app.mode === 'help') {
+        drawHelp(g, app.helpPage);
+      } else if (app.mode === 'ranking') {
+        drawRanking(g, app);
       } else if (app.mode === 'paused') {
-        g.font = 'bold 24px system-ui'; g.fillText('タップで再開', V.w / 2, V.h / 2);
+        g.font = 'bold 24px system-ui'; g.fillText('タップで再開', cx, V.h / 2);
       } else if (app.mode === 'over') {
-        g.font = 'bold 30px system-ui'; g.fillText('おわり', V.w / 2, 300);
         const os = app.rules.state.overSide;
         if (app.rules.state.overReason === 'blocks') {
           // 限界線と、越えたブロックを暗幕の上に描き直して強調する
@@ -2257,24 +2281,155 @@ canvas { display: block; width: 100vw; height: 100dvh; }
             g.strokeStyle = `rgba(255,80,80,${0.7 + 0.3 * pulse})`; g.lineWidth = 3;
             roundRect(g, b.x - b.w / 2 - 2, b.y - b.h / 2 - 2, b.w + 4, b.h + 4, 5); g.stroke();
           }
-          g.fillStyle = '#fff';
         } else if (os) {
-          // どちらのタンクが溢れたか（矢印つき）
+          // どちらのタンクが溢れたか（溢れたら終わる設定のとき）
           const L = Game.config.layout, tx = os === 'left' ? L.tankW / 2 : V.w - L.tankW / 2;
-          g.font = 'bold 15px system-ui'; g.fillStyle = '#ff6b6b';
-          g.fillText((os === 'left' ? '← 左' : '右 →') + 'のタンクが溢れ線を2秒こえた', V.w / 2, 250);
           g.strokeStyle = '#ff6b6b'; g.lineWidth = 3;
           g.strokeRect(tx - L.tankW / 2 + 2, L.tankTop, L.tankW - 4, L.overflowY - L.tankTop + 20);
-          g.fillStyle = '#fff';
         }
+        g.font = 'bold 40px system-ui'; g.fillStyle = '#fff'; g.fillText('GAME OVER', cx, 300);
         g.font = 'bold 44px system-ui'; g.fillStyle = '#ffd54a';
-        g.fillText(app.rules.state.score.toLocaleString(), V.w / 2, 370);
-        g.font = '16px system-ui'; g.fillStyle = 'rgba(255,255,255,0.8)';
-        g.fillText(app.newBest ? 'ハイスコア更新！' : 'BEST ' + app.best.toLocaleString(), V.w / 2, 420);
-        if (app.overT > 0.8) { g.font = 'bold 20px system-ui'; g.fillStyle = '#fff'; g.fillText('タップでもう一回', V.w / 2, 520); }
+        g.fillText(app.rules.state.score.toLocaleString(), cx, 370);
+        g.font = 'bold 17px system-ui';
+        if (app.lastRank > 0) { g.fillStyle = app.lastRank === 1 ? '#ffd54a' : '#7cf2c4'; g.fillText(app.lastRank === 1 ? 'ハイスコア更新！ 1位' : `TOP 10 入り！ ${app.lastRank}位`, cx, 420); }
+        else { g.font = '16px system-ui'; g.fillStyle = 'rgba(255,255,255,0.8)'; g.fillText('BEST ' + app.best.toLocaleString(), cx, 420); }
+      }
+      // ボタン
+      for (const b of R.buttons(app)) {
+        const main = b.id === 'start' || b.id === 'again' || b.id === 'next' || b.id === 'close';
+        g.fillStyle = main ? '#ffd54a' : 'rgba(255,255,255,0.12)';
+        roundRect(g, b.x, b.y, b.w, b.h, 12); g.fill();
+        g.strokeStyle = main ? '#ffd54a' : 'rgba(255,255,255,0.35)'; g.lineWidth = 2;
+        roundRect(g, b.x, b.y, b.w, b.h, 12); g.stroke();
+        g.fillStyle = main ? '#1a1206' : '#fff';
+        g.font = `bold ${b.h >= 48 ? 19 : 17}px system-ui`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(b.label, b.x + b.w / 2, b.y + b.h / 2 + 1);
       }
     },
   };
+
+  // あそびかた（ページごと）。行頭の記号: '#' 見出し、'*' 強調。文字色は [色] で指定できる
+  const HELP_PAGES = [
+    { title: '基本', lines: [
+      '#左右の半分をタップでフリッパー',
+      '玉は天井から出てくる。',
+      'ブロックを壊すと、破片が',
+      '壊した側（左／右）のタンクへ落ちる。',
+      '',
+      '#タンクは合体',
+      '同じ数字の破片がくっつくと合体して',
+      '数字が1つ上がる。5 と 5 で爆発！',
+      '爆発するとタンクが空になり、',
+      '台に役物がたくさん出る。',
+    ] },
+    { title: '役物', lines: [
+      '[#ffd54a]当たるたびに効果。何回か当たると消える。',
+      '',
+      '[#9fe8ff]● ペグ',
+      '　近くのブロックを1つ壊す',
+      '[#ff3d8b]◎ バンパー',
+      '　強く弾く。倍率 +1',
+      '[#ffe14a]／ スリング',
+      '　横へ弾く。玉が 2 個ふえる',
+      '',
+      '倍率は玉を落とすと ×1 に戻る。',
+    ] },
+    { title: '玉をふやす・貫通', lines: [
+      '#分裂',
+      'フリッパーに触れずにブロックへ',
+      '5 回当たった玉は 2 つに分かれる。',
+      '',
+      '[#ff8a3d]#貫通',
+      'フリッパーで弾く → ブロックに当たる',
+      'を 4 往復した玉は、ブロックを',
+      '一撃で壊して素通りする（天井まで）。',
+      '',
+      '[#d9a3ff]#役物も貫通',
+      '貫通中に役物へ 3 回当たると、',
+      '役物もすり抜ける（天井まで）。',
+    ] },
+    { title: 'タンク放出', lines: [
+      'タンクを強制的に爆発させる。',
+      '中身が多いほど役物が大量に出て、',
+      '玉もふえる。',
+      '',
+      '[#ffd54a]● ゲージ満タンで、動く穴に玉を入れる',
+      '[#ff8fbd]● 1つの玉がフリッパーに触れずに',
+      '[#ff8fbd]　役物へ 12 回当たる',
+      '[#7cf2c4]● ブロックを全部消す',
+      '[#ffd54a]● タンクが金色の線を越える（MAX）',
+      '',
+      'ゲージは合体でたまる。',
+    ] },
+    { title: '終わり', lines: [
+      '[#ff6b6b]#ブロックが赤い限界線に届いたら',
+      '[#ff6b6b]#GAME OVER',
+      '',
+      'ブロックは時間とともに生えて下がり、',
+      'だんだん速くなる。',
+      '',
+      '玉を落とすと、ブロックが 2 段ふえる。',
+      '玉がふえるほど派手でスコアも伸びるが、',
+      '落としやすくなる。',
+      '',
+      '*ふやして、落とさずに、稼げ！',
+    ] },
+  ];
+  R.HELP_PAGES = HELP_PAGES;
+
+  function drawHelp(g, page) {
+    const V = Game.config.view, cx = V.w / 2, P = HELP_PAGES[page];
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = '14px system-ui'; g.fillStyle = 'rgba(255,255,255,0.6)';
+    g.fillText(`あそびかた ${page + 1} / ${HELP_PAGES.length}`, cx, 110);
+    g.font = 'bold 30px system-ui'; g.fillStyle = '#ffd54a';
+    g.fillText(P.title, cx, 160);
+    let y = 230;
+    for (let line of P.lines) {
+      let color = '#fff';
+      const m = line.match(/^\[(#[0-9a-fA-F]+)\]/);
+      if (m) { color = m[1]; line = line.slice(m[0].length); }
+      let font = '17px system-ui';
+      if (line.startsWith('#')) { font = 'bold 20px system-ui'; line = line.slice(1); }
+      else if (line.startsWith('*')) { font = 'bold 22px system-ui'; color = '#ffd54a'; line = line.slice(1); }
+      g.font = font; g.fillStyle = color;
+      g.textAlign = 'left';
+      g.fillText(line, 40, y);
+      y += line === '' ? 18 : 34;
+    }
+    // ページの点
+    for (let i = 0; i < HELP_PAGES.length; i++) {
+      g.fillStyle = i === page ? '#ffd54a' : 'rgba(255,255,255,0.25)';
+      g.beginPath(); g.arc(cx + (i - (HELP_PAGES.length - 1) / 2) * 16, 730, 4, 0, TAU); g.fill();
+    }
+    g.textAlign = 'center';
+  }
+
+  function drawRanking(g, app) {
+    const V = Game.config.view, cx = V.w / 2;
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.font = 'bold 34px system-ui'; g.fillStyle = '#ffd54a'; g.fillText('TOP 10', cx, 130);
+    const top = app.top || [];
+    if (!top.length) { g.font = '17px system-ui'; g.fillStyle = 'rgba(255,255,255,0.7)'; g.fillText('まだ記録がありません', cx, 360); return; }
+    const pad = (n) => String(n).padStart(2, '0');
+    for (let i = 0; i < 10; i++) {
+      const y = 200 + i * 52, e = top[i];
+      const mine = e && e.t === app.lastT && app.lastRank === i + 1;
+      if (mine) { g.fillStyle = 'rgba(124,242,196,0.15)'; roundRect(g, 24, y - 22, V.w - 48, 44, 10); g.fill(); }
+      g.textAlign = 'left'; g.font = 'bold 20px system-ui';
+      g.fillStyle = i === 0 ? '#ffd54a' : i < 3 ? '#ffe9a8' : 'rgba(255,255,255,0.75)';
+      g.fillText(`${i + 1}`, 40, y);
+      if (!e) { g.fillStyle = 'rgba(255,255,255,0.25)'; g.fillText('—', 90, y); continue; }
+      g.textAlign = 'right'; g.font = 'bold 22px system-ui'; g.fillStyle = mine ? '#7cf2c4' : '#fff';
+      g.fillText(e.s.toLocaleString(), 250, y);
+      if (e.t) {
+        const d = new Date(e.t);
+        g.font = '13px system-ui'; g.fillStyle = 'rgba(255,255,255,0.55)';
+        g.fillText(`${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}`, V.w - 36, y);
+      }
+    }
+    g.textAlign = 'center';
+  }
 
   function roundRect(g, x, y, w, h, r) {
     g.beginPath();
@@ -2317,7 +2472,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     ['blocks.jitterDeg', '跳ね返りの揺らぎ（度）', 0, 30, 1],
     ['blocks.boost', 'ブロックで跳ねる倍率', 0.8, 1.6, 0.05],
     ['blocks.kickMin', 'ブロックで跳ねる最低の速さ', 0, 15, 0.5],
-    ['plunger.maxSpeed', '打ち出しの最大速度', 15, 45, 1],
+    ['serve.speed', '天井から出る玉の速さ', 0, 20, 0.5],
+    ['serve.spreadDeg', '天井から出る玉の向きの幅（度）', 0, 85, 5],
     ['flipper.motorSpeed', 'フリッパーの速さ', 10, 60, 1],
     ['fragments.newTierWeights.1', '新しい破片が段2になる重み（段1=0.4）', 0, 2, 0.05],
     ['fragments.newTierWeights.2', '新しい破片が段3になる重み', 0, 2, 0.05],
@@ -2331,6 +2487,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     ['rules.pierceNeed', '貫通に要る往復（フリッパー→ブロック）', 1, 15, 1],
     ['gadgets.spawn.perVolume', '放出で役物を1つ足すタンクの量（段の合計）', 1, 10, 1],
     ['rules.maxReleaseBalls', '溢れたときの最大放出で増える玉', 0, 10, 1],
+    ['rules.hyperNeed', '貫通中に役物も貫通するまでの役物ヒット', 1, 15, 1],
     ['rules.splitNeed', '分裂に要るブロックの連続ヒット', 2, 30, 1],
     ['rules.comboNeed', 'コンボ放出に要る役物の連続ヒット', 3, 40, 1],
     ['rules.releaseBalls', 'タンク放出で増える玉', 0, 5, 1],
@@ -2469,10 +2626,13 @@ canvas { display: block; width: 100vw; height: 100dvh; }
   const SAVE_VER = 1;
 
   const app = {
-    mode: 'title',          // title | play | paused | over
+    mode: 'title',          // title | help | ranking | play | paused | over
     rules: null, spawner: null, phys: null,
     best: 0, newBest: false, overT: 0,
-    charging: false, chargeT: 0,
+    top: [],                // トップ10 [{ s: スコア, t: 日時(ms) }]
+    lastRank: 0, lastT: 0,  // 直前のゲームの順位（10位より下は 0）とその日時
+    helpPage: 0,
+    serve: null,            // 次に天井から出す玉 { x, ang, t }（t 秒後に出す）
     acc: 0, hitstop: 0,
     lastEvents: [],         // e2e・デバッグ用（直近の出来事）
   };
@@ -2483,7 +2643,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       const d = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null');
       if (d && d.v === SAVE_VER) return d;
     } catch (e) { /* 壊れていたら初期値 */ }
-    return { v: SAVE_VER, best: 0, tuning: null };
+    return { v: SAVE_VER, best: 0, top: [], tuning: null };
   }
   function save(patch) {
     const d = Object.assign(load(), patch, { v: SAVE_VER });
@@ -2497,15 +2657,33 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     app.spawner = Game.spawner.create(cfg, Math.random);
     app.gadgets = Game.gadgets.create(cfg, Math.random);
     app.phys = Game.physics.create(cfg);
-    app.acc = 0; app.hitstop = 0; app.charging = false; app.chargeT = 0;
+    app.acc = 0; app.hitstop = 0;
     app.newBest = false; app.overT = 0;
     if (app.fx) app.fx.reset();
     if (app.audio) app.audio.reset();
     dispatch(app.spawner.start());
     const I = cfg.gadgets.initial;
     dispatch(app.gadgets.place([].concat(Array(I.peg).fill('peg'), Array(I.bumper).fill('bumper'), Array(I.sling).fill('sling'))));
-    app.phys.newBallInLane();
+    app.serve = pickServe(0.5);
     app.mode = 'play';
+  }
+
+  // 天井のランダムな位置・ランダムな向き
+  function pickServe(t) {
+    const L = cfg.layout, SV = cfg.serve;
+    return { x: L.fieldL + SV.margin + Math.random() * (L.fieldR - L.fieldL - 2 * SV.margin),
+      ang: (Math.random() * 2 - 1) * SV.spreadDeg, t };
+  }
+
+  // トップ10に入れる。順位（入らなければ 0）を返す
+  function record(score) {
+    const t = Date.now();
+    const top = app.top.concat([{ s: score, t }]).sort((a, b) => b.s - a.s || a.t - b.t).slice(0, 10);
+    app.top = top;
+    app.lastT = t;
+    app.lastRank = top.findIndex((x) => x.t === t) + 1;
+    save({ top });
+    return app.lastRank;
   }
 
   // 出来事を配る。新しく生まれた出来事もここで順に処理する
@@ -2532,6 +2710,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         return (e.pierce ? S.smash(e.blockId) : S.hit(e.blockId)).concat(out);
       }
       case 'pierce': P.setPierce(e.ballId, true); return [];
+      case 'hyper': P.setHyper(e.ballId, true); return [];
+      case 'pierceEnd': return R.pierceEnded(e.ballId);
       case 'blocksOverLimit': return R.blocksOver();
       case 'split': {
         if (P.ballCount() >= cfg.ball.maxOnField) return [];
@@ -2543,7 +2723,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       case 'ballHitGadget': {
         const g = app.gadgets.items.get(e.gadgetId);
         if (!g) return [];
-        const hit = R.gadgetHit(Object.assign({}, g), e.ballId);
+        const hit = R.gadgetHit(Object.assign({}, g), e.ballId, e.pierce, e.hyper);
         return hit.concat(app.gadgets.hit(g.id));
       }
       case 'ballHit': return e.what === 'flipper' ? R.comboReset(e.ballId).concat(R.flipperHit(e.ballId)) : [];
@@ -2551,7 +2731,6 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       case 'ballDrained': {
         const out = R.ballGone(e.ballId).concat(R.drain(e.side));
         if (out.length) out.push(...S.forceRows(cfg.rules.drainRows, 'drain'));
-        if (P.ballCount() === 0 && !P.ballReady()) P.newBallInLane();
         return out;
       }
       // ブロックから
@@ -2596,8 +2775,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       }
       case 'gameOver': {
         app.mode = 'over'; app.overT = 0;
-        app.charging = false;
         if (R.state.score > app.best) { app.best = R.state.score; app.newBest = true; save({ best: app.best }); }
+        record(R.state.score);
         return [];
       }
     }
@@ -2622,7 +2801,17 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       if (cfg.rules.clearRelease) ev.push(...app.rules.release(riskierSide(), 'clear', (cfg.layout.fieldL + cfg.layout.fieldR) / 2, 330));
       dispatch(ev);
     }
-    if (P.ballCount() === 0 && !P.ballReady() && app.mode === 'play') P.newBallInLane();
+    // 台に玉がなければ、天井から出す（出る場所を少し見せてから）
+    if (app.mode === 'play' && P.ballCount() === 0) {
+      if (!app.serve) app.serve = pickServe(cfg.serve.delay);
+      app.serve.t -= h;
+      if (app.serve.t <= 0) {
+        const sv = app.serve;
+        app.serve = null;
+        P.serveBall(sv.x, sv.ang, cfg.serve.speed);
+        dispatch([{ type: 'serve', x: sv.x, y: cfg.layout.fieldTop, ang: sv.ang }]);
+      }
+    } else if (P.ballCount() > 0) app.serve = null;
   }
 
   function update(dt) {
@@ -2630,7 +2819,6 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     if (app.audio) app.audio.update(dt, app);
     if (app.mode === 'over') app.overT += dt;
     if (app.mode !== 'play') return;
-    if (app.charging) app.chargeT += dt;
 
     // ヒットストップ: 物理とルールを止める（入力は受け付けて、フリッパーの状態は保持）
     if (app.fx) app.hitstop = Math.max(app.hitstop, app.fx.takeHitstop());
@@ -2642,11 +2830,27 @@ canvas { display: block; width: 100vw; height: 100dvh; }
   }
 
   // --- 入力 ---
-  function onTap() {
+  // 画面のボタン（render.buttons が場所を決める）。ボタン以外をタップしたときの動きも画面ごとに決める
+  function onTap(x, y) {
     if (app.audio) app.audio.unlock();
-    if (app.mode === 'title') newGame();
-    else if (app.mode === 'paused') { app.mode = 'play'; }
-    else if (app.mode === 'over' && app.overT > 0.8) newGame();
+    if (app.mode === 'play') return;
+    if (app.mode === 'paused') { app.mode = 'play'; return; }
+    if (app.mode === 'over' && app.overT <= 0.8) return;
+    const b = Game.render.buttons(app).find((b) => x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h);
+    const id = b ? b.id : 'bg';
+    const pages = Game.render.HELP_PAGES.length;
+    if (app.mode === 'title') {
+      if (id === 'help') { app.mode = 'help'; app.helpPage = 0; } else if (id === 'ranking') app.mode = 'ranking'; else newGame();
+    } else if (app.mode === 'help') {
+      if (id === 'prev') { if (app.helpPage === 0) app.mode = 'title'; else app.helpPage -= 1; }
+      else if (id === 'close' || (app.helpPage >= pages - 1 && id !== 'prev')) app.mode = 'title';
+      else app.helpPage += 1; // 「つぎへ」とボタン以外は次のページ
+    } else if (app.mode === 'ranking') {
+      app.mode = app.rankingFrom || 'title';
+      app.rankingFrom = null;
+    } else if (app.mode === 'over') {
+      if (id === 'ranking') { app.rankingFrom = 'over'; app.mode = 'ranking'; } else if (id === 'title') app.mode = 'title'; else newGame();
+    }
   }
   const handlers = {
     tap: onTap,
@@ -2655,14 +2859,6 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       app.phys.setFlipper(side, up);
       if (up && app.mode === 'play') dispatch([{ type: 'flip', side }]);
     },
-    canCharge: () => app.mode === 'play' && app.phys && app.phys.ballReady(),
-    chargeStart() { if (handlers.canCharge()) { app.charging = true; app.chargeT = 0; } },
-    chargeEnd() {
-      if (!app.charging) return;
-      app.charging = false;
-      const k = Math.min(1, app.chargeT / cfg.plunger.maxChargeSec);
-      if (app.phys.ballReady()) { app.phys.launch(k); dispatch([{ type: 'launch', power: k }]); }
-    },
     secret() { if (Game.tuner) Game.tuner.toggle(app); },
   };
 
@@ -2670,6 +2866,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
   function boot() {
     const d = load();
     app.best = d.best || 0;
+    app.top = Array.isArray(d.top) ? d.top.filter((x) => x && typeof x.s === 'number') : [];
+    if (!app.top.length && app.best > 0) app.top = [{ s: app.best, t: 0 }]; // 前の版のハイスコアを引き継ぐ
     if (d.tuning && Game.tuner) Game.tuner.apply(d.tuning);
     const canvas = document.getElementById('c');
     Game.render.init(canvas);
@@ -2677,7 +2875,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     app.audio = Game.audio ? Game.audio.create(cfg) : null;
     Game.input.attach(canvas, handlers);
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden && app.mode === 'play') { app.mode = 'paused'; app.charging = false; }
+      if (document.hidden && app.mode === 'play') app.mode = 'paused';
       if (app.audio) app.audio.setHidden(document.hidden);
     });
 
