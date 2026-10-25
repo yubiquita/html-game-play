@@ -147,6 +147,10 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       baseScore: 10,
       explodeBonus: 500,       // 爆発ボーナス = explodeBonus × 連鎖の深さ
       chainWindowSec: 3,       // 同じ側の前の爆発から何秒以内の再爆発を連鎖とみなすか
+      drainRows: 2,            // 玉を落としたら、すぐに生えるブロックの列数（ペナルティ）
+      drainOjama: false,       // 玉を落としたら、おじゃま破片も入れるか
+      clearBonus: 300,         // 全消しのボーナス（× 倍率）
+      clearRows: 2,            // 全消しのあと、すぐに生やす列数
       overflowSec: 2,          // 溢れ線を何秒越え続けたら終了
       warnMargin: 40,          // 溢れ線の何 px 手前から警告
     },
@@ -264,7 +268,17 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     function drain(side) {
       if (state.over) return [];
       state.mult = 1;
-      return [{ type: 'drain', side }, ...addFragment(side, { ojama: true })];
+      const ev = [{ type: 'drain', side }];
+      if (RU.drainOjama) ev.push(...addFragment(side, { ojama: true }));
+      return ev;
+    }
+
+    // ブロックを全部消したごほうび
+    function allClear() {
+      if (state.over) return [];
+      const points = RU.clearBonus * state.mult;
+      state.score += points;
+      return [{ type: 'allClear', points }];
     }
 
     // tankTopY[side]：そのタンクの破片の上端の最小 y（無ければ Infinity）
@@ -289,7 +303,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       return ev;
     }
 
-    return { state, addFragment, blockBroken, fragmentsTouch, gadgetHit, drain, tick };
+    return {
+      allClear, state, addFragment, blockBroken, fragmentsTouch, gadgetHit, drain, tick };
   }
 
   Game.rules = { create, pickIndex };
@@ -335,6 +350,31 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       return [{ type: 'spawn', blocks: made }];
     }
 
+    // 既存の列を1段下げ、限界線に届いたものを自動で壊し、row 0 に新しい列を出す
+    function spawnRow() {
+      const ev = [], moved = [], broken = [];
+      for (const b of blocks.values()) {
+        b.row += 1;
+        b.y = rowY(b.row);
+        if (b.y + b.h / 2 >= L.limitY) broken.push(b); else moved.push(b);
+      }
+      ev.push({ type: 'shift', blocks: moved });
+      for (const b of broken) {
+        blocks.delete(b.id);
+        ev.push({ type: 'autoBreak', block: b, side: sideOf(b.x) });
+      }
+      ev.push({ type: 'spawn', blocks: makeRow(0) });
+      return ev;
+    }
+
+    // すぐに n 列生やす（玉を落としたペナルティ・全消しの補充）。生える時計はリセットする
+    function forceRows(n, reason) {
+      const ev = [{ type: 'forceRows', n, reason }];
+      for (let i = 0; i < n; i++) ev.push(...spawnRow());
+      acc = 0;
+      return ev;
+    }
+
     function tick(dt) {
       time += dt;
       acc += dt;
@@ -342,18 +382,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       const iv = interval(time);
       if (acc >= iv) {
         acc -= iv;
-        const moved = [], broken = [];
-        for (const b of blocks.values()) {
-          b.row += 1;
-          b.y = rowY(b.row);
-          if (b.y + b.h / 2 >= L.limitY) broken.push(b); else moved.push(b);
-        }
-        ev.push({ type: 'shift', blocks: moved });
-        for (const b of broken) {
-          blocks.delete(b.id);
-          ev.push({ type: 'autoBreak', block: b, side: sideOf(b.x) });
-        }
-        ev.push({ type: 'spawn', blocks: makeRow(0) });
+        ev.push(...spawnRow());
         ev.push({ type: 'tempo', interval: interval(time) });
       }
       ev.push({ type: 'beat', phase: Math.min(1, acc / interval(time)) });
@@ -386,7 +415,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         .sort((a, b) => d2(a) - d2(b) || a.id - b.id).slice(0, n).map(breakOne);
     }
 
-    return { blocks, start, tick, hit, breakRows, breakNearest, sideOf, interval, get time() { return time; } };
+    return {
+      forceRows, blocks, start, tick, hit, breakRows, breakNearest, sideOf, interval, get time() { return time; } };
   }
 
   Game.spawner = { create };
@@ -951,6 +981,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     const beams = [];             // ペグ → 壊すブロックへの光の線
     let lastPeg = null;           // 直前のペグの衝撃波 {x,y}
     let lastExplodeSide = 'left';
+    let dangerA = 0;              // 玉を落としたペナルティの赤い脈
 
     function burst(x, y, n, speed, hue, life = 0.5, size = 3, grav = 0, spread = TAU, dir = 0) {
       if (!on('particles')) return;
@@ -988,7 +1019,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       reset() {
         pool.clear(); popups.length = rings.length = comets.length = 0;
         blockHit.clear(); fragBorn.clear(); trails.clear(); gadgetHit.clear(); gadgetBorn.clear(); beams.length = 0; lastPeg = null;
-        trauma = sink = flashA = invertA = multPop = beatPulse = heat = 0; hitstopReq = 0;
+        trauma = sink = flashA = invertA = multPop = beatPulse = heat = dangerA = 0; hitstopReq = 0;
         warn.left = warn.right = 0;
       },
       resize(max) { pool = createParticlePool(max); },
@@ -1080,6 +1111,25 @@ canvas { display: block; width: 100vw; height: 100dvh; }
             if (gd.kind !== 'peg') { shake(0.2); doFlash(0.25, GADGET_HUE[gd.kind]); }
             break;
           }
+          case 'forceRows':
+            if (e.reason === 'drain') {
+              // ペナルティ: ブロックが叩きつけられるように沈み、赤く脈打つ
+              shake(0.55); sink = 10 + 6 * e.n; stop(0.06);
+              if (on('background')) { dangerA = 1; }
+              popup(V.w / 2, cfg.blocks.firstRowY + 30, `+${e.n} ROWS`, '#ff5a5a', 28, 1.1);
+              for (let i = 0; i < 24; i++) burst(L.fieldL + Math.random() * (L.fieldR - L.fieldL), cfg.blocks.firstRowY, 1, 200, 0, 0.5, 3, 400, 1.2, Math.PI / 2);
+            } else {
+              sink = 6;
+            }
+            break;
+          case 'allClear':
+            stop(0.08); shake(0.4); doFlash(0.5, 55);
+            popup(V.w / 2, 330, 'ALL CLEAR!', '#7cf2c4', 38, 1.6);
+            popup(V.w / 2, 376, '+' + e.points, '#fff', 22, 1.6);
+            // 紙吹雪
+            for (let i = 0; i < 6; i++) burst(L.fieldL + (i + 0.5) * (L.fieldR - L.fieldL) / 6, 260, 30, 420, i * 60, 1.2, 4, 500, Math.PI * 0.9, -Math.PI / 2);
+            multPop = 1;
+            break;
           case 'mult':
             multPop = 1;
             popup(V.w / 2, 90, '×' + e.mult, '#ffd54a', 22 + Math.min(20, e.mult * 2), 0.9);
@@ -1115,6 +1165,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         sink *= Math.exp(-dt * 14);
         flashA = Math.max(0, flashA - dt * 4);
         invertA = Math.max(0, invertA - dt * 3);
+        dangerA = Math.max(0, dangerA - dt * 1.2);
         multPop = Math.max(0, multPop - dt * 2.5);
         beatPulse = Math.max(0, beatPulse - dt * 2.2);
         for (const s of ['left', 'right']) warn[s] = Math.max(0, warn[s] - dt * 2);
@@ -1165,6 +1216,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         grd.addColorStop(0, `hsl(${hue},60%,${l + 6}%)`);
         grd.addColorStop(1, `hsl(${hue},50%,${Math.max(2, l - 3)}%)`);
         g.fillStyle = grd; g.fillRect(0, 0, V.w, V.h);
+        if (dangerA > 0) { g.fillStyle = `rgba(255,30,40,${0.22 * dangerA})`; g.fillRect(0, 0, V.w, V.h); }
       },
 
       drawWorld(g, app) {
@@ -1393,6 +1445,13 @@ canvas { display: block; width: 100vw; height: 100dvh; }
             for (let i = 0; i < 3; i++) tone(noteHz(13 + i * 2), { type: 'triangle', vol: 0.1, dec: 0.15, delay: 0.04 * i });
             break;
           case 'mult': tone(noteHz(5 + Math.min(e.mult, 15)), { type: 'square', vol: 0.12, dec: 0.2 }); tone(noteHz(7 + Math.min(e.mult, 15)), { type: 'square', vol: 0.08, dec: 0.2, delay: 0.06 }); break;
+          case 'forceRows':
+            if (e.reason === 'drain') for (let i = 0; i < e.n; i++) { tone(70 - i * 10, { type: 'sine', vol: 0.6, dec: 0.3, slide: 0.5, delay: 0.12 * i }); noise({ vol: 0.25, dec: 0.15, freq: 300, type: 'lowpass', delay: 0.12 * i }); }
+            break;
+          case 'allClear':
+            for (let i = 0; i < 8; i++) tone(noteHz(10 + i), { type: 'square', vol: 0.1, dec: 0.18, delay: 0.06 * i });
+            tone(noteHz(20), { type: 'triangle', vol: 0.2, dec: 0.6, delay: 0.5 });
+            break;
           case 'multiball':
             for (let i = 0; i < 6; i++) tone(noteHz(15 + i), { type: 'square', vol: 0.07, dec: 0.1, delay: 0.05 * i });
             break;
@@ -1790,6 +1849,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     ['gadgets.sling.hp', 'スリングが消えるまでの回数', 1, 6, 1],
     ['gadgets.bumper.kick', 'バンパーの弾く強さ', 4, 25, 1],
     ['gadgets.sling.kick', 'スリングの弾く強さ', 4, 25, 1],
+    ['rules.drainRows', '落としたときに増える列数', 0, 5, 1],
+    ['rules.clearRows', '全消しのあと生やす列数', 1, 5, 1],
     ['rules.chainWindowSec', '連鎖とみなす秒数', 0.5, 8, 0.5],
     ['audio.volume', '音量', 0, 1, 0.05],
   ];
@@ -1807,6 +1868,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     for (const [p] of SLIDERS) if (get(Game.config, p) !== get(DEFAULTS, p)) out[p] = get(Game.config, p);
     out['fx.enabled'] = Game.config.fx.enabled;
     out['audio.enabled'] = Game.config.audio.enabled;
+    out['rules.drainOjama'] = Game.config.rules.drainOjama;
     for (const t of TOGGLES) out['fx.on.' + t] = Game.config.fx.on[t];
     return out;
   }
@@ -1852,6 +1914,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
       const all = h('input', { type: 'checkbox', checked: C.fx.enabled, onchange: (e) => { C.fx.enabled = e.target.checked; T.persist(); } });
       el.append(row('演出を全部 ON（OFF で掛け算前と比べる）', all));
+      const oj = h('input', { type: 'checkbox', checked: C.rules.drainOjama, onchange: (e) => { C.rules.drainOjama = e.target.checked; T.persist(); } });
+      el.append(row('落としたらおじゃま破片も入れる', oj));
       const snd = h('input', { type: 'checkbox', checked: C.audio.enabled, onchange: (e) => { C.audio.enabled = e.target.checked; T.persist(); } });
       el.append(row('音', snd));
 
@@ -1971,6 +2035,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       case 'fragTouch': return R.fragmentsTouch(e.side, e.a, e.b);
       case 'ballDrained': {
         const out = R.drain(e.side);
+        if (out.length) out.push(...S.forceRows(cfg.rules.drainRows, 'drain'));
         if (P.ballCount() === 0 && !P.ballReady()) P.newBallInLane();
         return out;
       }
@@ -2016,6 +2081,9 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     dispatch(P.drainEvents());
     dispatch(app.spawner.tick(h));
     dispatch(app.rules.tick(h, P.tankTopY()));
+    if (app.mode === 'play' && app.spawner.blocks.size === 0) {
+      dispatch(app.rules.allClear().concat(app.spawner.forceRows(cfg.rules.clearRows, 'clear')));
+    }
     if (P.ballCount() === 0 && !P.ballReady() && app.mode === 'play') P.newBallInLane();
   }
 
