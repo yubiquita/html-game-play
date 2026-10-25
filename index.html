@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#0b0b18">
-<title>ドーパミン・ピンボール</title>
+<title>FEVER TANK</title>
 <style>
 html, body { margin: 0; height: 100%; background: #0b0b18; overflow: hidden; }
 body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
@@ -69,7 +69,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       fieldL: 60, fieldR: 306, // 台（打ち出しレールを除く）
       laneL: 306, laneR: 330,  // 打ち出しレール
       fieldTop: 64,
-      limitY: 520,             // 台の限界線（ここまで下がったブロックは自動で壊れる）
+      limitY: 630,             // 台の限界線（ここまで下がったブロックは自動で壊れる）
       flipperY: 760,           // フリッパーの軸の高さ
       flipperLen: 64,
       flipperW: 12,
@@ -83,7 +83,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     },
 
     ball: { r: 7, density: 1, restitution: 0.4, friction: 0.1, maxOnField: 5,
-            laneRestSpeed: 0.3 }, // m/s。レールの底でこれより遅い玉は待機中とみなす
+            laneRestSpeed: 0.3,   // m/s。レールの底でこれより遅い玉は待機中とみなす
+            stuckSpeed: 0.4, stuckSec: 1.2, unstickKick: 6 }, // 台の上でこの速さ未満が stuckSec 続いたら弾き出す（m/s）
     gravity: 14,               // m/s^2（台の傾きを含めた見かけの重力）
 
     flipper: {
@@ -100,10 +101,12 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
     blocks: {
       cols: 7, w: 30, h: 16, gapX: 4, rowPitch: 22,
-      firstRowY: 100,          // 生えた列が出てくる y
+      firstRowY: 232,          // 生えた列が出てくる y（上の役物の帯のすぐ下）
       hpWeights: [0.6, 0.3, 0.1], // 硬さ1,2,3 の出やすさ
       fillRate: 0.75,          // 1列のうちブロックがあるマスの割合
       restitution: 0.6,
+      boost: 1.1,              // ブロックで跳ね返る速さ = 入ってきた速さ × boost（以上）
+      kickMin: 7,              // m/s。ブロックで跳ね返る速さの最低値（ゆっくり落ちても必ず跳ねる）
       startRows: 4,            // 始まったときにある列数
     },
 
@@ -124,11 +127,13 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
     // 役物。爆発で増え、当たるたびに効果。hp 回当たると消える
     gadgets: {
-      bandTop: 550, bandBottom: 665,   // 出る帯（限界線より下・斜めガイドより上）
+      bandTop: 100, bandBottom: 205,   // 出る帯（天井の下・ブロックが生える位置より上）
       marginX: 14,                      // 台の左右の壁からの余白
+      marginRight: 46,                  // 右の余白（打ち出した玉が入ってくる湾曲ガイドを塞がない）
       minDist: 34,                      // 役物どうしの最小距離（中心間）
       max: 18,                          // 台の役物の総数の上限
       tries: 30,                        // 置き場所の抽選回数（置けなければ置かない）
+      initial: { peg: 6, bumper: 2, sling: 1 }, // 始まったときに置いておく役物
       spawn: { peg: 4, bumper: 1, sling: 0, slingFromChain: 2, pegPerExtraChain: 2 },
       peg:    { hp: 2, r: 5,  score: 20, restitution: 0.6 },
       bumper: { hp: 3, r: 14, score: 50, kick: 12 },          // kick: 弾き返す速さ（m/s）
@@ -399,7 +404,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 
     // ほかの全役物と minDist 以上離れた場所を tries 回まで探す。だめなら null
     function findSpot() {
-      const x0 = L.fieldL + GD.marginX, x1 = L.fieldR - GD.marginX;
+      const x0 = L.fieldL + GD.marginX, x1 = L.fieldR - (GD.marginRight != null ? GD.marginRight : GD.marginX);
       for (let i = 0; i < GD.tries; i++) {
         const x = x0 + rng() * (x1 - x0);
         const y = GD.bandTop + rng() * (GD.bandBottom - GD.bandTop);
@@ -564,7 +569,10 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       const bBody = ball === ua ? ba : bb;
       const rel = Vec2.sub(bBody.getLinearVelocity(), ob.getLinearVelocity());
       const speed = rel.length() * S;
-      if (other.kind === 'block') events.push({ type: 'ballHitBlock', ballId: ball.id, blockId: other.id, speed });
+      if (other.kind === 'block') {
+        events.push({ type: 'ballHitBlock', ballId: ball.id, blockId: other.id, speed });
+        kicks.push({ ballId: ball.id, blockId: other.id, inSpeed: speed / S, blockBody: ob });
+      }
       else if (other.kind === 'flipper') events.push({ type: 'ballHit', ballId: ball.id, what: 'flipper', speed });
       else if (other.kind === 'gadget') {
         const key = ball.id + ':' + other.id;
@@ -579,8 +587,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     // ---- 玉 ----
     function makeBall(x, y) {
       const id = nextBallId++;
-      const body = world.createBody({ type: 'dynamic', position: v(x, y), bullet: true });
-      body.setUserData({ kind: 'ball', id });
+      const body = world.createBody({ type: 'dynamic', position: v(x, y), bullet: true, allowSleep: false });
+      body.setUserData({ kind: 'ball', id, still: 0 });
       body.createFixture(pl.Circle(m(BA.r)), { density: BA.density, restitution: BA.restitution, friction: BA.friction });
       balls.set(id, body);
       return body;
@@ -611,8 +619,11 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     // 役物に当たった玉を弾く（コールバック内では速度をいじらない）
     function applyKicks() {
       for (const k of kicks.splice(0, kicks.length)) {
-        const bb = balls.get(k.ballId), gb = gadgets.get(k.gadgetId);
-        if (!bb || !gb) continue;
+        const bb = balls.get(k.ballId);
+        if (!bb) continue;
+        if (k.blockBody) { kickFromBlock(bb, k); continue; }
+        const gb = gadgets.get(k.gadgetId);
+        if (!gb) continue;
         const u = gb.getUserData(), bp = bb.getPosition(), gp = gb.getPosition();
         const dx = bp.x - gp.x, dy = bp.y - gp.y;
         if (u.gkind === 'bumper') {
@@ -632,10 +643,46 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       }
     }
 
+    // ブロックに当たった玉は必ず少し増幅して跳ね返す（当たった面の外向き成分を 入ってきた速さ×boost と kickMin の大きい方に）
+    // ブロックはこの step で壊れて消えていることがあるので、body の位置は contact 時に持っている参照から読む
+    function kickFromBlock(bb, k) {
+      const u = k.blockBody.getUserData() || {};
+      const bp = bb.getPosition(), cp = k.blockBody.getPosition();
+      const hw = (u.w || cfg.blocks.w) / 2 / S, hh = (u.h || cfg.blocks.h) / 2 / S;
+      const qx = Math.max(cp.x - hw, Math.min(bp.x, cp.x + hw)), qy = Math.max(cp.y - hh, Math.min(bp.y, cp.y + hh));
+      let nx = bp.x - qx, ny = bp.y - qy;
+      const d = Math.hypot(nx, ny);
+      if (d < 1e-6) { nx = 0; ny = bp.y < cp.y ? -1 : 1; } else { nx /= d; ny /= d; }
+      const lv = bb.getLinearVelocity(), vn = lv.x * nx + lv.y * ny;
+      const want = Math.max(k.inSpeed * cfg.blocks.boost, cfg.blocks.kickMin);
+      if (vn < want) bb.setLinearVelocity(Vec2(lv.x + (want - vn) * nx, lv.y + (want - vn) * ny));
+      bb.setAwake(true);
+    }
+
+    // 台の上で玉がほぼ止まったまま一定時間たったら、上向きに軽く弾き出す（どこかに乗って静止するのを防ぐ）
+    function unstick(dt) {
+      for (const body of balls.values()) {
+        if (body === laneBall) continue;
+        // フリッパーの上で玉を止めて狙う（キャッチ）のは正しい遊び方なので対象外
+        if (body.getPosition().y * S > L.guideTopY) continue;
+        const u = body.getUserData();
+        const sp = body.getLinearVelocity().length();
+        u.still = sp < BA.stuckSpeed ? u.still + dt : 0;
+        if (u.still >= BA.stuckSec) {
+          u.still = 0;
+          const dir = Math.random() < 0.5 ? -1 : 1;
+          body.setLinearVelocity(Vec2(dir * BA.unstickKick * 0.4, -BA.unstickKick));
+          body.setAwake(true);
+          events.push({ type: 'unstuck', ballId: u.id });
+        }
+      }
+    }
+
     function step(dt) {
       time += dt;
       world.step(dt, 8, 3);
       applyKicks();
+      unstick(dt);
       for (const [id, body] of balls) {
         const p = body.getPosition(), x = p.x * S, y = p.y * S;
         if (y > L.drainY) {
@@ -1540,7 +1587,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       g.setLineDash([]);
       g.strokeStyle = 'rgba(255,255,255,0.05)';
       const cx = (L.fieldL + L.fieldR) / 2;
-      g.beginPath(); g.moveTo(cx, L.fieldTop); g.lineTo(cx, L.limitY); g.stroke();
+      g.beginPath(); g.moveTo(cx, Game.config.blocks.firstRowY - 12); g.lineTo(cx, L.limitY); g.stroke();
       // 物理の固定物（壁・ガイド・レール）
       if (snap.statics) {
         g.strokeStyle = 'rgba(180,200,255,0.55)'; g.lineWidth = 3; g.lineCap = 'round';
@@ -1647,8 +1694,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       g.fillStyle = 'rgba(5,5,12,0.72)'; g.fillRect(0, 0, V.w, V.h);
       g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff';
       if (app.mode === 'title') {
-        g.font = 'bold 34px system-ui'; g.fillText('DOPAMINE', V.w / 2, 300);
-        g.fillText('PINBALL', V.w / 2, 344);
+        g.font = 'bold 44px system-ui'; g.fillStyle = '#ffd54a'; g.fillText('FEVER', V.w / 2, 296);
+        g.fillStyle = '#ff3d8b'; g.fillText('TANK', V.w / 2, 346); g.fillStyle = '#fff';
         g.font = '16px system-ui'; g.fillStyle = 'rgba(255,255,255,0.8)';
         g.fillText('左右タップでフリッパー', V.w / 2, 430);
         g.fillText('右のレールを長押し→離して打ち出し', V.w / 2, 456);
@@ -1703,6 +1750,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     ['fx.trail', '玉の尾', 0, 3, 0.1],
     ['fx.particleMax', '粒の上限（再生成）', 100, 5000, 100],
     ['gravity', '重力', 6, 30, 0.5],
+    ['blocks.boost', 'ブロックで跳ねる倍率', 0.8, 1.6, 0.05],
+    ['blocks.kickMin', 'ブロックで跳ねる最低の速さ', 0, 15, 0.5],
     ['plunger.maxSpeed', '打ち出しの最大速度', 15, 45, 1],
     ['flipper.motorSpeed', 'フリッパーの速さ', 10, 60, 1],
     ['fragments.newTierWeights.1', '新しい破片が段2になる重み（段1=0.7）', 0, 2, 0.05],
@@ -1823,7 +1872,7 @@ canvas { display: block; width: 100vw; height: 100dvh; }
 (function () {
   const Game = (window.Game = window.Game || {});
   const cfg = Game.config;
-  const SAVE_KEY = 'dopamine-pinball';
+  const SAVE_KEY = 'dopamine-pinball'; // 名前を変えても保存は引き継ぐ
   const SAVE_VER = 1;
 
   const app = {
@@ -1860,6 +1909,8 @@ canvas { display: block; width: 100vw; height: 100dvh; }
     if (app.fx) app.fx.reset();
     if (app.audio) app.audio.reset();
     dispatch(app.spawner.start());
+    const I = cfg.gadgets.initial;
+    dispatch(app.gadgets.place([].concat(Array(I.peg).fill('peg'), Array(I.bumper).fill('bumper'), Array(I.sling).fill('sling'))));
     app.phys.newBallInLane();
     app.mode = 'play';
   }
@@ -1896,8 +1947,9 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         return out;
       }
       // ブロックから
-      case 'broken': return R.blockBroken(e.side, e.cause || 'ball');
-      case 'autoBreak': return R.blockBroken(e.side, 'auto');
+      // 壊れたブロックの当たり判定はすぐ消す（残すと何もない所で玉が引っかかる）
+      case 'broken': P.syncBlocks(S.blocks.values()); return R.blockBroken(e.side, e.cause || 'ball');
+      case 'autoBreak': P.syncBlocks(S.blocks.values()); return R.blockBroken(e.side, 'auto');
       case 'spawn': case 'shift': P.syncBlocks(S.blocks.values()); return [];
       // ルールから
       case 'fragmentAdded': P.addFragment(e.side, e.id, e.tier); return [];
