@@ -1905,11 +1905,19 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       const pointers = new Map(); // pointerId -> { role, t0, x, y }
       const flipperHold = { left: 0, right: 0 }; // 押している指の数
 
+      let lock = false; // キーボードの換金キー（F・J）を押している間は、フリッパーが上がらない
+      const raised = (side) => flipperHold[side] > 0 && !lock;
       function setFlipper(side, delta) {
-        const before = flipperHold[side] > 0;
+        const before = raised(side);
         flipperHold[side] = Math.max(0, flipperHold[side] + delta);
-        const after = flipperHold[side] > 0;
+        const after = raised(side);
         if (before !== after) handlers.flipper(side, after);
+      }
+      function setLock(on) {
+        if (on === lock) return;
+        const before = { left: raised('left'), right: raised('right') };
+        lock = on;
+        for (const side of ['left', 'right']) if (raised(side) !== before[side]) handlers.flipper(side, raised(side));
       }
 
       function down(e) {
@@ -1948,9 +1956,9 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         }
       }, 100);
 
-      // PC（デバッグ用）: Z / ← 左、/ / → 右
-      // PC: ↑ / Space で換金
-      addEventListener('keydown', (e) => { if ((e.code === 'ArrowUp' || e.code === 'Space') && !e.repeat && handlers.cash) handlers.cash(); });
+      // PC: Z / ← 左、/ / → 右。換金は F と J の同時押し。
+      // スマホで上をタップするときと同じく、F か J を押している間は両方のフリッパーが下がる（操作の代償をそろえる）
+      const CASH_KEYS = ['KeyF', 'KeyJ'];
       const keyMap = { KeyZ: 'left', ArrowLeft: 'left', Slash: 'right', ArrowRight: 'right' };
       const keysDown = new Set();
       addEventListener('keydown', (e) => {
@@ -1958,10 +1966,15 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         keysDown.add(e.code);
         handlers.tap(-1, -1);
         if (keyMap[e.code]) setFlipper(keyMap[e.code], +1);
+        if (CASH_KEYS.includes(e.code)) {
+          setLock(true);
+          if (CASH_KEYS.every((k) => keysDown.has(k)) && handlers.cash) handlers.cash();
+        }
       });
       addEventListener('keyup', (e) => {
         keysDown.delete(e.code);
         if (keyMap[e.code]) setFlipper(keyMap[e.code], -1);
+        if (CASH_KEYS.includes(e.code)) setLock(CASH_KEYS.some((k) => keysDown.has(k)));
       });
     },
   };
