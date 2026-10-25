@@ -357,9 +357,11 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         }
       }
       // 刻みの足し算の誤差で 2 秒ちょうどを取りこぼさないよう、わずかに許す
-      if (SIDES.some((s) => state.overflowT[s] >= RU.overflowSec - 1e-9)) {
+      const overSide = SIDES.find((s) => state.overflowT[s] >= RU.overflowSec - 1e-9);
+      if (overSide) {
         state.over = true;
-        ev.push({ type: 'gameOver', score: state.score });
+        state.overSide = overSide;
+        ev.push({ type: 'gameOver', score: state.score, side: overSide });
       }
       return ev;
     }
@@ -948,11 +950,27 @@ canvas { display: block; width: 100vw; height: 100dvh; }
       for (const key of lastGadgetHit.keys()) if (key.endsWith(':' + id)) lastGadgetHit.delete(key);
     }
 
+    // 溢れ判定に使う山の高さ。タンクの底から「触れ合っている破片」をたどって届くものだけを数える
+    // （落ちている途中で別の破片に触れたものは数えない。玉が次々に壊すと破片は上で重なって生まれる）
     function tankTopY() {
       const top = { left: Infinity, right: Infinity };
+      const grounded = new Set(), queue = [];
       for (const body of fragments.values()) {
         const u = body.getUserData();
-        if (!u.landed) continue;
+        if (body.getPosition().y * S + u.r >= V.h - 2) { grounded.add(body); queue.push(body); }
+      }
+      while (queue.length) {
+        const body = queue.pop();
+        for (let ce = body.getContactList(); ce; ce = ce.next) {
+          const o = ce.other;
+          if (grounded.has(o) || !ce.contact.isTouching()) continue;
+          const ou = o.getUserData();
+          if (!ou || ou.kind !== 'frag') continue;
+          grounded.add(o); queue.push(o);
+        }
+      }
+      for (const body of grounded) {
+        const u = body.getUserData();
         top[u.side] = Math.min(top[u.side], body.getPosition().y * S - u.r);
       }
       return top;
@@ -1973,6 +1991,16 @@ canvas { display: block; width: 100vw; height: 100dvh; }
         g.font = 'bold 24px system-ui'; g.fillText('タップで再開', V.w / 2, V.h / 2);
       } else if (app.mode === 'over') {
         g.font = 'bold 30px system-ui'; g.fillText('おわり', V.w / 2, 300);
+        const os = app.rules.state.overSide;
+        if (os) {
+          // どちらのタンクが溢れたか（矢印つき）
+          const L = Game.config.layout, tx = os === 'left' ? L.tankW / 2 : V.w - L.tankW / 2;
+          g.font = 'bold 15px system-ui'; g.fillStyle = '#ff6b6b';
+          g.fillText((os === 'left' ? '← 左' : '右 →') + 'のタンクが溢れ線を2秒こえた', V.w / 2, 250);
+          g.strokeStyle = '#ff6b6b'; g.lineWidth = 3;
+          g.strokeRect(tx - L.tankW / 2 + 2, L.tankTop, L.tankW - 4, L.overflowY - L.tankTop + 20);
+          g.fillStyle = '#fff';
+        }
         g.font = 'bold 44px system-ui'; g.fillStyle = '#ffd54a';
         g.fillText(app.rules.state.score.toLocaleString(), V.w / 2, 370);
         g.font = '16px system-ui'; g.fillStyle = 'rgba(255,255,255,0.8)';
