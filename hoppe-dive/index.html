@@ -1,0 +1,3971 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#181425">
+<title>HOPPE DIVE</title>
+<style>
+html, body { margin: 0; height: 100%; background: #181425; overflow: hidden; }
+body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
+canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelated; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// 数字はすべてここに集める。設計書: docs/specs/2026-11-02-hoppe-dive-core-design.md
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  Game.config = {
+    dt: 1 / 60,                 // ルールの刻み（秒）
+    saveKey: 'hoppe-dive',      // localStorage のキーの頭（①では保存しない）
+
+    // 遊ぶ窓（ドット）と並び
+    view: { w: 192, h: 108 },
+    layout: {
+      colX: [24, 44, 64],        // 後ろ / 真ん中 / 前（ハムスターの x）
+      laneGroundY: [76, 84, 92], // 奥 / 中 / 手前 の地面の高さ（窓の上から）
+      skew: 4,                   // 描くときだけ、奥のレーンほど右へずらすドット（1レーンあたり）。当たり判定は変わらない
+      startCol: 1, startLane: 1,
+    },
+
+    // ハムスター
+    hamster: {
+      box: 12,                   // 当たり判定の箱（12×12、足元が基準）
+      trapBox: 10,               // わなに対してだけ使う、ゆるめの箱の幅（ジャンプの猶予）
+      moveSec: 0.1,              // 1マスの移動にかかる時間
+      jumpH: 24,                 // ジャンプの高さ（よくばりで下がる: greedJump）
+      jumpSec: 0.6,              // 空中にいる時間（同上）
+      jumpBuffer: 0.1,           // 着地の直前に押したジャンプは着地で出す
+    },
+
+    // 障害物と拾い物の大きさ
+    obj: {
+      trap: { w: 8, h: 5, longFrac: 0.6 }, // ながい わな: 跳んで越えられる最大の長さ × longFrac（速いほど長い）
+      stal: { w: 8, bottom: 16 },          // つらら石: 地面から先っぽまでの高さ。走っていればくぐれ、跳ぶと当たる
+      rock: { w: 14 },
+      block: { w: 12, h: 28 },
+      item: { w: 8, reach: 8 },  // 拾える高さの差
+    },
+
+    // 強化（ランの中）。段階 0 が最初の状態
+    upgrades: [
+      { id: 'speed', name: 'はやさ', max: 5, desc: 'もっと はやく はしる' },
+      { id: 'move', name: 'まえうしろ', max: 3, desc: ['', 'まえうしろに うごける。いしが おちてくる', 'いしが 2こ おちてくる', 'いしが はやく おちてくる'] },
+      { id: 'lane', name: 'レーン', max: 3, desc: ['', 'おくと てまえに うごける。とおせんぼが でる', 'とおせんぼが ふえる', 'とおせんぼが いれかわる'] },
+      // needs: その段階を3択に出す条件（ほかの強化の段階の下限）
+      { id: 'trap', name: 'わな', max: 5, desc: ['', 'ながい わなが でる', 'つららいしが でる。とぶと あたる', 'わなが ふえる', 'わなが もっと ふえる', 'ななめや でこぼこの わなが でる'], needs: { 5: { lane: 1 } } },
+      { id: 'loot', name: 'おたから', max: 4, desc: ['', 'ほうせきが でる。わなも ふえる', 'おおきな たからが でる。わなも ふえる', 'とおせんぼの そばに たからが ならぶ', 'おうごんの ぞうが でる。わなも ふえる'], needs: { 3: { lane: 1 } } },
+      { id: 'greed', name: 'よくばり', max: 2, desc: 'レベルアップが はやくなる。ほっぺが おもくて ジャンプが ひくくなる' },
+    ],
+    speed: [60, 80, 105, 140, 180, 220],   // speed の段階ごとの速さ（ドット/秒）
+    rockWarn: [1.0, 0.85, 0.7, 0.5],       // move の段階ごとの、影が出てから落ちるまで（秒）
+    xpMul: [1.0, 1.3, 1.6],               // greed の段階ごとの経験値の係数
+    greedJump: [{ h: 24, sec: 0.6 }, { h: 21, sec: 0.54 }, { h: 18, sec: 0.48 }], // greed の段階ごとのジャンプ（ほっぺが重い）
+    lootGuard: [0, 0.35, 0.5, 0.65, 0.8], // loot の段階ごとの、宝に「番の わな」が付く割合
+
+    // 経験値と階
+    xpBase: 290,
+    xpGrowth: 1.21,
+    clearLevel: 16,              // この回のレベルアップでクリア（3択は出さない）
+    landGrace: 2.0,              // 着地してから型を出さない秒数
+    lifeInvuln: 1.5,             // 残機を使ったあとの無敵
+    lifeGrace: 0.8,              // 残機を使ったあと型を出さない秒数
+
+    // 点
+    score: {
+      distPer: 10,               // 10 ドットごとに 1 点
+      threatBase: 10,            // わな・落石・とおせんぼ の基本点
+      threatStep: 0.5,           // 段階ごとに増える割合
+      nearGap: 2,                // ぎりぎりの隙間（ドット）
+      nearMul: 2,
+      item: { seed: 5, gem: 30, big: 100, statue: 300 },
+      rowBonus: 100,
+      timeRefSec: 600,           // クリアの早さのボーナス: (この秒数 − かかった秒数) × timePerSec
+      timePerSec: 40,
+    },
+
+    // 型の出し方
+    spawn: {
+      gapSec: [1.5, 1.4, 1.25, 1.05, 0.9, 0.75], // trap の段階ごとの、型と型の間（秒）
+      minGapSec: 0.7,
+      maxThreatsEvery: 8,        // 取った段階 8 ごとに、同時に気にする物の上限 +1（最大 3）
+      lootChance: 0.6,           // 型に宝を添える割合
+      seedRunChance: 0.5,        // 種の列を置く割合（列は型の間を広げない）
+      seedArcChance: 0.5,        // 種の列を、わなを越える跳び方の放物線に沿って置く割合（残りは型の間の地面）
+      lootEarly: 0.2,            // 空中の宝: わなを越えられる跳び始めの範囲のうち、早い側（遅い側）からこの割合の時刻に跳んだ軌道に置く
+      lootOff: 6,                // 空中の宝の中心を、わなの端からこのドット以上ずらす（影がわなに重ならないように）
+      lootGuardSec: 1.0,         // 番の わなは、宝の何秒あと（2連わなと同じくらい空ける）
+      lead: 1.0,                 // 物を窓に入る何秒前に（窓の外で）作るか。予告の助けの上限
+      swapX: 105,               // とおせんぼが入れ替わる位置（窓の左からのドット）。75 では間に合わなかった（直しの設計書 3）
+    },
+
+    // 公平さの確かめ
+    fair: {
+      reaction: 0.2,             // 型が窓に入ってから動き始めてよいまで（秒）
+      decide: 3,                 // 何刻みごとに手を選ぶか
+    },
+
+    // ボット
+    bot: {
+      near: 0.15,                // 理論値ボットの反応の遅れ（秒）
+      relaxed: 0.45,             // 余裕ボットの反応の遅れ（難易度のつまみ）
+      releaseLag: 0.1,           // 指を離すまでの遅れ（ジャンプ）
+      jitter: { near: 0.03, relaxed: 0.08 }, // ジャンプのタイミングのぶれ（± 秒、一様）
+      horizon: 1.5,              // 何もしないときに何秒先まで見るか
+      afterSec: 0.35,            // 手が終わって（着地・移動のあと）から何秒先まで見るか。その先の物は次の手で対処する
+      scanStep: 3,               // ジャンプの時刻をずらして試す刻み（フレーム）
+      scanSec: 0.6,              // 何秒先までずらして試すか
+      decide: 6,                 // 何刻みごとに考えるか
+      rockJudge: { near: 0.05, relaxed: 0.25 }, // 落石の判断の遅れ（秒。反応の遅れに足す）。⊗ の印（assist.rockMark）があれば 0。設計書② 6.3
+    },
+
+    // ②恒久強化・アンロック・点の倍率。設計書: docs/specs/2026-11-03-hoppe-dive-meta-design.md
+    meta: {
+      version: 1,
+      key: 'hoppe-dive.meta',    // localStorage のキー
+      // 恒久強化（難易度を下げる）。段階 n の値段 = price × n。desc[n] は段階 n の効果
+      perks: [
+        { id: 'lives', name: 'のこりの いのち', max: 3, price: 240, desc: ['', 'しんでも 1かい つづく', 'しんでも 2かい つづく', 'しんでも 3かい つづく'] },
+        { id: 'rockWarn', name: 'らくせきの よこく', max: 3, price: 160, desc: ['', 'かげが すこし はやく でる', 'かげが もっと はやく でる', 'おちる ばしょに あかい しるし'] },
+        { id: 'preview', name: 'さきみ', max: 2, price: 160, desc: ['', 'くるものが すこし まえに みえる', 'くるものが もっと まえに みえる'] },
+        { id: 'swap', name: 'とおせんぼ よこく', max: 2, price: 120, desc: ['', 'はやめに いれかわる', 'もっと はやめに いれかわる'] },
+        { id: 'jump', name: 'ジャンプの ゆとり', max: 3, price: 200, desc: ['', 'わなに すこし あたりにくい', 'わなに もっと あたりにくい', 'わなに とても あたりにくい'] },
+        { id: 'map', name: 'いせきの ちず', max: 2, price: 200, desc: ['', 'レベルアップが すこし はやい', 'レベルアップが もっと はやい'] },
+      ],
+      // 段階ごとの効果（runOptions へ変換するときに使う）
+      effect: {
+        lives: [0, 1, 2, 3],
+        warnPlus: [0, 0.15, 0.3, 0.3],         // rockWarn
+        rockMark: [false, false, false, true], // rockWarn
+        preview: [0, 0.3, 0.6],                // preview
+        swapPlus: [0, 15, 30],                 // swap
+        jumpGrace: [0, 2, 4, 5],               // jump
+        xpMul: [1, 1.15, 1.3],                 // map
+      },
+      // アンロック: ランの中で段階 3 にすると使えるようになり、入れると最初から段階 1
+      unlocks: [
+        { id: 'move', name: 'まえうしろ', desc: 'さいしょから うごける' },
+        { id: 'lane', name: 'レーン', desc: 'さいしょから うごける' },
+      ],
+      value: { seed: 1, gem: 3, big: 10, statue: 30 }, // 持ち帰る宝の値打ち
+      clearBonus: 100,           // クリアしたときに足す宝
+      mul: { unspent: 1.0, unlock: 0.25 }, // 倍率 = 1 + unspent × min(振っていない宝, T) / T + unlock × 入れたアンロックの数
+    },
+
+    // ③実績とシークレット。設計書: docs/specs/2026-11-03-hoppe-dive-achievements-design.md
+    achieve: {
+      version: 1,
+      key: 'hoppe-dive.records', // localStorage のキー
+      // kind: メダルの色（first 機能の導線 / floor 階・クリア / score 点 / run 1回のランの記録 / max 強化の最大 / secret シークレット）
+      list: [
+        { id: 'firstMove', kind: 'first', name: 'はじめての まえうしろ', desc: 'ランで まえうしろを とる' },
+        { id: 'firstLane', kind: 'first', name: 'はじめての レーン', desc: 'ランで レーンを とる' },
+        { id: 'firstSeed', kind: 'first', pick: 'seed', name: 'はじめての たね', desc: 'ひまわりの たねを ひろう' },
+        { id: 'firstGem', kind: 'first', pick: 'gem', name: 'はじめての ほうせき', desc: 'ほうせきを ひろう' },
+        { id: 'firstBig', kind: 'first', pick: 'big', name: 'はじめての おおきな たから', desc: 'おおきな たからを ひろう' },
+        { id: 'firstStatue', kind: 'first', pick: 'statue', name: 'はじめての おうごんの ぞう', desc: 'おうごんの ぞうを ひろう' },
+        { id: 'firstHome', kind: 'first', name: 'はじめての もちかえり', desc: 'たからを もちかえる' },
+        { id: 'firstPerk', kind: 'first', name: 'はじめての きょうか', desc: 'キャンプで きょうかを かう' },
+        { id: 'firstUnlock', kind: 'first', name: 'はじめての アンロック', desc: 'キャンプで アンロックを いれる' },
+        { id: 'floor5', kind: 'floor', name: 'こけの かいそう', desc: 'B5F に つく' },
+        { id: 'floor9', kind: 'floor', name: 'あかい いわの かいそう', desc: 'B9F に つく' },
+        { id: 'floor13', kind: 'floor', name: 'おうごんの かいそう', desc: 'B13F に つく' },
+        { id: 'clear', kind: 'floor', name: 'たからの ま', desc: 'クリアする' },
+        { id: 'noHit', kind: 'floor', name: 'むきず', desc: 'いちども あたらずに クリアする' },
+        { id: 'maxDiff', kind: 'floor', name: 'さいだいの むずかしさ', desc: 'ばいりつ x2.50 で クリアする' },
+        { id: 'fast', kind: 'floor', name: 'はやぬけ', desc: '6ぷん いないに クリアする' },
+        { id: 'escape', kind: 'floor', name: 'だっしゅつ', desc: 'くずれる いせきから だっしゅつする' },
+        { id: 'escapeMax', kind: 'floor', name: 'さいだいの むずかしさで だっしゅつ', desc: 'ばいりつ x2.50 で だっしゅつする' },
+        { id: 'score1', kind: 'score', name: 'いちまんてん', desc: 'さいごの てんが 10000 いじょう' },
+        { id: 'score2', kind: 'score', name: 'さんまんてん', desc: 'さいごの てんが 30000 いじょう' },
+        { id: 'score3', kind: 'score', name: 'ごまんてん', desc: 'さいごの てんが 50000 いじょう' },
+        { id: 'statue', kind: 'run', name: 'おうごんの ぞう あつめ', desc: '1かいで おうごんの ぞうを 3こ とる' },
+        { id: 'rows', kind: 'run', name: 'ならんだ ほうせき', desc: '1かいで たからの れつを 3かい ぜんぶ とる' },
+        { id: 'rich', kind: 'run', name: 'おおもうけ', desc: '1かいで たからを 800 ひろう' },
+        { id: 'near', kind: 'run', name: 'ぎりぎりの たつじん', desc: '1かいで ぎりぎりを 50かい' },
+        { id: 'seeds', kind: 'run', name: 'たねの れんぞく', desc: 'たねを 15こ つづけて とる' },
+        { id: 'maxSpeed', kind: 'max', up: 'speed', name: 'はやさの さいだい', desc: 'ランで はやさを さいだいに する' },
+        { id: 'maxMove', kind: 'max', up: 'move', name: 'まえうしろの さいだい', desc: 'ランで まえうしろを さいだいに する' },
+        { id: 'maxLane', kind: 'max', up: 'lane', name: 'レーンの さいだい', desc: 'ランで レーンを さいだいに する' },
+        { id: 'maxTrap', kind: 'max', up: 'trap', name: 'わなの さいだい', desc: 'ランで わなを さいだいに する' },
+        { id: 'maxLoot', kind: 'max', up: 'loot', name: 'おたからの さいだい', desc: 'ランで おたからを さいだいに する' },
+        { id: 'maxGreed', kind: 'max', up: 'greed', name: 'よくばりの さいだい', desc: 'ランで よくばりを さいだいに する' },
+        { id: 'allMax', kind: 'max', name: 'ぜんぶ さいだい', desc: '1かいの ランで きょうかを ぜんぶ さいだいに する' },
+        { id: 'perkAll', kind: 'max', name: 'じゅんび ばんたん', desc: 'キャンプの きょうかを ぜんぶ さいだいに する' },
+        { id: 'pup', kind: 'secret', name: 'まいごの こハムスター', desc: 'まいごの こハムスターを たすける', hint: 'まれに だれかが まいごに なっている…' },
+        { id: 'mimic', kind: 'secret', name: 'たからばこの まもの', desc: 'たからばこの まものから 3かい にげきる', hint: 'まれに たからばこが ついてくる…' },
+        { id: 'fly', kind: 'secret', name: 'そらとぶ たね', desc: 'そらとぶ たねを つかまえる', hint: 'まれに たねが そらを とんでいる…' },
+        { id: 'bat', kind: 'secret', name: 'てんじょうの コウモリ', desc: 'コウモリを おこす', hint: 'てんじょうに なにか いる…' },
+      ],
+      th: { fastSec: 360, score: [10000, 30000, 50000], statue: 3, rows: 3, rich: 800, near: 50, seeds: 15 }, // sim.mjs --ach の分布で決めた（設計書③ 8節）
+      // ランダムイベント（シークレット）: 1回のランで最大1つ。それぞれ chance。起きる階は floors[0]〜floors[1]
+      rare: {
+        chance: { pup: 0.05, mimic: 0.05, fly: 0.05 },
+        floors: [3, 11],
+        pup: { at: 0.3 },
+        mimic: { behind: 22, enterSec: 1.0, waitSec: 1.0, tellSec: 0.5, leapSec: 0.4, leapDx: 40, leapH: 4, backSec: 0.6, laneLag: 0.4, needDodge: 3, biteH: 8, biteW: 10, steal: 0.1 },
+        fly: { sec: 10, h: [12, 18], stay: 0.8, moveSec: 0.4, enterSec: 0.8 }, // 高さは地面から届かない（obj.item.reach 8 より上）
+      },
+      // てんじょうの コウモリ: 柱の層（0.5 倍）の every ドットごとに、chance で1匹
+      bat: { every: 170, chance: 0.3, y: 15, flySec: 1.0, hit: 9 },
+      flashSec: 2,               // ランの最中に、上の帯でメダルの印を点滅させる秒数
+    },
+
+    // ④脱出エクストラ。設計書: docs/specs/2026-11-03-hoppe-dive-extra-design.md
+    extra: {
+      xpPer: 3000,               // エクストラで1階よじ登るのに要る経験値（固定。sim で 1階 20〜25 秒に合わせる）
+      bonus: 5000,               // 脱出できたら足す点（経験値にはしない）
+      treasure: 150,             // 脱出できたら足す宝（meta.applyRun）
+      text: {
+        go: 'いせきが くずれる! にげろ!',
+        hint: 'もっと じゆうに うごけたら…', // 入れないとき。答えは言わず、下に 9マス（真ん中だけ光る）を添えて示す
+        left: 'だっしゅつ あと ',
+        ok: 'だっしゅつ せいこう',
+        ng: 'だっしゅつ しっぱい',
+      },
+    },
+
+    // 演出・音
+    fx: { shakeMax: 2, popSec: 0.5 },
+    audio: { enabled: true, volume: 0.5, bgmVolume: 0.6, seedResetSec: 1.0 },
+    input: { swipePx: 24, controlFrom: 1 / 3 },
+    ui: { chooseLock: 0.5, fallSec: 0.6, landSec: 0.15, hitFreeze: 0.8, clearSec: 2.5, countdown: 3,
+          extraIntroSec: 2.0, darkSec: 1.5, hintSec: 4, escapeSec: 3 }, // ④: 崩れ始めの演出 / 入れないときに暗くなるまで・ヒントを出したまま結果へ進むまで / 脱出成功の場面
+  };
+})();
+</script>
+<script>
+// ②の外側のループ: 宝（通貨）、恒久強化の値段と付け外し、アンロック、点の倍率、保存データ → runOptions。
+// 保存データはただのデータ。DOM・localStorage には触らない（読み書きは save.js）。設計書: docs/specs/2026-11-03-hoppe-dive-meta-design.md
+// save: { v, treasure, alloc: { 恒久強化の id: 段階 }, unlocked: { move, lane }, use: { move, lane } }
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const C = (cfg) => (cfg || Game.config).meta;
+  const perk = (id, cfg) => C(cfg).perks.find((p) => p.id === id);
+
+  function fresh(cfg) {
+    const M = C(cfg), s = { v: M.version, treasure: 0, alloc: {}, unlocked: {}, use: {} };
+    for (const p of M.perks) s.alloc[p.id] = 0;
+    for (const u of M.unlocks) { s.unlocked[u.id] = false; s.use[u.id] = false; }
+    return s;
+  }
+
+  // 段階 rank（1〜max）に上げる値段
+  function cost(id, rank, cfg) { return perk(id, cfg).price * rank; }
+  // id の段階 0 → rank までの合計
+  function costTo(id, rank, cfg) { let n = 0; for (let r = 1; r <= rank; r++) n += cost(id, r, cfg); return n; }
+  // 全部を最大にする合計（T）
+  function total(cfg) { return C(cfg).perks.reduce((n, p) => n + costTo(p.id, p.max, cfg), 0); }
+
+  function spent(save, cfg) { return C(cfg).perks.reduce((n, p) => n + costTo(p.id, save.alloc[p.id] || 0, cfg), 0); }
+  function unspent(save, cfg) { return save.treasure - spent(save, cfg); }
+  const unlocksOn = (save, cfg) => C(cfg).unlocks.filter((u) => save.unlocked[u.id] && save.use[u.id]).length;
+
+  function multiplier(save, cfg) {
+    const M = C(cfg), T = total(cfg);
+    return 1 + M.mul.unspent * Math.min(Math.max(0, unspent(save, cfg)), T) / T + M.mul.unlock * unlocksOn(save, cfg);
+  }
+  // 最後の点: ランの点（早さのボーナス込み）× 倍率、切り捨て。ここ1か所で計算する
+  function finalScore(score, save, cfg) { return Math.floor(score * multiplier(save, cfg) + 1e-9); }
+
+  // ---- 付け外し（いつでも無料。外すと宝は「振っていない」に戻る） ----
+  function canBuy(save, id, cfg) {
+    const p = perk(id, cfg), r = save.alloc[id] || 0;
+    return !!p && r < p.max && unspent(save, cfg) >= cost(id, r + 1, cfg);
+  }
+  function buy(save, id, cfg) { if (!canBuy(save, id, cfg)) return false; save.alloc[id] = (save.alloc[id] || 0) + 1; return true; }
+  function refund(save, id, cfg) { if (!perk(id, cfg) || !(save.alloc[id] > 0)) return false; save.alloc[id]--; return true; }
+  function toggleUnlock(save, id) { if (!save.unlocked[id]) return false; save.use[id] = !save.use[id]; return true; }
+
+  // ---- 保存データ → rules.create の runOptions（seed は呼ぶ側で） ----
+  function runOptions(save, cfg) {
+    const M = C(cfg), E = M.effect, a = save.alloc;
+    const r = (id) => a[id] || 0;
+    return {
+      lives: E.lives[r('lives')],
+      pretaken: M.unlocks.filter((u) => save.unlocked[u.id] && save.use[u.id]).map((u) => u.id),
+      assist: {
+        warnPlus: E.warnPlus[r('rockWarn')],
+        rockMark: E.rockMark[r('rockWarn')],
+        preview: E.preview[r('preview')],
+        swapPlus: E.swapPlus[r('swap')],
+        jumpGrace: E.jumpGrace[r('jump')],
+        xpMul: E.xpMul[r('map')],
+      },
+    };
+  }
+
+  // ---- ランの結果を反映する（宝を足す、アンロックを使えるようにする） ----
+  // 返す値: { loot: 拾った宝, bonus: クリアのボーナス, escape: 脱出のボーナス, gain: 合計, unlocked: [新しく使えるようになった id] }
+  function applyRun(save, state, cfg) {
+    const M = C(cfg);
+    const loot = state.loot || 0, bonus = state.cleared ? M.clearBonus : 0;
+    const escape = state.extra && state.extra.escaped ? (cfg || Game.config).extra.treasure : 0;
+    save.treasure += loot + bonus + escape;
+    const unlocked = [];
+    for (const u of M.unlocks) if ((state.ranks[u.id] || 0) >= 3 && !save.unlocked[u.id]) { save.unlocked[u.id] = true; unlocked.push(u.id); }
+    return { loot, bonus, escape, gain: loot + bonus + escape, unlocked };
+  }
+
+  // ④ 脱出エクストラに入れるか（クリアの時点で、レーン移動と前後移動がどちらも段階 1 以上）
+  function canEnterExtra(ranks) { return (ranks.move || 0) >= 1 && (ranks.lane || 0) >= 1; }
+  // 最大難易度: 宝を T 以上持ち、何も振らず、アンロックを全部入れている（倍率が最大）
+  function isMaxDifficulty(save, cfg) {
+    const M = C(cfg);
+    return spent(save, cfg) === 0 && save.treasure >= total(cfg) && unlocksOn(save, cfg) === M.unlocks.length;
+  }
+  function maxMultiplier(cfg) { const M = C(cfg); return 1 + M.mul.unspent + M.mul.unlock * M.unlocks.length; }
+
+  // ---- 保存データの読み込み（壊れていたら最初の状態） ----
+  // raw: JSON の文字列か、読んだ値。足りない項目は最初の値で補う。振りすぎ（値段が変わったなど）は振りを外す
+  function parse(raw, cfg) {
+    const M = C(cfg), f = fresh(cfg);
+    let d = raw;
+    try { if (typeof raw === 'string') d = JSON.parse(raw); } catch (e) { return f; }
+    if (!d || typeof d !== 'object' || d.v !== M.version) return f;
+    const nat = (x) => Number.isInteger(x) && x >= 0;
+    if (!nat(d.treasure)) return f;
+    const s = fresh(cfg);
+    s.treasure = d.treasure;
+    for (const p of M.perks) {
+      const x = d.alloc && d.alloc[p.id];
+      if (x == null) continue;
+      if (!nat(x) || x > p.max) return f;
+      s.alloc[p.id] = x;
+    }
+    for (const u of M.unlocks) {
+      s.unlocked[u.id] = !!(d.unlocked && d.unlocked[u.id] === true);
+      s.use[u.id] = s.unlocked[u.id] && !!(d.use && d.use[u.id] === true);
+    }
+    if (spent(s, cfg) > s.treasure) for (const p of M.perks) s.alloc[p.id] = 0;
+    return s;
+  }
+
+  // カードの文字: 恒久強化は次の段階の効果（最大なら今の効果）
+  function card(id, save, cfg) {
+    const M = C(cfg), p = perk(id, cfg);
+    if (p) {
+      const r = save.alloc[id] || 0, max = r >= p.max;
+      return { kind: 'perk', id, name: p.name, rank: r, max: p.max, desc: p.desc[max ? r : r + 1], price: max ? 0 : cost(id, r + 1, cfg), full: max, canBuy: canBuy(save, id, cfg), canRefund: r > 0 };
+    }
+    const u = M.unlocks.find((x) => x.id === id);
+    return { kind: 'unlock', id, name: u.name, desc: u.desc, unlocked: !!save.unlocked[id], on: !!save.use[id] };
+  }
+  // キャンプに並べるカードの順（恒久強化 → アンロック）
+  const order = (cfg) => C(cfg).perks.map((p) => p.id).concat(C(cfg).unlocks.map((u) => u.id));
+
+  Game.meta = { fresh, cost, costTo, total, spent, unspent, multiplier, finalScore, canBuy, buy, refund, toggleUnlock, runOptions, applyRun, canEnterExtra, isMaxDifficulty, maxMultiplier, parse, card, order };
+})();
+</script>
+<script>
+// シード付きの乱数（mulberry32）。状態は整数1つで、ルールの状態の中に持つ（写しても同じ列になる）
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  // o.rng（整数）を進めて [0,1) を返す
+  function next(o) {
+    let t = (o.rng = (o.rng + 0x6d2b79f5) | 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const int = (o, n) => Math.floor(next(o) * n);
+  const pick = (o, arr) => arr[int(o, arr.length)];
+  // 重み付き。items: [{ weight }]
+  function weighted(o, items) {
+    let sum = 0;
+    for (const it of items) sum += it.weight;
+    let r = next(o) * sum;
+    for (const it of items) { r -= it.weight; if (r < 0) return it; }
+    return items[items.length - 1];
+  }
+  const seedFrom = (s) => (typeof s === 'number' ? s | 0 : [...String(s)].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619), 2166136261) | 0);
+
+  Game.rng = { next, int, pick, weighted, seedFrom };
+})();
+</script>
+<script>
+// ③ランダムイベント（シークレット）: まいごの こハムスター / たからばこの まもの / そらとぶ たね。
+// 起きるか・どれか・何階かは、ランのシードから作る別の乱数で決める（ランの乱数の列は変えない）。
+// 前後とレーンの両方が使えるときだけ起きる（その階でまだなら、両方そろった階まで待つ）。
+// 状態はルールの状態の中の s.rare（ただのデータ）。DOM に触らない。設計書: docs/specs/2026-11-03-hoppe-dive-achievements-design.md 3節
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const RNG = Game.rng;
+  const KINDS = ['pup', 'mimic', 'fly'];
+
+  // シードから決める。null なら何も起きない
+  function decide(seed, cfg) {
+    const C = cfg.achieve.rare, o = { rng: (RNG.seedFrom(seed) ^ 0x2545f491) | 0 };
+    const u = RNG.next(o);
+    let acc = 0, kind = null;
+    for (const k of KINDS) { acc += C.chance[k]; if (u < acc) { kind = k; break; } }
+    if (!kind) return null;
+    return plan(kind, C.floors[0] + RNG.int(o, C.floors[1] - C.floors[0] + 1), o.rng);
+  }
+  const plan = (kind, floor, rng) => ({ kind, floor, rng, state: 'wait', e: null });
+
+  // runOptions.rare: 'mimic' か { kind, floor }（確かめ用）。null なら起こさない
+  function fromOptions(opt, seed, cfg) {
+    if (opt.rare === null || (opt.noSpawn && opt.rare === undefined)) return null;
+    if (opt.rare) {
+      const kind = typeof opt.rare === 'string' ? opt.rare : opt.rare.kind;
+      if (!KINDS.includes(kind)) return null;
+      return plan(kind, (opt.rare.floor || opt.rareFloor || 2), (RNG.seedFrom(seed) ^ 0x2545f491) | 0);
+    }
+    return decide(seed, cfg);
+  }
+
+  const end = (r, ok, ev, s) => { r.state = ok ? 'ok' : 'fail'; r.e = null; ev.push({ type: 'rare_end', t: s.t, kind: r.kind, ok }); };
+
+  // 階に着いたら始める
+  function begin(s, cfg, ev) {
+    const r = s.rare, C = cfg.achieve.rare, h = s.h;
+    if (r.kind === 'pup') {
+      const lanes = [0, 1, 2].filter((l) => l !== h.lane);
+      const lane = lanes[RNG.int(r, lanes.length)];
+      const id = s.nextId;
+      Game.rules.place(s, { items: [{ k: 'pup', lane, at: C.pup.at, h: 0 }] }, cfg);
+      r.e = { id };
+    } else if (r.kind === 'mimic') {
+      r.e = { ph: 'enter', t: 0, x: -16, x0: -16, lp: h.lp, z: 0, dodged: 0 };
+    } else {
+      // そらとぶ たね: 窓の右から、乱数で決めた最初のマスへ飛んでくる
+      const col = RNG.int(r, 3), lane = RNG.int(r, 3), F = cfg.achieve.rare.fly;
+      r.e = { ph: 'enter', t: 0, pt: 0, col, lane, fx: cfg.view.w + 8, flp: lane, x: cfg.view.w + 8, lp: lane, h: F.h[1] };
+    }
+    r.state = 'on';
+    ev.push({ type: 'rare_start', t: s.t, kind: r.kind });
+  }
+
+  function update(s, cfg, ev) {
+    const r = s.rare;
+    if (!r || s.phase !== 'run' || s.extra) return; // ④エクストラでは起こさない
+    // 前後とレーンの両方が使えるときだけ始める（ジャンプだけ・1本のレーンでは起こさない）。予定の階でまだなら、使えるようになるまで待つ
+    if (r.state === 'wait' && s.floor >= r.floor && s.ranks.move >= 1 && s.ranks.lane >= 1) begin(s, cfg, ev);
+    if (r.state !== 'on') return;
+    const dt = cfg.dt;
+    if (r.kind === 'pup') {
+      const o = s.objs.find((x) => x.id === r.e.id);
+      if (!o || o.done) end(r, !!(o && o.got), ev, s);
+    } else if (r.kind === 'mimic') mimic(s, cfg, r, dt, ev);
+    else fly(s, cfg, r, dt, ev);
+  }
+
+  // たからばこの まもの: 後ろに付いてきて、予告のあとで前へ飛びかかる。3回よけると宝を落とす。かまれると宝の1割を取られる
+  function mimic(s, cfg, r, dt, ev) {
+    const M = cfg.achieve.rare.mimic, e = r.e, h = s.h;
+    const target = h.x - M.behind;
+    const follow = () => { e.lp += (h.lp - e.lp) * Math.min(1, dt / M.laneLag); };
+    e.t += dt;
+    switch (e.ph) {
+      case 'enter': {
+        const k = Math.min(1, e.t / M.enterSec);
+        e.x = e.x0 + (target - e.x0) * k; e.z = hop(e.t, 0.25, 3); follow();
+        if (k >= 1) { e.ph = 'wait'; e.t = 0; e.z = 0; }
+        break;
+      }
+      case 'wait':
+        e.x += Math.sign(target - e.x) * Math.min(Math.abs(target - e.x), 120 * dt); follow();
+        if (e.t >= M.waitSec) { e.ph = 'tell'; e.t = 0; ev.push({ type: 'mimic_tell', t: s.t, x: e.x, lane: Math.round(e.lp) }); }
+        break;
+      case 'tell':
+        if (e.t >= M.tellSec) { e.ph = 'leap'; e.t = 0; e.x0 = e.x; e.lp = Math.round(e.lp); }
+        break;
+      case 'leap': {
+        const u = Math.min(1, e.t / M.leapSec);
+        e.x = e.x0 + M.leapDx * u; e.z = 4 * M.leapH * u * (1 - u);
+        if (Math.abs(e.lp - h.lp) < 0.5 && Math.abs(e.x - h.x) < M.biteW && h.z < M.biteH) {
+          const stolen = Math.floor(s.loot * M.steal);
+          s.loot -= stolen;
+          e.ph = 'flee'; e.t = 0;
+          ev.push({ type: 'mimic_bite', t: s.t, x: h.x, lane: Math.round(h.lp), stolen });
+          break;
+        }
+        if (u >= 1) {
+          e.dodged++; e.z = 0;
+          ev.push({ type: 'mimic_dodge', t: s.t, x: e.x, lane: Math.round(e.lp), n: e.dodged });
+          if (e.dodged >= M.needDodge) {
+            // 宝を落として消える（落とした宝はふつうに拾える）
+            const id = s.nextId++;
+            s.objs.push({ id, k: 'big', wx: s.dist + e.x + 6, lane: Math.round(e.lp), h: 0, minSep: 99, hit: false });
+            ev.push({ type: 'mimic_give', t: s.t, x: e.x, lane: Math.round(e.lp) });
+            return end(r, true, ev, s);
+          }
+          e.ph = 'back'; e.t = 0; e.x0 = e.x;
+        }
+        break;
+      }
+      case 'back': {
+        const k = Math.min(1, e.t / M.backSec);
+        e.x = e.x0 + (target - e.x0) * k; e.z = hop(e.t, 0.2, 3);
+        if (k >= 1) { e.ph = 'wait'; e.t = 0; e.z = 0; }
+        break;
+      }
+      case 'flee':
+        e.x -= 150 * dt; e.z = hop(e.t, 0.2, 3);
+        if (e.x < -24) end(r, false, ev, s);
+        break;
+    }
+  }
+  const hop = (t, per, h) => { const u = (t % per) / per; return 4 * h * u * (1 - u); };
+
+  // そらとぶ たね: 9マス（前後3列 × 3レーン）の上を、マスからマスへ移る。いつも地面からは届かない高さ（跳ばないと取れない）。
+  // 同じマスで、高さの差が拾える範囲なら取れる。sec 秒で飛び去る。直しの設計書 1
+  function fly(s, cfg, r, dt, ev) {
+    const F = cfg.achieve.rare.fly, e = r.e, h = s.h, X = cfg.layout.colX;
+    e.t += dt; e.pt += dt;
+    e.h = F.h[0] + (F.h[1] - F.h[0]) * (0.5 + 0.5 * Math.sin((e.t * 2 * Math.PI) / 1.7));
+    const glide = (dur) => {
+      const k = Math.min(1, e.pt / dur), u = k * k * (3 - 2 * k);
+      e.x = e.fx + (X[e.col] - e.fx) * u; e.lp = e.flp + (e.lane - e.flp) * u;
+      return k >= 1;
+    };
+    if (e.t >= F.sec && e.ph !== 'leave') e.ph = 'leave';
+    switch (e.ph) {
+      case 'enter': if (glide(F.enterSec)) { e.ph = 'stay'; e.pt = 0; } break;
+      case 'stay':
+        if (e.pt >= F.stay) {
+          const next = [[e.col - 1, e.lane], [e.col + 1, e.lane], [e.col, e.lane - 1], [e.col, e.lane + 1]].filter(([c, l]) => c >= 0 && c <= 2 && l >= 0 && l <= 2);
+          const [c, l] = next[RNG.int(r, next.length)];
+          e.fx = e.x; e.flp = e.lp; e.col = c; e.lane = l; e.ph = 'move'; e.pt = 0;
+        }
+        break;
+      case 'move': if (glide(F.moveSec)) { e.ph = 'stay'; e.pt = 0; } break;
+      case 'leave':
+        e.x += 120 * dt; e.h += 40 * dt;
+        if (e.x > cfg.view.w + 12) return end(r, false, ev, s);
+        return;
+    }
+    if (e.ph === 'enter') return;
+    // 近いほうのマス
+    let nc = 0;
+    for (let c = 1; c < 3; c++) if (Math.abs(X[c] - e.x) < Math.abs(X[nc] - e.x)) nc = c;
+    if (nc === h.col && Math.round(e.lp) === Math.round(h.lp) && Math.abs(h.z - e.h) <= cfg.obj.item.reach) {
+      ev.push({ type: 'fly_catch', t: s.t, x: e.x, lane: Math.round(e.lp), h: e.h });
+      end(r, true, ev, s);
+    }
+  }
+
+  // 床が抜けたとき・残機を使ったときの吹き飛ばしで、途中のイベントは消える
+  function cancel(s, ev) {
+    const r = s.rare;
+    if (r && r.state === 'on') end(r, false, ev, s);
+  }
+
+  Game.rare = { KINDS, decide, fromOptions, update, cancel };
+})();
+</script>
+<script>
+// 障害物の「型」と、出してよいかの確かめ（公平さ）、今の段階に応じた選び方。
+// 時間の決まり: 型の中の at（秒）は「その物が窓の右端に入る時刻」。地面の物は at + 走る時間 でハムスターの列に着く。
+// 落石は、同じ at の地面の物がその列に着く瞬間に落ちる（影は rockWarn 秒前から出る）。だから地面の物と落石は同じ時間の物差しで並べられる。
+// レーン・列の書き方: '@' = 型を出した時点のハムスターのレーン（列）、'@+' = その隣、'!' = それ以外、'*' = どれでも
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const R = Game.rng;
+
+  // わなの並び（奥・中・手前 のレーンごとに、何秒遅れて来るか）。'/' は奥ほど前（右）にある
+  const SHAPES = {
+    '|': [0, 0, 0],
+    '/': [0.3, 0.15, 0],
+    '\\': [0, 0.15, 0.3],
+    '^': [0, 0.2, 0],     // 凸: 中央だけ前
+    'v': [0.2, 0, 0.2],   // 凹: 中央だけ後ろ
+  };
+  // 形（ななめ・でこぼこ）は、わなの最後の段階（レーン移動のあとでだけ取れる）で出る
+  const shapesFor = (trapRank) => (trapRank >= 5 ? ['|', '/', '\\', '^', 'v'] : ['|']);
+
+  // 型の一覧。requires: 出してよい条件（段階の下限）、threats: 同時に気にする物の数
+  // noIntro: 段階を取った直後に単独で見せる紹介に使わない
+  const LIST = [
+    { id: 'trap1', requires: {}, weight: 3, threats: 1, items: [{ k: 'traps', shape: '|', at: 0 }] },
+    { id: 'trapL', requires: { trap: 1 }, weight: 3, threats: 1, items: [{ k: 'traps', shape: '*', at: 0, long: true }] },
+    { id: 'stal1', requires: { trap: 2 }, weight: 2, threats: 1, items: [{ k: 'stals', shape: '*', at: 0 }] },
+    { id: 'trapStal', requires: { trap: 2 }, weight: 2, threats: 2, noIntro: true, items: [{ k: 'traps', shape: '*', at: 0 }, { k: 'stals', shape: '*', at: 0.55 }] },
+    { id: 'stalTrap', requires: { trap: 2 }, weight: 2, threats: 2, noIntro: true, items: [{ k: 'stals', shape: '*', at: 0 }, { k: 'traps', shape: '*', at: 0.45 }] },
+    { id: 'trap2', requires: { trap: 3 }, weight: 3, threats: 2, items: [{ k: 'traps', shape: '*', at: 0 }, { k: 'traps', shape: '*', at: 0.95 }] },
+    { id: 'trapL2', requires: { trap: 4 }, weight: 2, threats: 2, items: [{ k: 'traps', shape: '*', at: 0, long: true }, { k: 'traps', shape: '*', at: 0.85 }] },
+    { id: 'trap2t', requires: { trap: 4 }, weight: 2, threats: 2, noIntro: true, items: [{ k: 'traps', shape: '*', at: 0 }, { k: 'traps', shape: '*', at: 0.8 }] },
+    { id: 'trapS', requires: { trap: 5, lane: 1 }, weight: 4, threats: 1, items: [{ k: 'traps', shape: '*', at: 0 }] },
+
+    { id: 'rock1', requires: { move: 1 }, weight: 3, threats: 1, items: [{ k: 'rock', col: '@', lanes: ['@'], at: 0 }] },
+    { id: 'rockTrap', requires: { move: 1, trap: 1 }, weight: 2, threats: 2, items: [{ k: 'traps', shape: '*', at: 0 }, { k: 'rock', col: '@', lanes: ['@'], at: 0 }] },
+    { id: 'rock2', requires: { move: 2 }, weight: 3, threats: 2, items: [{ k: 'rock', col: '@', lanes: ['@'], at: 0 }, { k: 'rock', col: '@+', lanes: ['@'], at: 0 }] },
+    { id: 'rock2s', requires: { move: 2 }, weight: 2, threats: 2, items: [{ k: 'rock', col: '@', lanes: ['@'], at: 0 }, { k: 'rock', col: '*', lanes: ['*'], at: 0.45 }] },
+    { id: 'rockWide', requires: { move: 1, lane: 2 }, weight: 2, threats: 1, items: [{ k: 'rock', col: '@', lanes: ['@', '@+'], at: 0 }] },
+
+    { id: 'block1', requires: { lane: 1 }, weight: 3, threats: 1, items: [{ k: 'block', lanes: ['@'], at: 0 }] },
+    { id: 'blockTrap', requires: { lane: 1, trap: 1 }, weight: 2, threats: 2, items: [{ k: 'block', lanes: ['@'], at: 0 }, { k: 'traps', shape: '|', at: 0.45, skip: 'block' }] },
+    { id: 'block2', requires: { lane: 2 }, weight: 3, threats: 1, items: [{ k: 'block', lanes: ['@', '!'], at: 0 }] }, // 自分のレーンとほかの1本（真ん中だけ空くこともある）
+    { id: 'blockSwap', requires: { lane: 3 }, weight: 3, threats: 1, items: [{ k: 'block', lanes: ['!'], swapTo: ['@'], swapX: 'cfg', at: 0 }] },
+    { id: 'block2Swap', requires: { lane: 3 }, weight: 2, threats: 1, items: [{ k: 'block', lanes: ['@', '!'], swapTo: ['!+'], swapX: 'cfg', at: 0 }] },
+
+    // 宝の一列は、とおせんぼと組む（1本のレーンに並ぶだけでは危なくないので）。lanes: ['row'] は一列と同じレーン
+    { id: 'rowOut', requires: { loot: 3, lane: 1 }, weight: 1, threats: 1, items: [{ k: 'row', lane: '*', at: 0, n: 5, step: 0.12 }, { k: 'block', lanes: ['row'], at: 0.78 }] },
+    { id: 'rowIn', requires: { loot: 3, lane: 1 }, weight: 1, threats: 1, items: [{ k: 'block', lanes: ['row'], at: 0 }, { k: 'row', lane: '*', at: 0.3, n: 5, step: 0.12 }] },
+  ];
+  const byId = Object.fromEntries(LIST.map((p) => [p.id, p]));
+
+  const meets = (req, ranks) => Object.keys(req).every((k) => (ranks[k] || 0) >= req[k]);
+
+  // ---- 型を具体的な物の並びにする ----
+  // open: レーン移動が解禁されているか。解禁前は、移れないレーンに物を置かない
+  function lanePick(o, spec, here, used, open = true) {
+    const other = [0, 1, 2].filter((l) => l !== here);
+    switch (spec) {
+      case '@': return here;
+      case '@+': return here === 1 ? R.pick(o, [0, 2]) : 1;
+      case '!': return R.pick(o, other);
+      case '*': return open ? R.int(o, 3) : here;
+      case '!+': return [0, 1, 2].filter((l) => !used.includes(l)); // 今ふさいでいない残り（配列を返す）
+      default: return spec;
+    }
+  }
+  function colPick(o, spec, here) {
+    if (spec === '@') return here;
+    if (spec === '@+') return here === 1 ? R.pick(o, [0, 2]) : 1;
+    if (spec === '*') return R.int(o, 3);
+    return spec;
+  }
+
+  // o: 乱数の持ち主（state）。here: { col, lane }。ranks: 今の段階
+  function resolve(o, pat, here, ranks) {
+    const items = [];
+    let blockLanes = [];
+    // 一列のレーン（とおせんぼの lanes: ['row'] が使う）は先に決める
+    const rowIt = pat.items.find((x) => x.k === 'row');
+    const rowLane = rowIt ? lanePick(o, rowIt.lane, here.lane, [], here.open !== false) : null;
+    for (const it of pat.items) {
+      if (it.k === 'traps' || it.k === 'stals') {
+        const shape = it.shape === '*' ? R.pick(o, shapesFor(ranks.trap || 0)) : it.shape;
+        const off = SHAPES[shape];
+        const w = it.long ? Game.rules.longTrapW(ranks, Game.config) : 0;
+        for (let l = 0; l < 3; l++) {
+          if (it.skip === 'block' && blockLanes.includes(l)) continue;
+          const x = { k: it.k === 'traps' ? 'trap' : 'stal', at: it.at + off[l], lane: l };
+          if (w) x.w = w;
+          items.push(x);
+        }
+      } else if (it.k === 'rock') {
+        const col = colPick(o, it.col, here.col);
+        const lanes = [];
+        for (const s of it.lanes) {
+          const l = lanePick(o, s, here.lane, lanes, here.open !== false);
+          if (!lanes.includes(l)) lanes.push(l);
+        }
+        items.push({ k: 'rock', at: it.at, col, lanes });
+      } else if (it.k === 'block') {
+        const lanes = [];
+        for (const s of it.lanes) {
+          let l = s === 'row' ? rowLane : lanePick(o, s, here.lane, lanes);
+          if (s === '@+' && lanes.includes(l)) l = [0, 1, 2].find((x) => !lanes.includes(x));
+          if (!lanes.includes(l)) lanes.push(l);
+        }
+        let swapTo = null;
+        if (it.swapTo) {
+          swapTo = [];
+          for (const s of it.swapTo) {
+            const v = lanePick(o, s, here.lane, lanes);
+            for (const l of [].concat(v)) if (!swapTo.includes(l)) swapTo.push(l);
+          }
+          // 2本の入れ替え: 空いていた1本 F と、ふさいでいた1本 → 合わせて2本。
+          // 新しい空きは、F の隣のレーンにする（端から端へ一瞬で動かなくてよいように）
+          if (swapTo.length < lanes.length) {
+            const F = swapTo[0], adj = lanes.filter((l) => Math.abs(l - F) === 1);
+            const free = adj.length ? adj[R.int(o, adj.length)] : lanes[R.int(o, lanes.length)];
+            swapTo.push(lanes.find((l) => l !== free));
+          }
+        }
+        blockLanes = lanes.slice();
+        items.push({ k: 'block', at: it.at, lanes, swapTo, swapX: it.swapX === 'cfg' ? Game.config.spawn.swapX : it.swapX || 0 });
+      } else if (it.k === 'row') {
+        const lane = rowLane;
+        for (let i = 0; i < it.n; i++) items.push({ k: 'gem', at: it.at + i * it.step, lane, h: 0, row: true });
+      }
+    }
+    return { id: pat.id, threats: pat.threats, items };
+  }
+
+  // ---- 跳び方の放物線（時間は「その物がハムスターの列に着く時刻」の物差し） ----
+  // わな（中心が t=0 に着く）を越えられる、跳び始めの時刻の範囲 [lo, hi]
+  function safeJump(ranks, cfg, w) {
+    const RU = Game.rules, J = RU.jumpOf(ranks, cfg), sp = cfg.speed[ranks.speed || 0];
+    const X = (w + cfg.hamster.trapBox) / 2 / sp;
+    const e = (J.sec - RU.trapClearSec(ranks, cfg)) / 2; // 跳んでから、わなの高さを越えるまで
+    return { lo: X + e - J.sec, hi: -X - e, J };
+  }
+  const arcZ = (J, u) => 4 * J.h * u * (1 - u);
+
+  // 宝を添える（危ないところに置く）。わながあれば、早めか遅めに跳んだ軌道の上に置く（宝をめがけて跳ぶと、わなに落ちやすい）。
+  // わなの真上には置かない（影がわなに重なって、どのレーンの宝か分からなくなる）。わなの中心から lootOff ドット以上ずらす
+  // reach: ハムスターが行けるレーン
+  function addLoot(o, inst, ranks, cfg, reach) {
+    const kinds = [{ k: 'seed', weight: 4 }];
+    if (ranks.loot >= 1) kinds.push({ k: 'gem', weight: 3 });
+    if (ranks.loot >= 2) kinds.push({ k: 'big', weight: 2 });
+    if (ranks.loot >= 4) kinds.push({ k: 'statue', weight: 1 });
+    const k = R.weighted(o, kinds).k;
+    const traps = inst.items.filter((x) => x.k === 'trap' && reach.includes(x.lane));
+    let item;
+    if (traps.length) {
+      const t = R.pick(o, traps);
+      const w = t.w || cfg.obj.trap.w, { lo, hi, J } = safeJump(ranks, cfg, w);
+      const side = R.next(o) < 0.5 ? -1 : 1;                                         // -1: 手前（早めに跳んだ上り）、1: 奥（遅めに跳んだ下り）
+      const j = side < 0 ? lo + (hi - lo) * cfg.spawn.lootEarly : hi - (hi - lo) * cfg.spawn.lootEarly;
+      let u = k === 'statue' ? 0.5 : side < 0 ? 0.3 : 0.7;                           // 像は頂上、ほかは上り・下りの途中
+      const sp = cfg.speed[ranks.speed || 0], minDt = (w / 2 + cfg.spawn.lootOff) / sp;
+      if (side * (j + u * J.sec) < minDt) u = Math.max(0.12, Math.min(0.88, (side * minDt - j) / J.sec));
+      item = { k, at: t.at + j + u * J.sec, lane: t.lane, h: Math.round(arcZ(J, u)) - (k === 'statue' ? 2 : 0) };
+    } else {
+      item = { k, at: 0.15, lane: R.pick(o, reach), h: k === 'statue' ? Game.rules.jumpOf(ranks, cfg).h - 2 : 0 };
+    }
+    inst.items.push(item);
+    // 番の わな: 宝の段階に応じて、宝のあとの同じレーンに わなが増える（取らなくても出る）
+    if (R.next(o) < cfg.lootGuard[ranks.loot || 0]) inst.items.push({ k: 'trap', at: item.at + cfg.spawn.lootGuardSec, lane: item.lane, guard: true });
+  }
+
+  // ひまわりの種の列。型の間を広げない（filler）。わながあれば、越える跳び方の放物線に沿って並べる
+  function addSeeds(o, inst, gapSec, reach, ranks, cfg) {
+    const traps = inst.items.filter((x) => x.k === 'trap' && reach.includes(x.lane));
+    if (traps.length && R.next(o) < cfg.spawn.seedArcChance) {
+      const t = R.pick(o, traps);
+      const { lo, hi, J } = safeJump(ranks, cfg, t.w || cfg.obj.trap.w);
+      const j = (lo + hi) / 2;
+      for (const u of [0.15, 0.32, 0.5, 0.68, 0.85]) inst.items.push({ k: 'seed', at: t.at + j + u * J.sec, lane: t.lane, h: Math.round(arcZ(J, u)), filler: true });
+      return;
+    }
+    const end = inst.items.reduce((m, x) => Math.max(m, x.at), 0);
+    const n = 3 + R.int(o, 3), lane = R.pick(o, reach), from = end + gapSec * 0.35;
+    for (let i = 0; i < n; i++) inst.items.push({ k: 'seed', at: from + i * 0.1, lane, h: 0, filler: true });
+  }
+
+  // ---- 公平さ（実際のルールを写して、当たらずに抜ける道を探す） ----
+  const fairCache = new Map();
+  const isThreat = (x) => x.k === 'trap' || x.k === 'rock' || x.k === 'block' || x.k === 'stal';
+
+  function controlsOf(ranks) { return { move: (ranks.move || 0) >= 1, lane: (ranks.lane || 0) >= 1 }; }
+
+  function actionsFor(st, ctl) {
+    const a = [null, 'jump'];
+    if (ctl.move) a.push('fwd', 'back');
+    if (ctl.lane) a.push('far', 'near');
+    return a;
+  }
+
+  // 始めの位置ひとつについて、深さ優先で道を探す（見つかればすぐ終わる）
+  function searchFrom(cfg, ranks, threatInst, col, lane, budget) {
+    const RU = Game.rules;
+    const s0 = RU.create(cfg, { seed: 1, noSpawn: true, ranks });
+    RU.setCell(s0, col, lane);
+    RU.place(s0, threatInst, cfg);
+    const t0 = s0.t, D = cfg.fair.decide, ctl = controlsOf(ranks);
+    const seen = new Set();
+    let nodes = 0;
+    const key = (s) => {
+      const h = s.h;
+      return Math.round(s.t * 60) + ':' + h.col + h.lane + ':' + (h.mv ? h.mv.k + h.mv.to : '-') + ':' + h.jt.toFixed(2) + ':' + (h.queued || '');
+    };
+    function dfs(s) {
+      if (++nodes > budget) return false;
+      if (!s.objs.length && !s.rocks.length) return true;
+      const acts = s.t - t0 < cfg.spawn.lead + cfg.fair.reaction ? [null] : actionsFor(s, ctl);
+      for (const a of acts) {
+        const ns = structuredClone(s);
+        let dead = false;
+        for (let f = 0; f < D; f++) {
+          RU.step(ns, f === 0 && a ? [a] : [], cfg);
+          if (ns.phase === 'over') { dead = true; break; }
+        }
+        if (dead) continue;
+        const k = key(ns);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        if (dfs(ns)) return true;
+      }
+      return false;
+    }
+    return dfs(s0);
+  }
+
+  // 型（具体化したもの）が、今の段階で公平か。全部の始めの位置から抜けられること
+  function fair(cfg, ranks, inst) {
+    const threats = { id: inst.id, items: inst.items.filter(isThreat) };
+    if (!threats.items.length) return true;
+    const ctl = controlsOf(ranks);
+    const k = JSON.stringify([threats.items, ranks.speed || 0, ranks.move || 0, ranks.lane || 0, ranks.greed || 0]);
+    if (fairCache.has(k)) return fairCache.get(k);
+    const cols = ctl.move ? [0, 1, 2] : [1], lanes = ctl.lane ? [0, 1, 2] : [1];
+    let ok = true;
+    for (const c of cols) for (const l of lanes) if (ok && !searchFrom(cfg, ranks, threats, c, l, 4000)) ok = false;
+    fairCache.set(k, ok);
+    return ok;
+  }
+
+  const maxThreats = (state, cfg) => Math.min(3, 1 + Math.floor(Game.levelup.taken(state) / cfg.spawn.maxThreatsEvery));
+
+  // 次の型を選んで具体化する。state.intro にあれば、それを単独で先に出す
+  function choose(state, cfg) {
+    const ranks = state.ranks, open = (ranks.lane || 0) >= 1;
+    const here = { col: state.h.col, lane: state.h.lane, open }, reach = open ? [0, 1, 2] : [state.h.lane];
+    const cap = maxThreats(state, cfg);
+    let pool = LIST.filter((p) => meets(p.requires, ranks) && p.threats <= cap);
+    let intro = false;
+    while (state.intro.length) {
+      const p = byId[state.intro.shift()];
+      if (p && !p.noIntro && meets(p.requires, ranks)) { pool = [p]; intro = true; break; }
+    }
+    for (let tries = 0; tries < 12; tries++) {
+      const pat = R.weighted(state, pool);
+      const inst = resolve(state, pat, here, ranks);
+      if (!fair(cfg, ranks, inst)) { if (!intro) continue; pool = LIST.filter((p) => meets(p.requires, ranks) && p.threats <= cap); intro = false; continue; }
+      if (pat.threats > 0 && R.next(state) < cfg.spawn.lootChance) {
+        addLoot(state, inst, ranks, cfg, reach);
+        // 番の わなで抜けられなくなったら、番を外す
+        if (inst.items.some((x) => x.guard) && !fair(cfg, ranks, inst)) inst.items = inst.items.filter((x) => !x.guard);
+      }
+      const gap = cfg.spawn.gapSec[ranks.trap || 0];
+      if (!intro && R.next(state) < cfg.spawn.seedRunChance) addSeeds(state, inst, gap, reach, ranks, cfg);
+      inst.gap = Math.max(gap, cfg.spawn.minGapSec) + (intro ? 0.6 : 0);
+      return inst;
+    }
+    return resolve(state, byId.trap1, here, ranks);
+  }
+
+  // 新しく取った段階で出せるようになった型（紹介用）
+  function introducedBy(id, rank) {
+    return LIST.filter((p) => p.requires[id] === rank).map((p) => p.id);
+  }
+
+  Game.patterns = { LIST, SHAPES, shapesFor, meets, resolve, fair, choose, introducedBy, maxThreats, fairCache, addLoot, addSeeds, safeJump };
+})();
+</script>
+<script>
+// 3択のレベルアップ。各強化の「次の段階」から、種類の違うものを最大3つ選ぶ
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const R = Game.rng;
+
+  function initRanks(cfg, pretaken) {
+    const ranks = {};
+    for (const u of cfg.upgrades) ranks[u.id] = 0;
+    for (const id of pretaken || []) if (id in ranks) ranks[id] = Math.max(ranks[id], 1);
+    return ranks;
+  }
+
+  // 次の段階が残っていて、その段階の条件（needs）を満たす強化の id
+  function available(state, cfg) {
+    const ok = (u) => {
+      const need = u.needs && u.needs[state.ranks[u.id] + 1];
+      return !need || Object.keys(need).every((k) => (state.ranks[k] || 0) >= need[k]);
+    };
+    return cfg.upgrades.filter((u) => state.ranks[u.id] < u.max && ok(u)).map((u) => u.id);
+  }
+
+  // 均等に、重ならないように最大3つ
+  function offer(state, cfg) {
+    const pool = available(state, cfg);
+    const out = [];
+    while (out.length < 3 && pool.length) out.push(pool.splice(R.int(state, pool.length), 1)[0]);
+    return out;
+  }
+
+  // 選んだ段階を適用し、新しい段階を返す
+  function apply(state, id, cfg) {
+    const u = cfg.upgrades.find((x) => x.id === id);
+    if (!u || state.ranks[id] >= u.max) throw new Error('取れない段階: ' + id);
+    return ++state.ranks[id];
+  }
+
+  const taken = (state) => Object.values(state.ranks).reduce((a, b) => a + b, 0);
+
+  // カードの文字
+  function card(cfg, id, rank) {
+    const u = cfg.upgrades.find((x) => x.id === id);
+    return { id, name: u.name, rank, desc: Array.isArray(u.desc) ? u.desc[rank] : u.desc };
+  }
+
+  Game.levelup = { initRanks, available, offer, apply, taken, card };
+})();
+</script>
+<script>
+// ランのルール。状態はただのデータ（structuredClone で写せる）。step は 1/60 秒進めて出来事の一覧を返す。
+// 描画・音・DOM には触らない
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const RNG = Game.rng, LV = Game.levelup;
+
+  const speedOf = (s, cfg) => cfg.speed[s.ranks.speed];
+  const travel = (s, cfg, x) => (cfg.view.w - x) / speedOf(s, cfg); // 右端から x まで流れる時間
+  // ジャンプの高さと空中の時間（よくばりでほっぺが重くなる）
+  const jumpOf = (ranks, cfg) => { const j = (cfg.greedJump || [])[ranks.greed || 0]; return j ? { h: j.h, sec: j.sec } : { h: cfg.hamster.jumpH, sec: cfg.hamster.jumpSec }; };
+  // わなの高さより上にいられる時間（秒）
+  const trapClearSec = (ranks, cfg) => { const j = jumpOf(ranks, cfg); return j.sec * Math.sqrt(Math.max(0, 1 - cfg.obj.trap.h / j.h)); };
+  // ながい わなの幅: 跳んで越えられる最大の長さ × longFrac（助けの jumpGrace は含めない）
+  const longTrapW = (ranks, cfg) => Math.max(cfg.obj.trap.w, Math.floor((cfg.speed[ranks.speed || 0] * trapClearSec(ranks, cfg) - cfg.hamster.trapBox) * cfg.obj.trap.longFrac));
+  const isThreat = (k) => k === 'trap' || k === 'block' || k === 'stal';
+  const objW = (o, cfg) => o.w || (o.k === 'trap' ? cfg.obj.trap.w : o.k === 'block' ? cfg.obj.block.w : o.k === 'stal' ? cfg.obj.stal.w : cfg.obj.item.w);
+
+  // runOptions: { seed, lives, pretaken, assist, noSpawn, ranks, rare（③: 'pup' | 'mimic' | 'fly' | { kind, floor } で必ず起こす。null で起こさない）, rareFloor }
+  // assist（②の恒久強化の助け）: { warnPlus: 落石の影を何秒早く出すか, swapPlus: とおせんぼが何ドット早く入れ替わるか, preview: 窓に入る何秒前から右端に予告を出すか, jumpGrace: わなに対する当たり判定を何ドット小さくするか, xpMul: 経験値の係数（いせきの ちず）, rockMark: 落石の落ちる場所に ⊗ の印を出す }
+  function create(cfg, opt = {}) {
+    const L = cfg.layout;
+    const s = {
+      rng: RNG.seedFrom(opt.seed == null ? 1 : opt.seed),
+      seed: opt.seed == null ? 1 : opt.seed,
+      t: 0, dist: 0, phase: 'run',
+      floor: 1, level: 0,
+      ranks: opt.ranks ? Object.assign({}, opt.ranks) : LV.initRanks(cfg, opt.pretaken),
+      lives: opt.lives || 0, invuln: 0,
+      score: 0, distFrac: 0, xp: 0, xpNeed: cfg.xpBase, timeBonus: 0,
+      offer: null,
+      h: { col: L.startCol, lane: L.startLane, x: L.colX[L.startCol], lp: L.startLane, mv: null, queued: null, z: 0, jt: -1, jbuf: 0 },
+      objs: [], rocks: [],
+      nextId: 1, nextSpawnT: 0.6, intro: [],
+      rows: {},
+      noSpawn: !!opt.noSpawn,
+      assist: Object.assign({ warnPlus: 0, swapPlus: 0, preview: 0, jumpGrace: 0, xpMul: 1, rockMark: false }, opt.assist || {}),
+      loot: 0,           // 拾った宝の値打ちの合計（持ち帰る通貨。meta.value）
+      seedRun: 0, seedT: -9,
+      rare: null,        // ③ランダムイベント（rare.js）
+      cleared: false,    // ④宝を手に入れたか（クリアの印）。エクストラで死んでも残る
+      clearAt: null,     // クリアした時刻（s.t はエクストラの間も進むので）
+      extra: null,       // ④脱出エクストラ: { on: 走っている間, n: 登る回数, left: 残りの登る回数, escaped, bonus }。入っていなければ null
+    };
+    if (Game.rare) s.rare = Game.rare.fromOptions(opt, s.seed, cfg);
+    return s;
+  }
+
+  function setCell(s, col, lane, cfg = Game.config) {
+    const h = s.h;
+    h.col = col; h.lane = lane; h.x = cfg.layout.colX[col]; h.lp = lane; h.mv = null; h.queued = null;
+  }
+
+  // 型（具体化したもの）を置く。物は窓に入る spawn.lead 秒前に、窓の外で作る（予告の助けが先に見せられるように）
+  function place(s, inst, cfg = Game.config) {
+    const sp = speedOf(s, cfg), W = cfg.view.w, L = cfg.layout, lead = cfg.spawn.lead;
+    const rowId = inst.items.some((x) => x.row) ? 'r' + s.nextId : null;
+    for (const it of inst.items) {
+      const id = s.nextId++;
+      if (it.k === 'rock') {
+        const tImpact = s.t + lead + it.at + travel(s, cfg, L.colX[it.col]);
+        const warn = cfg.rockWarn[s.ranks.move] + s.assist.warnPlus;
+        s.rocks.push({ id, col: it.col, lanes: it.lanes.slice(), tWarn: Math.max(s.t, tImpact - warn), tImpact });
+      } else {
+        const o = { id, k: it.k, wx: s.dist + W + (lead + it.at) * sp, lane: it.lane, minSep: 99, hit: false };
+        if (it.k === 'block') { o.lanes = it.lanes.slice(); o.swapTo = it.swapTo ? it.swapTo.slice() : null; o.swapX = it.swapX ? it.swapX + s.assist.swapPlus : 0; delete o.lane; }
+        if (it.h != null) o.h = it.h;
+        if (it.w) o.w = it.w;
+        if (it.row) { o.row = rowId; s.rows[rowId] = s.rows[rowId] || { n: 0, got: 0, miss: false }; s.rows[rowId].n++; }
+        s.objs.push(o);
+      }
+    }
+  }
+
+  const threatPts = (s, cfg, rank, near) => Math.round(cfg.score.threatBase * (1 + cfg.score.threatStep * rank)) * (near ? cfg.score.nearMul : 1);
+
+  function addScore(s, cfg, pts, ev) {
+    if (!pts) return;
+    s.score += pts;
+    s.xp += pts * cfg.xpMul[s.ranks.greed] * s.assist.xpMul;
+  }
+
+  // ---- ハムスターの動き ----
+  function command(s, c, cfg) {
+    const h = s.h;
+    if (c === 'jump') {
+      if (h.jt < 0) { h.jt = 0; return [{ type: 'jump', t: s.t, x: h.x, lane: h.lane }]; }
+      h.jbuf = cfg.hamster.jumpBuffer;
+      return [];
+    }
+    const isCol = c === 'fwd' || c === 'back';
+    if (isCol && s.ranks.move < 1) return [];
+    if (!isCol && (c === 'far' || c === 'near') && s.ranks.lane < 1) return [];
+    if (h.mv) { h.queued = c; return []; }
+    return startMove(s, c, cfg);
+  }
+
+  function startMove(s, c, cfg) {
+    const h = s.h, L = cfg.layout;
+    if (c === 'fwd' || c === 'back') {
+      const to = h.col + (c === 'fwd' ? 1 : -1);
+      if (to < 0 || to > 2) return [];
+      h.mv = { k: 'col', from: h.x, to, t: 0 };
+      h.col = to;
+    } else {
+      const to = h.lane + (c === 'far' ? -1 : 1);
+      if (to < 0 || to > 2) return [];
+      h.mv = { k: 'lane', from: h.lp, to, t: 0 };
+      h.lane = to;
+    }
+    return [{ type: 'move', t: s.t, dir: c, x: h.x, lane: h.lane }];
+  }
+
+  function moveHamster(s, cfg, dt, ev) {
+    const h = s.h, H = cfg.hamster, L = cfg.layout;
+    if (h.mv) {
+      h.mv.t += dt;
+      const k = Math.min(1, h.mv.t / H.moveSec);
+      if (h.mv.k === 'col') h.x = h.mv.from + (L.colX[h.mv.to] - h.mv.from) * k;
+      else h.lp = h.mv.from + (h.mv.to - h.mv.from) * k;
+      if (k >= 1) {
+        h.mv = null;
+        if (h.queued) { const q = h.queued; h.queued = null; ev.push(...startMove(s, q, cfg)); }
+      }
+    }
+    if (h.jbuf > 0) h.jbuf = Math.max(0, h.jbuf - dt);
+    if (h.jt >= 0) {
+      h.jt += dt;
+      const J = jumpOf(s.ranks, cfg), T = J.sec;
+      if (h.jt >= T) {
+        h.jt = -1; h.z = 0;
+        ev.push({ type: 'land', t: s.t, x: h.x, lane: h.lane });
+        if (h.jbuf > 0) { h.jbuf = 0; h.jt = 0; ev.push({ type: 'jump', t: s.t, x: h.x, lane: h.lane }); }
+      } else {
+        const u = h.jt / T;
+        h.z = 4 * J.h * u * (1 - u);
+      }
+    }
+  }
+
+  // ---- 当たり ----
+  // 物との隙間（負なら当たり）。x の隙間、レーンの隙間、高さの隙間のうち最大
+  function sepGround(s, cfg, o, sx) {
+    const h = s.h, half = (o.k === 'trap' ? cfg.hamster.trapBox - s.assist.jumpGrace : cfg.hamster.box) / 2;
+    const w = objW(o, cfg);
+    const xg = Math.abs(sx - h.x) - (half + w / 2);
+    const lanes = o.lanes || [o.lane];
+    let lg = 99;
+    for (const l of lanes) lg = Math.min(lg, (Math.abs(h.lp - l) - 0.5) * 16);
+    let zg = -1;
+    if (o.k === 'trap') zg = h.z - cfg.obj.trap.h;
+    else if (o.k === 'block') zg = h.z - cfg.obj.block.h;
+    else if (o.k === 'stal') zg = cfg.obj.stal.bottom - (h.z + cfg.hamster.box); // 頭の上の隙間
+    return Math.max(xg, lg, zg);
+  }
+
+  function hit(s, cfg, ev, what) {
+    if (s.invuln > 0) return;
+    const h = s.h;
+    if (s.lives > 0) {
+      s.lives--;
+      s.invuln = cfg.lifeInvuln;
+      s.objs = []; s.rocks = [];
+      if (Game.rare) Game.rare.cancel(s, ev);
+      s.nextSpawnT = s.t + Math.max(0, cfg.lifeGrace - cfg.spawn.lead);
+      ev.push({ type: 'hit', t: s.t, what, x: h.x, lane: h.lane, fatal: false }, { type: 'life_used', t: s.t, x: h.x, lane: h.lane, lives: s.lives });
+    } else {
+      s.phase = 'over';
+      ev.push({ type: 'hit', t: s.t, what, x: h.x, lane: h.lane, fatal: true }, { type: 'game_over', t: s.t, score: s.score, floor: s.floor });
+    }
+  }
+
+  function updateObjs(s, cfg, ev) {
+    const h = s.h, half = cfg.hamster.box / 2;
+    const laneEff = Math.round(h.lp);
+    for (let i = 0; i < s.objs.length && s.phase === 'run'; i++) {
+      const o = s.objs[i];
+      const sx = o.wx - s.dist;
+      if (o.k === 'block' && o.swapTo && sx <= o.swapX) {
+        o.lanes = o.swapTo; o.swapTo = null;
+        ev.push({ type: 'block_swap', t: s.t, x: sx, lanes: o.lanes.slice(), id: o.id });
+      }
+      if (o.done) continue;
+      if (isThreat(o.k)) {
+        if (sx < h.x + 40 && sx > h.x - 40) {
+          const sep = sepGround(s, cfg, o, sx);
+          if (sep < o.minSep) o.minSep = sep;
+          if (sep < 0 && s.invuln <= 0) { o.done = true; hit(s, cfg, ev, o.k); continue; }
+        }
+        const w = objW(o, cfg);
+        if (sx + w / 2 < h.x - half) {
+          o.done = true;
+          if (s.invuln > 0) continue;
+          const near = o.minSep >= 0 && o.minSep <= cfg.score.nearGap;
+          if ((o.k === 'trap' || o.k === 'stal') && o.lane === laneEff) {
+            const pts = threatPts(s, cfg, s.ranks.trap, near);
+            addScore(s, cfg, pts);
+            ev.push({ type: 'pass_trap', t: s.t, x: h.x, lane: laneEff, points: pts, near, what: o.k, long: !!o.w });
+            if (near) ev.push({ type: 'near_miss', t: s.t, x: h.x, lane: laneEff, what: o.k });
+          } else if (o.k === 'block') {
+            const pts = threatPts(s, cfg, s.ranks.lane, near);
+            addScore(s, cfg, pts);
+            ev.push({ type: 'pass_block', t: s.t, x: h.x, lane: laneEff, points: pts, near });
+            if (near) ev.push({ type: 'near_miss', t: s.t, x: h.x, lane: laneEff, what: 'block' });
+          }
+        }
+      } else {
+        // 拾い物
+        if (o.lane === laneEff && Math.abs(sx - h.x) < half + cfg.obj.item.w / 2 && Math.abs(h.z - (o.h || 0)) <= cfg.obj.item.reach) {
+          o.done = true; o.got = true;
+          const pts = cfg.score.item[o.k] || 0; // こハムスター（③）は 0
+          s.loot += (cfg.meta && cfg.meta.value[o.k]) || 0;
+          addScore(s, cfg, pts);
+          s.seedRun = o.k === 'seed' && s.t - s.seedT < cfg.audio.seedResetSec ? s.seedRun + 1 : (o.k === 'seed' ? 1 : s.seedRun);
+          if (o.k === 'seed') s.seedT = s.t;
+          ev.push({ type: 'pickup', t: s.t, k: o.k, x: sx, lane: o.lane, h: o.h || 0, points: pts, run: s.seedRun });
+          if (o.row) {
+            const r = s.rows[o.row]; r.got++;
+            if (r.got === r.n && !r.miss) { addScore(s, cfg, cfg.score.rowBonus); ev.push({ type: 'row_bonus', t: s.t, x: h.x, lane: laneEff, points: cfg.score.rowBonus }); }
+          }
+        } else if (sx < h.x - half - 8) {
+          o.done = true;
+          if (o.row) s.rows[o.row].miss = true;
+        }
+      }
+    }
+    s.objs = s.objs.filter((o) => !(o.done && o.wx - s.dist < -24));
+  }
+
+  function updateRocks(s, cfg, ev) {
+    const h = s.h, L = cfg.layout;
+    for (let i = 0; i < s.rocks.length && s.phase === 'run'; i++) {
+      const r = s.rocks[i];
+      if (s.t < r.tImpact) continue;
+      r.done = true;
+      const xg = Math.abs(L.colX[r.col] - h.x) - (cfg.hamster.box + cfg.obj.rock.w) / 2;
+      let lg = 99;
+      for (const l of r.lanes) lg = Math.min(lg, (Math.abs(h.lp - l) - 0.5) * 16);
+      const sep = Math.max(xg, lg);
+      ev.push({ type: 'rock_land', t: s.t, col: r.col, lanes: r.lanes.slice(), x: L.colX[r.col] });
+      if (sep < 0) { if (s.invuln <= 0) hit(s, cfg, ev, 'rock'); continue; }
+      if (s.invuln > 0) continue;
+      const near = sep <= cfg.score.nearGap;
+      const pts = threatPts(s, cfg, s.ranks.move, near);
+      addScore(s, cfg, pts);
+      ev.push({ type: 'dodge_rock', t: s.t, x: h.x, lane: Math.round(h.lp), points: pts, near });
+      if (near) ev.push({ type: 'near_miss', t: s.t, x: h.x, lane: Math.round(h.lp), what: 'rock' });
+    }
+    s.rocks = s.rocks.filter((r) => !r.done);
+  }
+
+  // ---- レベルアップ ----
+  // 物を消し、ハムスターを地面のマスに戻す（床が抜ける・よじ登る前）
+  function settle(s, cfg, ev) {
+    s.objs = []; s.rocks = [];
+    if (Game.rare) Game.rare.cancel(s, ev);
+    const h = s.h;
+    h.z = 0; h.jt = -1; h.jbuf = 0; h.queued = null;
+    if (h.mv) { if (h.mv.k === 'col') h.x = cfg.layout.colX[h.mv.to]; else h.lp = h.mv.to; h.mv = null; }
+  }
+
+  function checkLevel(s, cfg, ev) {
+    if (s.phase !== 'run' || s.xp < s.xpNeed) return;
+    s.level++;
+    if (s.extra && s.extra.on) return climb(s, cfg, ev);
+    s.xpNeed += cfg.xpBase * Math.pow(cfg.xpGrowth, s.level);
+    settle(s, cfg, ev);
+    if (s.level >= cfg.clearLevel) {
+      s.phase = 'clear';
+      s.cleared = true; s.clearAt = s.t;
+      // 早く着くほど加点（経験値にはしない）
+      s.timeBonus = Math.max(0, Math.round((cfg.score.timeRefSec - s.t) * cfg.score.timePerSec));
+      s.score += s.timeBonus;
+      ev.push({ type: 'levelup_start', t: s.t, level: s.level, floor: s.floor, final: true }, { type: 'clear', t: s.t, score: s.score, bonus: s.timeBonus, floor: s.floor + 1 });
+      s.floor++;
+      return;
+    }
+    s.phase = 'choose';
+    s.offer = LV.offer(s, cfg);
+    ev.push({ type: 'levelup_start', t: s.t, level: s.level, floor: s.floor, offer: s.offer.slice() });
+  }
+
+  // ---- ④脱出エクストラ ----
+  // ランの中の強化の、残りの段階の合計
+  const ranksLeft = (s, cfg) => cfg.upgrades.reduce((n, u) => n + u.max - (s.ranks[u.id] || 0), 0);
+
+  // 宝の間のあとで呼ぶ。入れないとき（前後かレーンが段階 0）は何もしない
+  function startExtra(s, cfg = Game.config) {
+    if (s.phase !== 'clear' || s.extra || !Game.meta.canEnterExtra(s.ranks)) return [];
+    const n = ranksLeft(s, cfg) + 1;
+    s.extra = { on: true, n, left: n, escaped: false, bonus: 0 };
+    s.phase = 'run';
+    s.objs = []; s.rocks = [];
+    s.nextSpawnT = s.t + Math.max(0, cfg.landGrace - cfg.spawn.lead);
+    s.xp = 0; s.xpNeed = cfg.extra.xpPer;
+    return [{ type: 'extra_start', t: s.t, left: n, x: s.h.x, lane: s.h.lane }];
+  }
+
+  // 経験値がたまった: 段階が残っていれば3択（よじ登る）、なければ脱出成功
+  function climb(s, cfg, ev) {
+    const E = s.extra;
+    s.xpNeed += cfg.extra.xpPer;
+    settle(s, cfg, ev);
+    E.left--;
+    if (LV.available(s, cfg).length) {
+      s.phase = 'choose';
+      s.offer = LV.offer(s, cfg);
+      ev.push({ type: 'levelup_start', t: s.t, level: s.level, floor: s.floor, offer: s.offer.slice(), extra: true });
+      return;
+    }
+    s.phase = 'escaped';
+    E.on = false; E.escaped = true; E.bonus = cfg.extra.bonus;
+    s.score += E.bonus;
+    ev.push({ type: 'escape', t: s.t, score: s.score, bonus: E.bonus });
+  }
+
+  // 3択の i 番目を選ぶ
+  function pick(s, i, cfg = Game.config) {
+    if (s.phase !== 'choose' || !s.offer || !s.offer[i]) return [];
+    const id = s.offer[i];
+    const rank = LV.apply(s, id, cfg);
+    const extra = !!(s.extra && s.extra.on);
+    s.offer = null;
+    s.floor += extra ? -1 : 1; // エクストラでは上の階へ登る
+    s.phase = 'run';
+    s.nextSpawnT = s.t + Math.max(0, cfg.landGrace - cfg.spawn.lead); // 物は lead 秒前に作るので、そのぶん早めに
+    s.intro.push(...Game.patterns.introducedBy(id, rank));
+    const ev = [{ type: 'levelup_pick', t: s.t, id, rank }];
+    if (ranksLeft(s, cfg) === 0) ev.push({ type: 'all_max', t: s.t });
+    ev.push({ type: 'levelup_land', t: s.t, floor: s.floor, x: s.h.x, lane: s.h.lane, extra });
+    return ev;
+  }
+
+  // ---- 1刻み ----
+  function step(s, cmds, cfg = Game.config) {
+    const ev = [];
+    if (s.phase !== 'run') return ev;
+    const dt = cfg.dt;
+    for (const c of cmds || []) ev.push(...command(s, c, cfg));
+    s.t += dt;
+    if (s.invuln > 0) s.invuln = Math.max(0, s.invuln - dt);
+    const sp = speedOf(s, cfg);
+    s.dist += sp * dt;
+    s.distFrac += (sp * dt) / cfg.score.distPer;
+    if (s.distFrac >= 1) { const p = Math.floor(s.distFrac); s.distFrac -= p; addScore(s, cfg, p); }
+    moveHamster(s, cfg, dt, ev);
+    if (!s.noSpawn && s.t >= s.nextSpawnT) {
+      const inst = Game.patterns.choose(s, cfg);
+      place(s, inst, cfg);
+      const end = inst.items.reduce((m, x) => (x.filler ? m : Math.max(m, x.at)), 0); // 種の列は型の間を広げない
+      s.nextSpawnT = s.t + end + inst.gap;
+      ev.push({ type: 'spawn', t: s.t, id: inst.id });
+    }
+    updateObjs(s, cfg, ev);
+    if (s.phase === 'run') updateRocks(s, cfg, ev);
+    if (s.rare && Game.rare) Game.rare.update(s, cfg, ev);
+    checkLevel(s, cfg, ev);
+    return ev;
+  }
+
+  Game.rules = { create, setCell, place, step, pick, startExtra, ranksLeft, speedOf, travel, jumpOf, trapClearSec, longTrapW };
+})();
+</script>
+<script>
+// ボット: 見えている物だけを使い、反応の遅れのあとで、1手だけ先を読んで入力を選ぶ。
+// 2手以上の先読みはしない（人がうまくなる伸びしろ）
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const RNG = Game.rng;
+
+  // opt: { reaction（秒）, rockJudge（秒。落石だけ、知るまでにさらに足す。⊗ の印があれば 0）, jitter（秒）, strategy: 'random' | 'speed-first' | 'loot-first', seed }
+  function create(cfg, opt = {}) {
+    return {
+      reaction: opt.reaction == null ? cfg.bot.near : opt.reaction,
+      rockJudge: opt.rockJudge || 0,
+      jitter: opt.jitter || 0,  // ジャンプを打つ時刻のぶれ（± 秒）。ボットが正確すぎないように
+      strategy: opt.strategy || 'random',
+      rng: RNG.seedFrom('bot' + (opt.seed == null ? 1 : opt.seed)),
+      seen: {},          // id → 初めて見えた時刻
+      pending: null,     // { cmd, at } 指を離すまで待っているジャンプ
+      jit: null,         // 今の予約のぶれ（秒）
+      path: [],          // 目的のマスまで、残りの移動
+      frame: 0,
+    };
+  }
+
+  function visible(s, cfg, o) {
+    if (o.tWarn != null) return s.t >= o.tWarn;
+    return o.wx - s.dist <= cfg.view.w + 8 + s.assist.preview * Game.rules.speedOf(s, cfg);
+  }
+
+  // 知っている物（見えてから reaction 秒たった物）だけにした写し。
+  // 落石は、当たるかどうかの判断にさらに rockJudge 秒かかる（設計書② 6.3）。⊗ の印があれば見てすぐ分かる
+  function knownCopy(b, s, cfg) {
+    const c = structuredClone(s);
+    const ok = (lag) => (o) => b.seen[o.id] != null && s.t - b.seen[o.id] >= lag;
+    c.objs = c.objs.filter(ok(b.reaction));
+    c.rocks = c.rocks.filter(ok(b.reaction + (s.assist.rockMark ? 0 : b.rockJudge)));
+    c.noSpawn = true;
+    c.lives = 0;
+    c.rare = null; // ③ランダムイベントは気にしない（死なないので）
+    return c;
+  }
+
+  // 写しを horizon 秒進める。手は { jump } か { path: [移動の命令…] }（目的のマスへ続けて動く＝1手）
+  function rollout(c, cfg, hand, pending, frames) {
+    const R = Game.rules;
+    const lag = Math.round(cfg.bot.releaseLag / cfg.dt);
+    const pend = pending ? { cmd: pending.cmd, f: Math.max(0, Math.round((pending.at - c.t) / cfg.dt)) } : null;
+    const path = hand && hand.path ? hand.path.slice() : [];
+    const s0 = c.score;
+    // 手が終わって（着地して・移動し終えて）から afterSec までを見る。その先の物は次の手で対処する
+    const after = Math.round(cfg.bot.afterSec / cfg.dt), jumpF = Math.round(Game.rules.jumpOf(c.ranks, cfg).sec / cfg.dt);
+    let end = 0;
+    if (hand && hand.jump) end = Math.max(end, lag + (hand.delayF || 0) + jumpF);
+    if (pend) end = Math.max(end, pend.f + jumpF);
+    if (path.length) end = Math.max(end, Math.ceil(path.length * cfg.hamster.moveSec / cfg.dt) + 1);
+    if (end) frames = Math.min(frames, end + after);
+    for (let f = 0; f < frames; f++) {
+      const cmds = [];
+      if (pend && pend.f === f) cmds.push(pend.cmd);
+      if (hand && hand.jump && f === lag + (hand.delayF || 0)) cmds.push('jump');
+      if (path.length && !c.h.mv) cmds.push(path.shift());
+      R.step(c, cmds, cfg);
+      if (c.phase === 'over') return { alive: false, until: f, gain: c.score - s0 };
+      if (c.phase !== 'run') break;
+      if ((f & 7) === 7 && !path.length && !c.h.mv && clearAhead(c, cfg)) break;
+    }
+    return { alive: true, until: frames, gain: c.score - s0 };
+  }
+
+  // 前に気にする物が残っていない（落石なし、地面の物はすべて済んだ）
+  function clearAhead(c, cfg) {
+    if (c.rocks.length) return false;
+    for (const o of c.objs) if (!o.done) return false;
+    return true;
+  }
+
+  // 1手の候補: ジャンプ、今いないマスへの移動（レーンを先に、列をあとに）、移動しながらのジャンプ
+  function candidates(s) {
+    const out = [{ jump: true }];
+    const h = s.h;
+    const cols = s.ranks.move >= 1 ? [0, 1, 2] : [h.col];
+    const lanes = s.ranks.lane >= 1 ? [0, 1, 2] : [h.lane];
+    for (const c of cols) for (const l of lanes) {
+      if (c === h.col && l === h.lane) continue;
+      const path = [];
+      for (let k = h.lane; k !== l; k += l > h.lane ? 1 : -1) path.push(l > h.lane ? 'near' : 'far');
+      for (let k = h.col; k !== c; k += c > h.col ? 1 : -1) path.push(c > h.col ? 'fwd' : 'back');
+      out.push({ path });
+    }
+    return out;
+  }
+
+  // 1手を評価する。ジャンプを含む手は、跳ぶ時刻を少しずつずらして試し、生き残れる時間帯の幅を測る。
+  // 幅のうち、両端からぶれの分だけ内側で、点がいちばん多い時刻（同じなら真ん中）を選ぶ。
+  // 幅がぶれより狭い手は robust でない（つらら石の直前のような、一瞬しか成り立たないジャンプ）
+  function evalHand(b, base, cfg, hand, frames, follow = true) {
+    if (!hand.jump) {
+      const c = structuredClone(base), r = rollout(c, cfg, hand, null, frames);
+      r.robust = r.alive && (!follow || followUp(b, c, cfg));
+      return { r, delayF: 0 };
+    }
+    const step = cfg.bot.scanStep, maxK = Math.round(cfg.bot.scanSec / cfg.dt);
+    const rs = [];
+    for (let k = 0; k <= maxK; k += step) rs.push({ k, r: rollout(structuredClone(base), cfg, Object.assign({}, hand, { delayF: k }), null, frames) });
+    let run = null, cur = [];
+    const flush = () => { if (cur.length && (!run || cur.length > run.length)) run = cur; cur = []; };
+    for (const x of rs) { if (x.r.alive) cur.push(x); else flush(); }
+    flush();
+    if (!run) { const x = rs.reduce((a, y) => (y.r.until > a.r.until ? y : a)); x.r.robust = false; return { r: x.r, delayF: x.k }; }
+    const jf = Math.ceil(b.jitter / cfg.dt / step);
+    const m = Math.min(jf, Math.floor((run.length - 1) / 2));
+    const inner = run.slice(m, run.length - m);
+    let pick = inner[Math.floor(inner.length / 2)];
+    for (const x of inner) if (x.r.gain > pick.r.gain) pick = x;
+    pick.r.robust = run.length >= 2 * jf + 1;
+    if (pick.r.robust && follow) {
+      const c = structuredClone(base);
+      rollout(c, cfg, Object.assign({}, hand, { delayF: pick.k }), null, frames);
+      pick.r.robust = followUp(b, c, cfg);
+    }
+    return { r: pick.r, delayF: pick.k };
+  }
+
+  // 手を打ち終えた状態から、次の物を余裕をもって越えられるか（何もしないか、ぶれても大丈夫なジャンプ1回）。
+  // これがないと、わなの手前で種を拾うためにレーンを行き来して、跳べる時間を使い切ってしまう
+  function followUp(b, c, cfg) {
+    if (c.phase !== 'run') return true;
+    const frames = Math.round(cfg.bot.horizon / cfg.dt);
+    if (rollout(structuredClone(c), cfg, null, null, frames).alive) return true;
+    const e = evalHand(b, c, cfg, { jump: true }, frames, false);
+    return e.r.alive && e.r.robust;
+  }
+
+  // このフレームの入力を返す
+  function act(b, s, cfg) {
+    for (const o of s.objs) if (b.seen[o.id] == null && visible(s, cfg, o)) b.seen[o.id] = s.t;
+    for (const r of s.rocks) if (b.seen[r.id] == null && visible(s, cfg, r)) b.seen[r.id] = s.t;
+    const out = [];
+    if (b.pending && s.t + 1e-9 >= b.pending.at) { out.push(b.pending.cmd); b.pending = null; b.jit = null; }
+    if (b.path.length && !s.h.mv && !s.h.queued) out.push(b.path.shift());
+    if (b.frame++ % cfg.bot.decide !== 0) return out;
+    if (b.path.length || s.h.mv || s.h.queued) return out;
+    // 予約したジャンプは、そのままで生き残れるうちは変えない。予約のあとで見えてきた物のせいで死ぬと分かったら組み直す。
+    // 離すまでの遅れ（releaseLag）より近い予約は、指をもう押しているので変えない
+    if (b.pending) {
+      if (b.pending.at - s.t <= cfg.bot.releaseLag) return out;
+      const keep = rollout(knownCopy(b, s, cfg), cfg, null, b.pending, Math.round(cfg.bot.horizon / cfg.dt));
+      if (keep.alive) return out;
+      b.pending = null;
+    }
+    const frames = Math.round(cfg.bot.horizon / cfg.dt);
+    const base = knownCopy(b, s, cfg);
+    const hasItem = base.objs.some((o) => !o.done && (o.k === 'seed' || o.k === 'gem' || o.k === 'big' || o.k === 'statue'));
+    const none = rollout(structuredClone(base), cfg, null, null, frames);
+    if (none.alive && !hasItem) { b.pending = null; return out; }
+    // 比べ方: 生き残る > ぶれても大丈夫（robust）> 点が多い > 長く生きる
+    const better = (r, q) => (r.alive !== q.alive ? r.alive : !r.alive ? r.until > q.until : r.robust !== q.robust ? r.robust : r.gain > q.gain);
+    none.robust = true;
+    let best = { hand: null, r: none, delayF: 0 };
+    const cands = candidates(s);
+    const consider = (hand) => {
+      const e = evalHand(b, base, cfg, hand, frames);
+      if (better(e.r, best.r)) best = { hand, r: e.r, delayF: e.delayF };
+    };
+    for (const hand of cands) consider(hand);
+    if (!best.r.alive || !best.r.robust) for (const hand of cands) if (hand.path) consider({ path: hand.path, jump: true });
+    // 今動いても助からないなら、次に考える機会まで待つほうがよいかを見る（移動は待てば間に合うことがある）
+    if (!best.r.alive) {
+      const later = structuredClone(base);
+      const wait = cfg.bot.decide;
+      let dead = false;
+      for (let f = 0; f < wait && !dead; f++) { Game.rules.step(later, [], cfg); dead = later.phase === 'over'; }
+      if (!dead) for (const hand of cands) if (evalHand(b, later, cfg, hand, frames - wait).r.alive) return out; // 待つ
+    }
+    if (!best.hand) { if (best.r.alive) b.pending = null; return out; }
+    if (best.hand.jump) {
+      // ぶれは予約ごとに1回だけ引く（見直すたびに引き直すと、ぶれが平均されて小さくなる）
+      if (b.jit == null) b.jit = (RNG.next(b) * 2 - 1) * b.jitter;
+      b.pending = { cmd: 'jump', at: s.t + best.delayF * cfg.dt + cfg.bot.releaseLag + b.jit };
+    } else b.pending = null;
+    if (best.hand.path) { b.path = best.hand.path.slice(); out.push(b.path.shift()); }
+    return out;
+  }
+
+  // 3択の作戦
+  function pick(b, s) {
+    const offer = s.offer || [];
+    const want = b.strategy === 'speed-first' ? 'speed' : b.strategy === 'loot-first' ? 'loot' : null;
+    const i = want ? offer.indexOf(want) : -1;
+    return i >= 0 ? i : RNG.int(b, offer.length);
+  }
+
+  Game.bot = { create, act, pick, evalHand, rollout, knownCopy };
+})();
+</script>
+<script>
+// ③実績: 記録データ（localStorage の hoppe-dive.records）、1回のランの数え（出来事から）、条件の判定。DOM に触らない。
+// 設計書: docs/specs/2026-11-03-hoppe-dive-achievements-design.md
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  const fresh = (cfg) => ({ v: cfg.achieve.version, got: {}, fresh: [] });
+  const ids = (cfg) => cfg.achieve.list.map((a) => a.id);
+
+  // 記録データの検め方。読めない・壊れている・版が違うときは最初の状態。知らない id は捨てる
+  function parse(raw, cfg) {
+    let d;
+    try { d = typeof raw === 'string' ? JSON.parse(raw) : null; } catch (e) { return fresh(cfg); }
+    if (!d || typeof d !== 'object' || Array.isArray(d) || d.v !== cfg.achieve.version || !d.got || typeof d.got !== 'object' || Array.isArray(d.got)) return fresh(cfg);
+    const out = fresh(cfg), known = ids(cfg);
+    for (const id of known) {
+      const n = d.got[id];
+      if (n == null) continue;
+      if (!Number.isInteger(n) || n < 1) return fresh(cfg);
+      out.got[id] = n;
+    }
+    if (Array.isArray(d.fresh)) for (const id of d.fresh) if (out.got[id] && !out.fresh.includes(id)) out.fresh.push(id);
+    return out;
+  }
+
+  const count = (rec) => Object.keys(rec.got).length;
+
+  // 取った印を付ける。初めてなら true
+  function grant(rec, id) {
+    if (rec.got[id]) return false;
+    rec.got[id] = count(rec) + 1;
+    rec.fresh.push(id);
+    return true;
+  }
+
+  // 見た（実績のページを開いた）
+  function seen(rec, list) {
+    const before = rec.fresh.length;
+    rec.fresh = rec.fresh.filter((id) => !list.includes(id));
+    return rec.fresh.length !== before;
+  }
+
+  // 1回のランの数え
+  const tracker = () => ({ near: 0, statue: 0, rows: 0, hits: 0, seedRun: 0, rare: {}, picked: {} });
+  function observe(tr, events) {
+    for (const e of events) {
+      switch (e.type) {
+        case 'near_miss': tr.near++; break;
+        case 'pickup':
+          tr.picked[e.k] = (tr.picked[e.k] || 0) + 1;
+          if (e.k === 'statue') tr.statue++;
+          if (e.k === 'seed') tr.seedRun = Math.max(tr.seedRun, e.run || 0);
+          break;
+        case 'row_bonus': tr.rows++; break;
+        case 'hit': tr.hits++; break;
+        case 'rare_end': if (e.ok) tr.rare[e.kind] = true; break;
+      }
+    }
+  }
+
+  // 条件。c: { s: ルールの状態, tr: 1回のランの数え, maxDiff: ランの始めに最大難易度だったか, final: 最後の点・gain: 持ち帰った宝（ランの終わりだけ）,
+  //          save: ②の保存データ（キャンプ）, cfg }。ランの条件は s がないとき、キャンプの条件は save がないとき、満たさない
+  const run = (f) => (c) => !!c.s && !!c.tr && f(c);
+  const camp = (f) => (c) => !!c.save && f(c);
+  const clear = run((c) => !!c.s.cleared);
+  const escape = run((c) => !!(c.s.extra && c.s.extra.escaped));
+  const COND = {
+    firstMove: run((c) => c.s.ranks.move >= 1),
+    firstLane: run((c) => c.s.ranks.lane >= 1),
+    firstHome: (c) => c.gain != null && c.gain > 0,
+    firstPerk: camp((c) => c.cfg.meta.perks.some((p) => c.save.alloc[p.id] > 0)),
+    firstUnlock: camp((c) => c.cfg.meta.unlocks.some((u) => c.save.use[u.id])),
+    perkAll: camp((c) => c.cfg.meta.perks.every((p) => c.save.alloc[p.id] >= p.max)),
+    floor5: run((c) => c.s.floor >= 5),
+    floor9: run((c) => c.s.floor >= 9),
+    floor13: run((c) => c.s.floor >= 13),
+    clear,
+    noHit: (c) => clear(c) && c.tr.hits === 0,
+    maxDiff: (c) => clear(c) && !!c.maxDiff,
+    fast: (c) => clear(c) && c.s.clearAt <= c.cfg.achieve.th.fastSec,
+    escape,
+    escapeMax: (c) => escape(c) && !!c.maxDiff,
+    allMax: run((c) => c.cfg.upgrades.every((u) => (c.s.ranks[u.id] || 0) >= u.max)),
+    score1: (c) => c.final != null && c.final >= c.cfg.achieve.th.score[0],
+    score2: (c) => c.final != null && c.final >= c.cfg.achieve.th.score[1],
+    score3: (c) => c.final != null && c.final >= c.cfg.achieve.th.score[2],
+    statue: run((c) => c.tr.statue >= c.cfg.achieve.th.statue),
+    rows: run((c) => c.tr.rows >= c.cfg.achieve.th.rows),
+    rich: run((c) => c.s.loot >= c.cfg.achieve.th.rich),
+    near: run((c) => c.tr.near >= c.cfg.achieve.th.near),
+    seeds: run((c) => c.tr.seedRun >= c.cfg.achieve.th.seeds),
+    pup: run((c) => !!c.tr.rare.pup),
+    mimic: run((c) => !!c.tr.rare.mimic),
+    fly: run((c) => !!c.tr.rare.fly),
+    bat: () => false, // 描画の側（main.js）が grant する
+  };
+  function met(a, c) {
+    if (a.pick) return !!c.tr && !!c.tr.picked && (c.tr.picked[a.pick] || 0) > 0; // はじめての たね／ほうせき／…（種類ごとに初めて拾う）
+    if (a.up) return !!c.s && (c.s.ranks[a.up] || 0) >= c.cfg.upgrades.find((u) => u.id === a.up).max;
+    return COND[a.id] ? COND[a.id](c) : false;
+  }
+
+  // 今の状態で満たした実績のうち、まだ取っていないもの（記録には付けない）
+  function check(rec, c, cfg) {
+    c = Object.assign({ cfg }, c);
+    return cfg.achieve.list.filter((a) => !rec.got[a.id] && met(a, c)).map((a) => a.id);
+  }
+
+  // check して、取った印を付ける。新しく取った id を返す
+  function update(rec, c, cfg) {
+    const got = check(rec, c, cfg);
+    for (const id of got) grant(rec, id);
+    return got;
+  }
+
+  const info = (id, cfg) => cfg.achieve.list.find((a) => a.id === id);
+
+  Game.achieve = { fresh, parse, count, grant, seen, tracker, observe, check, update, info, met };
+})();
+</script>
+<script>
+// 5×7 の自作ドット文字。1文字 = 7行×5桁の文字列（'#' が点）。濁点・半濁点は bake.js で重ねる
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  const G = {};
+  // 7行を1行に並べて書く（' ' 区切り）
+  const def = (ch, rows) => { G[ch] = rows.split(' '); };
+
+  // 数字
+  def('0', '.###. #...# #..## #.#.# ##..# #...# .###.');
+  def('1', '..#.. .##.. ..#.. ..#.. ..#.. ..#.. .###.');
+  def('2', '.###. #...# ....# ...#. ..#.. .#... #####');
+  def('3', '##### ...#. ..#.. ...#. ....# #...# .###.');
+  def('4', '...#. ..##. .#.#. #..#. ##### ...#. ...#.');
+  def('5', '##### #.... ####. ....# ....# #...# .###.');
+  def('6', '..##. .#... #.... ####. #...# #...# .###.');
+  def('7', '##### ....# ...#. ..#.. .#... .#... .#...');
+  def('8', '.###. #...# #...# .###. #...# #...# .###.');
+  def('9', '.###. #...# #...# .#### ....# ...#. .##..');
+
+  // 英字（大文字）
+  def('A', '.###. #...# #...# ##### #...# #...# #...#');
+  def('B', '####. #...# #...# ####. #...# #...# ####.');
+  def('C', '.###. #...# #.... #.... #.... #...# .###.');
+  def('D', '###.. #..#. #...# #...# #...# #..#. ###..');
+  def('E', '##### #.... #.... ####. #.... #.... #####');
+  def('F', '##### #.... #.... ####. #.... #.... #....');
+  def('G', '.###. #...# #.... #.### #...# #...# .####');
+  def('H', '#...# #...# #...# ##### #...# #...# #...#');
+  def('I', '.###. ..#.. ..#.. ..#.. ..#.. ..#.. .###.');
+  def('J', '..### ...#. ...#. ...#. ...#. #..#. .##..');
+  def('K', '#...# #..#. #.#.. ##... #.#.. #..#. #...#');
+  def('L', '#.... #.... #.... #.... #.... #.... #####');
+  def('M', '#...# ##.## #.#.# #.#.# #...# #...# #...#');
+  def('N', '#...# #...# ##..# #.#.# #..## #...# #...#');
+  def('O', '.###. #...# #...# #...# #...# #...# .###.');
+  def('P', '####. #...# #...# ####. #.... #.... #....');
+  def('Q', '.###. #...# #...# #...# #.#.# #..#. .##.#');
+  def('R', '####. #...# #...# ####. #.#.. #..#. #...#');
+  def('S', '.#### #.... #.... .###. ....# ....# ####.');
+  def('T', '##### ..#.. ..#.. ..#.. ..#.. ..#.. ..#..');
+  def('U', '#...# #...# #...# #...# #...# #...# .###.');
+  def('V', '#...# #...# #...# #...# #...# .#.#. ..#..');
+  def('W', '#...# #...# #...# #.#.# #.#.# #.#.# .#.#.');
+  def('X', '#...# #...# .#.#. ..#.. .#.#. #...# #...#');
+  def('Y', '#...# #...# .#.#. ..#.. ..#.. ..#.. ..#..');
+  def('Z', '##### ....# ...#. ..#.. .#... #.... #####');
+
+  // 記号
+  def(' ', '..... ..... ..... ..... ..... ..... .....');
+  def('!', '..#.. ..#.. ..#.. ..#.. ..#.. ..... ..#..');
+  def('…', '..... ..... ..... ..... ..... #.#.# .....');
+  def('?', '.###. #...# ....# ...#. ..#.. ..... ..#..');
+  def('.', '..... ..... ..... ..... ..... ..... ..#..');
+  def(':', '..... ..#.. ..... ..... ..... ..#.. .....');
+  def('-', '..... ..... ..... .###. ..... ..... .....');
+  def('+', '..... ..#.. ..#.. ##### ..#.. ..#.. .....');
+  def('x', '..... ..... #...# .#.#. ..#.. .#.#. #...#');
+  def('/', '....# ....# ...#. ..#.. .#... #.... #....');
+  def('(', '...#. ..#.. .#... .#... .#... ..#.. ...#.');
+  def(')', '.#... ..#.. ...#. ...#. ...#. ..#.. .#...');
+  def('=', '..... ..... ##### ..... ##### ..... .....');
+  def('ー', '..... ..... ..... ##### ..... ..... .....');
+  def('〜', '..... ..... .#... #.#.# ...#. ..... .....');
+  def('。', '..... ..... ..... ..... .#... #.#.. .#...');
+  def('、', '..... ..... ..... ..... #.... .#... .....');
+  def('・', '..... ..... ..... ..#.. ..... ..... .....');
+  def('♪', '..##. ..#.# ..#.. ..#.. ###.. ###.. .....');
+
+  // ひらがな
+  def('あ', '..#.. ##### ..#.. .####  #.#.# #.#.# .#.#.'.replace('  ', ' '));
+  def('い', '..... #...# #...# #...# #...# .#..# .....');
+  def('う', '.##.. ..... .###. #...# ....# ...#. .##..');
+  def('え', '.##.. ..... ####. ..#.. .##.. #.#.. #..##');
+  def('お', '.#... ####. .#.## .###. ##..# #...# .###.');
+  def('か', '.#... ####. .#.#. .#..# .#..# #...# #.##.');
+  def('き', '..#.. ####. ..#.. #####. ...#. .#... .###.'.replace('#####.', '#####'));
+  def('く', '...#. ..#.. .#... #.... .#... ..#.. ...#.');
+  def('け', '#..#. #.### #..#. #..#. #..#. #.#.. #....');
+  def('こ', '..... .###. ..... ..... ..... #.... .###.');
+  def('さ', '..#.. ##### ...#. .###. #.... #.... .###.');
+  def('し', '.#... .#... .#... .#... .#... .#..# ..##.');
+  def('す', '..#.. ##### ..#.. .##.. .##.. ..#.. .#...');
+  def('せ', '.#.#. ##### .#.#. .#.#. .#... .#... ..###');
+  def('そ', '####. ..#.. .#... ##### ..#.. .#... ..##.');
+  def('た', '.#... ####. .#... #.### #.... #.... #.###');
+  def('ち', '.#... ####. .#... .###. #...# ....# .###.');
+  def('つ', '..... ..... ####. ....# ....# ...#. ###..');
+  def('て', '..... ##### ..#.. .#... .#... .#... ..##.');
+  def('と', '.#... .#... .#.## .##.. #.... #.... .####');
+  def('な', '.#... ####. .#..# #..#. ...#. .###. #.##.');
+  def('に', '#.... #.### #.... #.... #.#.. #.#.. #..##');
+  def('ぬ', '.#.#. ##### #.#.# #.#.# #.### #..## .#.##');
+  def('ね', '.#... ####. .#.#. .##.# ##..# #.#.# #.#.#');
+  def('の', '..... .###. #.#.# #.#.# #.#.# #..#. .....');
+  def('は', '#..#. #.### #..#. #..#. #.##. #.#.# #.##.');
+  def('ひ', '..... ##.#. .#..# #...# #...# #...# .###.');
+  def('ふ', '..#.. ...#. ..#.. ..#.. #.#.# #...# .##..');
+  def('へ', '..... ..... .#... #.#.. ...#. ....# .....');
+  def('ほ', '#.### #..#. #.### #..#. #.##. #.#.# #.##.');
+  def('ま', '..#.. ##### ..#.. ##### ..#.. .###. #.#.#');
+  def('み', '###.. .#... .#.#. #####  .#.#. #..#. ..#..'.replace('  ', ' '));
+  def('む', '.#... ####. .#..# .#... ##... #.#.# .###.');
+  def('め', '.#.#. ..#.. ##### #.#.# ##..# #..#. .##..');
+  def('も', '..#.. .###. ..#.. .###. ..#.# ..#.# ...#.');
+  def('や', '.#... .#.#. ###.# .#.#. ..#.. ..#.. ..#..');
+  def('ゆ', '..#.. #.##. ##.## #.#.# #.##. ..#.. .#...');
+  def('よ', '...#. ...#. ...## ...#. .###. #..#. .##.#');
+  def('ら', '.##.. ...#. .#... #.... ####. ....# .###.');
+  def('り', '#..#. #...# #...# #...# ....# ...#. ..#..');
+  def('る', '####. ..#.. .#... ####. #...# .###. .##.#');
+  def('れ', '.#... ##.#. .##.# .#..# ##..# .#..# .#..#');
+  def('ろ', '####. ..#.. .#... ####. ....# ....# .###.');
+  def('わ', '.#... ###.. .#.#. .##.# ##..# .#..# .#.#.');
+  def('を', '.#... ####. ..#.. .#### ##... #.#.. .####');
+  def('ん', '..#.. ..#.. .#... .#... ##.#. #.#.# #..#.');
+  def('っ', '..... ..... ..... .###. ...#. ...#. .##..');
+  def('ゃ', '..... ..... .#... .###. ##.#. .#... .#...');
+  def('ゅ', '..... ..... .#... ####. ##.#. .#... .....');
+  def('ょ', '..... ..... ...#. ...#. .###. #..#. .###.');
+
+  // カタカナ
+  def('ア', '##### ....# ..##. ..#.. ..#.. .#... #....');
+  def('イ', '....# ...#. ..#.. .##.. #.#.. ..#.. ..#..');
+  def('ウ', '..#.. ##### #...# ....# ...#. ..#.. .#...');
+  def('エ', '..... ##### ..#.. ..#.. ..#.. ..#.. #####');
+  def('オ', '...#. ##### ...#. ..##. .#.#. #..#. ..##.');
+  def('カ', '..#.. ##### ..#.# ..#.# .#..# .#..# #..#.');
+  def('キ', '..#.. ##### ..#.. ##### ..#.. ..#.. ..#..');
+  def('ク', '.#... .#### #...# ....# ...#. ..#.. ##...');
+  def('ケ', '.#... .#### #..#. ...#. ...#. ..#.. .#...');
+  def('コ', '..... ##### ....# ....# ....# ....# #####');
+  def('サ', '.#.#. ##### .#.#. .#.#. ...#. ..#.. .#...');
+  def('シ', '#.... .#..# ....# ##..# ...#. ..#.. ##...');
+  def('ス', '##### ....# ...#. ..#.. .#.#. #...# .....');
+  def('セ', '.#... ##### .#..# .#.#. .#... .#... ..###');
+  def('ソ', '#...# #...# .#..# ....# ...#. ..#.. ##...');
+  def('タ', '.#... .#### #...# .##.# ...#. ..#.. ##...');
+  def('チ', '...## ###.. ..#.. ##### ..#.. ..#.. .#...');
+  def('ツ', '#.#.# #.#.# #.#.# ....# ...#. ..#.. ##...');
+  def('テ', '.###. ..... ##### ..#.. ..#.. ..#.. .#...');
+  def('ト', '.#... .#... .##.. .#.#. .#... .#... .#...');
+  def('ナ', '..#.. ##### ..#.. ..#.. ..#.. .#... #....');
+  def('ニ', '..... .###. ..... ..... ..... ..... #####');
+  def('ヌ', '##### ....# .#.#. ..#.. .#.#. #.... .....');
+  def('ネ', '..#.. ##### ...#. ..#.. .###. #.#.# ..#..');
+  def('ノ', '....# ....# ...#. ..#.. .#... #.... .....');
+  def('ハ', '..... .#.#. .#.#. #...# #...# #...# .....');
+  def('ヒ', '#.... #.... #..## ###.. #.... #.... .####');
+  def('フ', '##### ....# ....# ...#. ..#.. .#... #....');
+  def('ヘ', '..... .#... #.#.. ...#. ....# ..... .....');
+  def('ホ', '..#.. ##### ..#.. #.#.# #.#.# ..#.. ..#..');
+  def('マ', '##### ....# ...#. #.#.. .#... ..#.. .....');
+  def('ミ', '.###. ..... .###. ..... ..... .###. .....');
+  def('ム', '..#.. ..#.. .#... .#... .#..# ##### .....');
+  def('メ', '....# ...#. #.#.. .#... .##.. #..#. .....');
+  def('モ', '.###. ..#.. ##### ..#.. ..#.. ..#.. ..###');
+  def('ヤ', '.#... ##### .#..# .#.#. .#... .#... .#...');
+  def('ユ', '..... .###. ...#. ...#. ...#. ##### .....');
+  def('ヨ', '##### ....# ....# ##### ....# ....# #####');
+  def('ラ', '.###. ..... ##### ....# ...#. ..#.. ##...');
+  def('リ', '#...# #...# #...# ....# ...#. ..#.. .#...');
+  def('ル', '..#.. #.#.. #.#.. #.#.. #.#.# #.##. #.#..');
+  def('レ', '#.... #.... #.... #...# #..#. #.#.. ##...');
+  def('ロ', '..... ##### #...# #...# #...# ##### .....');
+  def('ワ', '##### #...# ....# ...#. ..#.. .#... #....');
+  def('ヲ', '##### ....# .###. ....# ...#. ..#.. ##...');
+  def('ン', '##... ....# ....# ...#. ..#.. .#... #....');
+  def('ッ', '..... ..... #.#.# #.#.# ...#. ..#.. .#...');
+  def('ャ', '..... ..... .#... ##### .#.#. .#... .#...');
+  def('ュ', '..... ..... ..... .##.. ..#.. .###. .....');
+  def('ョ', '..... ..... .###. ...#. .###. ...#. .###.');
+
+  // 濁点・半濁点の付いた字は、元の字に重ねて作る
+  const DAKU = { が: 'か', ぎ: 'き', ぐ: 'く', げ: 'け', ご: 'こ', ざ: 'さ', じ: 'し', ず: 'す', ぜ: 'せ', ぞ: 'そ', だ: 'た', ぢ: 'ち', づ: 'つ', で: 'て', ど: 'と', ば: 'は', び: 'ひ', ぶ: 'ふ', べ: 'へ', ぼ: 'ほ',
+    ガ: 'カ', ギ: 'キ', グ: 'ク', ゲ: 'ケ', ゴ: 'コ', ザ: 'サ', ジ: 'シ', ズ: 'ス', ゼ: 'セ', ゾ: 'ソ', ダ: 'タ', ヂ: 'チ', ヅ: 'ツ', デ: 'テ', ド: 'ト', バ: 'ハ', ビ: 'ヒ', ブ: 'フ', ベ: 'ヘ', ボ: 'ホ', ヴ: 'ウ' };
+  const HANDAKU = { ぱ: 'は', ぴ: 'ひ', ぷ: 'ふ', ぺ: 'へ', ぽ: 'ほ', パ: 'ハ', ピ: 'ヒ', プ: 'フ', ペ: 'ヘ', ポ: 'ホ' };
+
+  Game.font = { glyphs: G, DAKU, HANDAKU, w: 5, h: 7, adv: 6 };
+})();
+</script>
+<script>
+// 絵（文字の格子）。色セットは Endesga 32。1文字 = 1色、'.' は透明。
+// ハムスターは「体」と「足」を分けて描き、bake.js でコマに組み立てる
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  // Endesga 32
+  const PAL = {
+    0: '#181425', 1: '#262b44', 2: '#3a4466', 3: '#5a6988', 4: '#8b9bb4', 5: '#c0cbdc', 6: '#ffffff',
+    a: '#be4a2f', b: '#d77643', c: '#ead4aa', d: '#e4a672', e: '#b86f50', f: '#733e39', g: '#3e2731',
+    h: '#a22633', i: '#e43b44', j: '#f77622', k: '#feae34', l: '#fee761',
+    m: '#63c74d', n: '#3e8948', o: '#265c42', p: '#193c3e',
+    q: '#124e89', r: '#0099db', s: '#2ce8f5',
+    t: '#ff0044', u: '#68386c', v: '#b55088', w: '#f6757a', x: '#e8b796', y: '#c28569',
+  };
+
+  const S = {};
+
+  // ---- ハムスター（右向き、16×16。体は 0〜14 行、足は 15 行） ----
+  S.hamBody = [
+    '................',
+    '................',
+    '......ggggg.....',
+    '.....gcccccg....',
+    '.....gccccccg...',
+    '....geeeeeeeeg..',
+    '...gdddddddddddg',
+    '..gfgbbbbbbb0bg.',
+    '.gfefgbbbbbbbbbg',
+    '.gfefgbbbbbbbbwg',
+    '.gffgbbbbbbcwwcg',
+    '..ggbbbbbbbccccg',
+    '...gbbbbbbcccccg',
+    '...gbbbbbbbcccg.',
+    '....ggbbbbbbgg..',
+  ];
+  // 足の位置（後ろ足 x、前足 x）と、体の上下（dy）。走りは6コマ
+  S.hamRun = [
+    { feet: [4, 11], dy: 0 },
+    { feet: [5, 10], dy: -1 },
+    { feet: [7, 9], dy: -1 },
+    { feet: [8, 8], dy: 0 },
+    { feet: [7, 9], dy: -1 },
+    { feet: [5, 10], dy: -1 },
+  ];
+  S.hamFoot = ['ww'];
+
+  // ---- 影（地面に落とす） ----
+  S.shadow = [
+    '..11111111..',
+    '111111111111',
+    '..11111111..',
+  ];
+  S.shadowSmall = [
+    '..111111..',
+    '.11111111.',
+  ];
+
+  // ---- わな（トゲの床。1レーン分） ----
+  S.trap = [
+    '.5...5...5..',
+    '.5...5...5..',
+    '545.545.545.',
+    '444.444.444.',
+    '222222222222',
+    '111111111111',
+  ];
+
+  // ---- つらら石（天井から下がる。先っぽと、上へ繰り返す幹） ----
+  S.stalStem = [
+    '0344453430',
+    '0344543430',
+    '0345444330',
+    '0344443430',
+  ];
+  S.stalTip = [
+    '0344453430',
+    '0344543430',
+    '.03454430.',
+    '.03444430.',
+    '.0345430..',
+    '..034430..',
+    '..034430..',
+    '..03440...',
+    '...0340...',
+    '...0340...',
+    '...030....',
+    '....0.....',
+  ];
+
+  // ---- 落石 ----
+  S.rock = [
+    '....000000....',
+    '..0033443300..',
+    '.034455544330.',
+    '.0345554443330',
+    '03444544433330',
+    '03444444433320',
+    '03344444333320',
+    '03334443333220',
+    '0233333333222.',
+    '.02233332222 0'.replace(' ', '2'),
+    '.0022222222200',
+    '..00222222200.',
+    '....0000000...',
+  ];
+
+  // ---- とおせんぼ（木の柵。ジャンプでは越えられない高さ） ----
+  S.block = [
+    '.44..44..44.',
+    '045004500450',
+    '0ef00ef00ef0',
+    '0ef00ef00ef0',
+    '0ef00ef00ef0',
+    '000000000000',
+    '0eeeeeeeeee0',
+    '0ffffffffff0',
+    '000000000000',
+    '0ef00ef00ef0',
+    '0ef00ef00ef0',
+    '0ef00ef00ef0',
+    '0ef00ef00ef0',
+    '0ef00ef00ef0',
+    '0ef00ef00ef0',
+    '000000000000',
+    '0eeeeeeeeee0',
+    '0ffffffffff0',
+    '000000000000',
+    '0ef00ef00ef0',
+    '0ef00ef00ef0',
+    '0ef00ef00ef0',
+    '0ef00ef00ef0',
+    '0ef00ef00ef0',
+    '0ef00ef00ef0',
+    '0ff00ff00ff0',
+    '000000000000',
+  ];
+
+  // ---- 拾い物 ----
+  // ひまわりのたね（殻をむいた粒。クリーム〜金で、罠の金属の灰色と見分ける）
+  S.seed = [
+    '..f..',
+    '.fcf.',
+    '.fclf',
+    'fclkf',
+    'fckkf',
+    '.fkf.',
+    '..f..',
+  ];
+  S.gem = [
+    '..000..',
+    '.0s6s0.',
+    '0srssr0',
+    '0rrsrr0',
+    '.0qrq0.',
+    '..0q0..',
+    '...0...',
+  ];
+  S.big = [
+    '..00000000..',
+    '.0kkkkkkkk0.',
+    '0kllllllllk0',
+    '0ffffkkffff0',
+    '0kkkk0lkkkk0',
+    '0kkkk00kkkk0',
+    '0ffffffffff0',
+    '0kkkkkkkkkk0',
+    '0kffffffffk0',
+    '.0000000000.',
+  ];
+  // 黄金のハムスター像（正面）
+  S.statue = [
+    '.00......00.',
+    '0lk0....0kl0',
+    '0kk000000kk0',
+    '.0kllllllk0.',
+    '0kllkkkkllk0',
+    '0kl0kkkk0lk0',
+    '0kkkkjjkkkk0',
+    '0kkkkkkkkkk0',
+    '.0kkkkkkkk0.',
+    '0kk0kkkk0kk0',
+    '0kkkkkkkkkk0',
+    '.0jjjjjjjj0.',
+    '000000000000',
+  ];
+  S.sparkle = [['..6..', '.666.', '..6..'].join(','), ['6...6', '..6..', '6...6'].join(',')].map((x) => x.split(','));
+
+  // ---- 宝の間の宝（クリア） ----
+  S.crown = [
+    '0....00....0',
+    '00..0ll0..00',
+    '0l00lkkl00l0',
+    '0lkllkkllkl0',
+    '0kkkkkkkkkk0',
+    '0kikksskkik0',
+    '0kkkkkkkkkk0',
+    '.0000000000.',
+  ];
+
+  // ---- 背景（横につなげられる。色は差し替えで階の色合いにする） ----
+  // 遠くの壁（レンガ）。色 A=明, B=中, C=暗 を差し替える
+  S.bgFar = [
+    'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+    'BBBBBBBBBBBBBBBCBBBBBBBBBBBBBBBC',
+    'BBBBBBBBBBBBBBBCBBBBBBBBBBBBBBBC',
+    'BBBBBBBBBBBBBBBCBBBBBBBBBBBBBBBC',
+    'BBBBBBBBBBBBBBBCBBBBBBBBBBBBBBBC',
+    'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC',
+    'BBBBBBBCBBBBBBBBBBBBBBBCBBBBBBBB',
+    'BBBBBBBCBBBBBBBBBBBBBBBCBBBBBBBB',
+    'BBBBBBBCBBBBBBBBBBBBBBBCBBBBBBBB',
+    'BBBBBBBCBBBBBBBBBBBBBBBCBBBBBBBB',
+  ];
+  // 中くらいの柱（1本。間隔をあけて並べる）
+  S.bgPillar = [
+    'CAAAAAAAAAC',
+    'CBBBBBBBBBC',
+    '.CAAAAAAAC.',
+    '..BBBBBBB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '..BABBBAB..',
+    '.CAAAAAAAC.',
+    'CBBBBBBBBBC',
+    'CCCCCCCCCCC',
+  ];
+  // 床のタイル（1レーン分の帯。16 ドットごと）
+  S.floor = [
+    'AAAAAAAAAAAAAAAC',
+    'BBBBBBBBBBBBBBBC',
+    'BBBBBBBBBBBBBBBC',
+    'BBBBBBBBBBBBBBBC',
+    'BBBBBBBBBBBBBBBC',
+    'BBBBBBBBBBBBBBBC',
+    'BBBBBBBBBBBBBBBC',
+    'CCCCCCCCCCCCCCCC',
+  ];
+  // 階の色合い（A=明, B=中, C=暗, D=空・地中の色）
+  S.floorThemes = [
+    { name: '砂岩', A: 'c', B: 'd', C: 'e', D: 'f', sky: 'g' },
+    { name: '苔', A: 'm', B: 'n', C: 'o', D: 'p', sky: '0' },
+    { name: '赤い岩', A: 'b', B: 'a', C: 'h', D: 'f', sky: 'g' },
+    { name: '黄金', A: 'l', B: 'k', C: 'j', D: 'e', sky: 'f' },
+  ];
+
+  // ---- ②: 落石の大きな影（当たる範囲 = 箱 12 + 石 14 の幅。予告の初めからこの大きさ）と、⊗ の印 ----
+  S.rockShadow = [
+    '......00000000000000......',
+    '..0000000000000000000000..',
+    '00000000000000000000000000',
+    '00000000000000000000000000',
+    '..0000000000000000000000..',
+    '......00000000000000......',
+  ];
+  S.rockMark = [
+    '.....ttttttttt.....',
+    '...tthhhhhhhhhtt...',
+    '.tthhh66hhh66hhhtt.',
+    '.thhhhhh666hhhhhht.',
+    'thhhhhhhh6hhhhhhhht',
+    '.thhhhhh666hhhhhht.',
+    '.tthhh66hhh66hhhtt.',
+    '...tthhhhhhhhhtt...',
+    '.....ttttttttt.....',
+  ];
+
+  // ---- ②: さきみの印（窓の右端に出す、来る物の簡単な形。7×7） ----
+  S.pvTrap = [
+    '.......',
+    '.......',
+    '5..5..5',
+    '5..5..5',
+    '45.45.4',
+    '2222222',
+    '1111111',
+  ];
+  S.pvStal = [
+    '0344430',
+    '0344430',
+    '.03440.',
+    '.03440.',
+    '..030..',
+    '..030..',
+    '...0...',
+  ];
+  S.pvBlock = [
+    '4.4.4.4',
+    'e.e.e.e',
+    'fffffff',
+    'e.e.e.e',
+    'e.e.e.e',
+    'fffffff',
+    'e.e.e.e',
+  ];
+  S.pvItem = [
+    '...l...',
+    '..lkl..',
+    '.lkkkl.',
+    'lkkkkkl',
+    '.jkkkj.',
+    '..jkj..',
+    '...j...',
+  ];
+
+  // ---- ②: キャンプの小物 ----
+  S.tent = [
+    '...........00...........',
+    '..........0ll0..........',
+    '.........0lkkl0.........',
+    '........0lkkkkl0........',
+    '.......0lkkkkkkl0.......',
+    '......0lkkkk0kkkl0......',
+    '.....0lkkkk000kkkl0.....',
+    '....0lkkkk00000kkkl0....',
+    '...0lkkkk0000000kkkl0...',
+    '..0lkkkk000000000kkkl0..',
+    '.0lkkkk00000000000kkkl0.',
+    '0jjjjjj00000000000jjjjj0',
+    '000000000000000000000000',
+  ];
+  S.pile = [
+    '.........0l0........',
+    '........0lsl0.......',
+    '......00kkkkk00.....',
+    '....00kllkklkkk00...',
+    '...0kkklkks6kkklk0..',
+    '..0kklkkkskkkkkkkk0.',
+    '.0kkkkkllkkk5kklkkk0',
+    '0jjkkkkkkkkkkkkkkjj0',
+    '00000000000000000000',
+  ];
+  S.fire = [
+    ['....i....', '...iji...', '..ijkji..', '..ijlji..', '.ijklkji.', '.ijkkkji.', 'ffefffeff', '.ff.f.ff.'],
+    ['...i.....', '...ii.i..', '..ijiji..', '..ijkki..', '.ijklkji.', '.ijkkkji.', 'ffefffeff', '.ff.f.ff.'],
+  ];
+  // ◀ ▶（キャンプのページめくり）
+  S.arrowL = ['...00', '..060', '.0660', '06660', '.0660', '..060', '...00'];
+  S.arrowR = S.arrowL.map((r) => r.split('').reverse().join(''));
+
+  // ---- ③実績とシークレット ----
+  // メダル。R/B はリボン、N/M/O は円盤の明・中・暗（種類ごとに bake で色を差し替える）
+  S.medal = [
+    '..0RR00BB0..',
+    '..0RR00BB0..',
+    '...0RRBB0...',
+    '...0RRBB0...',
+    '...000000...',
+    '..0NNNNNM0..',
+    '.0NNMM6MMO0.',
+    '.0NM66666O0.',
+    '.0NMM666MO0.',
+    '.0NMM6M6MO0.',
+    '.0NMMMMMMO0.',
+    '..0MMMMOO0..',
+    '...000000...',
+  ];
+  // 種類ごとの色 [N, M, O]（まだ取っていないものは locked）
+  S.medalKinds = {
+    first: ['m', 'n', 'o'], floor: ['d', 'b', 'e'], score: ['l', 'k', 'j'], run: ['s', 'r', 'q'], max: ['5', '4', '3'], secret: ['w', 'v', 'u'],
+    locked: ['2', '1', '1'],
+  };
+  // 上の帯の小さなメダル（ランの最中の知らせ）
+  S.medalS = [
+    '.ii.rr.',
+    '..iirr.',
+    '.00000.',
+    '0lllkk0',
+    '0lk6kj0',
+    '0lkkkj0',
+    '.0kjj0.',
+    '..000..',
+  ];
+  // まいごの こハムスター（正面に座っている）
+  S.pup = [
+    '.00....00.',
+    '0bb0000bb0',
+    '0bbbbbbbb0',
+    '0b0bbbb0b0',
+    '0bwbwwbwb0',
+    '0cccccccc0',
+    '.0cccccc0.',
+    '.0w0..0w0.',
+  ];
+  // たからばこの まもの（閉じ / 口を開ける）
+  S.mimic = [[
+    '..0000000000..',
+    '.0kkkkkkkkkk0.',
+    '0kllllllllllk0',
+    '0ffffkkkkffff0',
+    '0kkkkk0lkkkkk0',
+    '0kkkkk00kkkkk0',
+    '0ffffffffffff0',
+    '0kkkkkkkkkkkk0',
+    '0kffffffffffk0',
+    '.000000000000.',
+  ], [
+    '..0000000000..',
+    '.0kkkkkkkkkk0.',
+    '0kl0lllllll0k0',
+    '0kl6llllll6lk0',
+    '0ffffkkkkffff0',
+    '0g6g6g6g6g6g60',
+    '0gggiiiiiiggg0',
+    '0g6g6g6g6g6g60',
+    '0ffffffffffff0',
+    '0kkkkkkkkkkkk0',
+    '0kffffffffffk0',
+    '.000000000000.',
+  ]];
+  // そらとぶ たね（はねの上げ下げ 2コマ）
+  S.flySeed = [[
+    '66...0...66',
+    '.66.0l0.66.',
+    '..60llk06..',
+    '...0llk0...',
+    '....0k0....',
+    '.....0.....',
+  ], [
+    '.....0.....',
+    '....0l0....',
+    '...0llk0...',
+    '.660llk066.',
+    '66..0k0..66',
+    '.....0.....',
+  ]];
+  // てんじょうの コウモリ（ぶら下がり / 飛ぶ 2コマ）
+  S.batHang = [
+    '..0.0..',
+    '..000..',
+    '.0ggg0.',
+    '0guguu0',
+    '0guuug0',
+    '.0lgl0.',
+    '..0g0..',
+    '...0...',
+  ];
+  S.batFly = [[
+    'u.........u',
+    'uu.g...g.uu',
+    'uuuggggguuu',
+    '.ugglglggu.',
+    '...ggggg...',
+    '....g.g....',
+  ], [
+    '...g...g...',
+    '...ggggg...',
+    '..gglglgg..',
+    '.uuggggguu.',
+    'uuu.ggg.uuu',
+    'uu.......uu',
+    'u.........u',
+  ]];
+
+  Game.sprites = { PAL, S };
+})();
+</script>
+<script>
+// 文字の格子を、画面に出さない Canvas に焼く。左右反転・色の差し替え・白く光らせる版もここで作る
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const { PAL, S } = Game.sprites;
+  const F = Game.font;
+
+  const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+
+  // rows: 文字列の配列。opt: { map: {文字: 色の文字}, white: 全部白, dark: 暗くする（落石の影の中）, flip: 左右反転 }
+  function bake(rows, opt = {}) {
+    const h = rows.length, w = Math.max(...rows.map((r) => r.length));
+    const c = mk(w, h), g = c.getContext('2d');
+    for (let y = 0; y < h; y++) for (let x = 0; x < rows[y].length; x++) {
+      let ch = rows[y][x];
+      if (ch === '.' || ch === ' ') continue;
+      if (opt.map && opt.map[ch] != null) ch = opt.map[ch];
+      const col = opt.white ? '#ffffff' : PAL[ch];
+      if (!col) continue;
+      g.fillStyle = col;
+      g.fillRect(opt.flip ? w - 1 - x : x, y, 1, 1);
+    }
+    if (opt.dark) { g.globalCompositeOperation = 'source-atop'; g.fillStyle = 'rgba(24,20,37,0.55)'; g.fillRect(0, 0, w, h); }
+    return c;
+  }
+
+  // ---- ハムスターのコマを組み立てる ----
+  // 体の行を dy だけずらし、足を置く。squash: 行を1つ抜いてつぶす。lean: 上半分を1ドット前へ
+  // よくばりの段階ごとに、ほっぺがふくらむ（8〜14 行を差し替える）。体の輪郭（16 ドット）の外、前へ張り出すので、
+  // コマは HW ドット幅で焼く（左端そろえ。描く位置は 16 ドットのときと同じ）
+  const HW = 20;
+  // ほっぺ: 目の下から後ろ（肩の方）へ広がるクリーム色の頬袋。前へは出さない（鼻先は小さいまま）。
+  // 下の縁を濃い色（y）で描き、お腹とのあいだにオレンジの帯を残して、お腹と分ける。直しの設計書 4（参考画像に合わせて描き直し）
+  const CHEEK = [null,
+    {
+      8: '.gfefgbbbxxcbbbg',
+      9: '.gfefgbbxccccbwg',
+      10: '.gffgbbbccccccbg',
+      11: '..ggbbbbyccccybg',
+      12: '...gbbbbbyyyybcg',
+    },
+    {
+      8: '.gfefgbbxxxcbbbg',
+      9: '.gfefgbxxcccccwg',
+      10: '.gffgbxcccccccccg',
+      11: '..ggbbcccccccccg',
+      12: '...gbbycccccccyg',
+      13: '...gbbbyyyyyyyg.',
+    },
+  ];
+  const pad = (r) => (r + '.'.repeat(HW)).slice(0, HW);
+  function hamRows(o) {
+    let body = S.hamBody.map(pad);
+    const ch = CHEEK[o.cheek || 0];
+    if (ch) for (const y in ch) body[y] = pad(ch[y]);
+    if (o.squash) body = body.slice(0, 8).concat(body.slice(9)), body.unshift(pad(''));
+    if (o.stretch) body = body.slice(1, 9).concat([body[9]], body.slice(9));
+    if (o.lean) body = body.map((r, i) => (i < 8 ? '.' + r.slice(0, HW - 1) : r));
+    if (o.eyeClosed) body = body.map((r) => r.replace('0bg', 'gbg'));
+    const rows = [];
+    for (let y = 0; y < 16; y++) rows.push(pad(''));
+    const dy = o.dy || 0;
+    for (let y = 0; y < body.length; y++) {
+      const ty = y + dy;
+      if (ty >= 0 && ty < 16) rows[ty] = body[y];
+    }
+    const put = (x, y, s) => { if (y < 0 || y > 15) return; const r = rows[y].split(''); for (let i = 0; i < s.length; i++) if (s[i] !== '.' && x + i >= 0 && x + i < HW) r[x + i] = s[i]; rows[y] = r.join(''); };
+    for (const fx of o.feet || []) put(fx, o.feetY == null ? 15 : o.feetY, 'ww');
+    return rows;
+  }
+
+  const HAM = {
+    run: S.hamRun.map((f) => ({ feet: f.feet, dy: f.dy })),
+    jumpUp: { feet: [3, 6], feetY: 14, dy: -1, stretch: true },
+    jumpDown: { feet: [5, 11], feetY: 15, dy: 0 },
+    land: { feet: [3, 12], squash: true },
+    lean: { feet: [5, 10], lean: true },
+    hit: { feet: [4, 11], eyeClosed: true },
+    fall: [{ feet: [3, 11], feetY: 13, dy: -1 }, { feet: [4, 10], feetY: 12, dy: -2 }],
+    hold: { feet: [5, 10], dy: 0 },
+    climb: [{ feet: [3, 10], feetY: 13, dy: -1, stretch: true }, { feet: [6, 12], feetY: 15, dy: 0, lean: true }], // ④よじ登る（足を交互に）
+  };
+
+  // ---- 文字 ----
+  function glyphRows(ch) {
+    const g = F.glyphs[ch];
+    if (g) return g;
+    const base = F.DAKU[ch] || F.HANDAKU[ch];
+    if (!base || !F.glyphs[base]) return null;
+    const rows = F.glyphs[base].map((r) => r + '.');
+    const put = (x, y) => { const r = rows[y].split(''); r[x] = '#'; rows[y] = r.join(''); };
+    if (F.DAKU[ch]) { put(4, 0); put(5, 1); }
+    else { put(4, 0); put(3, 1); put(5, 1); put(4, 2); }
+    return rows;
+  }
+  const hasGlyph = (ch) => !!glyphRows(ch);
+
+  const glyphCache = {};
+  function glyph(ch, color) {
+    const k = ch + color;
+    if (glyphCache[k]) return glyphCache[k];
+    const rows = glyphRows(ch) || glyphRows('?');
+    const c = mk(6, 7), g = c.getContext('2d');
+    g.fillStyle = color;
+    for (let y = 0; y < 7; y++) for (let x = 0; x < rows[y].length; x++) if (rows[y][x] === '#') g.fillRect(x, y, 1, 1);
+    return (glyphCache[k] = c);
+  }
+
+  const textW = (str) => [...str].length * F.adv - 1;
+
+  // 1行の文字。outline を渡すと1ドットの縁取り（擬音・見出し用）
+  function text(g, str, x, y, color, outline) {
+    x = Math.round(x); y = Math.round(y);
+    const chars = [...str];
+    if (outline) {
+      for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        chars.forEach((ch, i) => g.drawImage(glyph(ch, outline), x + i * F.adv + ox, y + oy));
+      }
+    }
+    chars.forEach((ch, i) => g.drawImage(glyph(ch, color), x + i * F.adv, y));
+  }
+
+  // 幅に収まるように、空白で折り返す
+  function wrap(str, maxChars) {
+    const words = str.split(' '), lines = [];
+    let cur = '';
+    for (const w of words) {
+      const next = cur ? cur + ' ' + w : w;
+      if ([...next].length > maxChars && cur) { lines.push(cur); cur = w; } else cur = next;
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  // 平行四辺形にする: 下から2行ごとに1ドット右へ（横は繰り返すので、はみ出しは左へ回す）。
+  // 1レーン 8 行で 4 ドットずれ、layout.skew と同じ傾きの斜めの継ぎ目になる
+  function shear(rows) {
+    const n = rows.length;
+    return rows.map((r, i) => { const k = Math.floor((n - 1 - i) / 2) % r.length; return k ? r.slice(-k) + r.slice(0, -k) : r; });
+  }
+
+  // ---- 全部焼く ----
+  let baked = null;
+  function all() {
+    if (baked) return baked;
+    const b = { ham: {}, hamFlip: {}, hamWhite: {}, themes: [] };
+    // hamG[よくばりの段階]: ほっぺのふくらみ違い。ham はふくらみなし
+    b.hamG = [0, 1, 2].map((cheek) => {
+      const hamSet = (o) => { const q = Object.assign({ cheek }, o); const r = hamRows(q); return { n: bake(r), w: bake(r, { white: true }), d: bake(r, { dark: true }) }; };
+      const set = { run: HAM.run.map(hamSet), fall: HAM.fall.map(hamSet), climb: HAM.climb.map(hamSet) };
+      for (const k of ['jumpUp', 'jumpDown', 'land', 'lean', 'hit', 'hold']) set[k] = hamSet(HAM[k]);
+      return set;
+    });
+    b.ham = b.hamG[0];
+    for (const k of ['shadow', 'shadowSmall', 'trap', 'rock', 'block', 'seed', 'gem', 'big', 'statue', 'crown', 'stalTip', 'stalStem', 'rockShadow', 'rockMark', 'pvTrap', 'pvStal', 'pvBlock', 'pvItem', 'tent', 'pile', 'arrowL', 'arrowR']) b[k] = bake(S[k]);
+    b.fire = S.fire.map((r) => bake(r));
+    // ③実績とシークレット
+    for (const k of ['medalS', 'pup', 'batHang']) b[k] = bake(S[k]);
+    b.medal = {};
+    for (const kind in S.medalKinds) { const [N, M, O] = S.medalKinds[kind]; b.medal[kind] = bake(S.medal, kind === 'locked' ? { map: { R: '2', B: '2', N, M, O, 6: '2' } } : { map: { R: 'i', B: 'r', N, M, O } }); }
+    b.mimic = S.mimic.map((r) => bake(r));
+    b.flySeed = S.flySeed.map((r) => bake(r));
+    b.batFly = S.batFly.map((r) => bake(r));
+    b.sparkle = S.sparkle.map((r) => bake(r));
+    for (const th of S.floorThemes) {
+      const map = { A: th.A, B: th.B, C: th.C, D: th.D };
+      b.themes.push({ far: bake(S.bgFar, { map: { A: th.B, B: th.C, C: th.D } }), pillar: bake(S.bgPillar, { map }), floor: bake(shear(S.floor), { map }), sky: PAL[th.sky], ground: PAL[th.D], light: PAL[th.A], mid: PAL[th.B], dark: PAL[th.C] });
+    }
+    return (baked = b);
+  }
+
+  Game.bake = { bake, hamRows, HAM, HW, all, text, textW, wrap, glyph, glyphRows, hasGlyph, mk };
+})();
+</script>
+<script>
+// 演出: 出来事から、擬音（マンガの描き文字ふう）と画面揺れ（整数ドット）を出す。ルールの状態は書き換えない。
+// 擬音は音の大きさで3段階: S（1倍）/ M（2倍）/ L（3倍、トゲトゲのフキダシ付きで震える）。
+// 1文字ずつハンコのように押されて出て（1段大きく出てから落ち着く）、斜め上へ並ぶ。最後は点滅して消える
+// ④崩れる遺跡（小石・砂・小さな揺れ）は、当たりのない演出だけ。app.time から作り、状態を持たない
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const B = Game.bake;
+
+  const INK = '#181425';
+  const hash = (i) => ((Math.imul(i + 11, 2654435761) ^ (i * 40503)) >>> 0) / 4294967296;
+  const TIER = {
+    S: { scale: 1, life: 0.55, stagger: 0.03, slant: 1 },
+    M: { scale: 2, life: 0.7, stagger: 0.04, slant: 1 },
+    L: { scale: 3, life: 0.9, stagger: 0.05, slant: 1, burst: true, tremble: 0.25 },
+  };
+
+  function create(cfg) {
+    let pops = [], shake = 0, shakeT = 0, seq = 0, mirror = false;
+    const charCache = {};
+    const burstCache = {};
+
+    // 1文字を「縁取りだけ」と「中身だけ」に分けて焼く（縁取りを全部描いてから中身を描くと、隣の字にかぶらない）
+    function charImg(ch, color) {
+      const k = ch + color;
+      if (charCache[k]) return charCache[k];
+      const line = B.mk(8, 9), fill = B.mk(8, 9);
+      B.text(line.getContext('2d'), ch, 1, 1, INK, INK);
+      B.text(fill.getContext('2d'), ch, 1, 1, color);
+      return (charCache[k] = { line, fill });
+    }
+
+    // トゲトゲのフキダシ（ドット単位で塗る。縁は墨色）
+    function burst(w, h) {
+      const k = w + 'x' + h;
+      if (burstCache[k]) return burstCache[k];
+      const c = B.mk(w, h), g = c.getContext('2d');
+      const cx = w / 2, cy = h / 2, spikes = 14;
+      const R = (a) => 0.72 + 0.28 * Math.abs(((a / (2 * Math.PI)) * spikes) % 1 * 2 - 1);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const dx = (x + 0.5 - cx) / cx, dy = (y + 0.5 - cy) / cy;
+        const d = Math.hypot(dx, dy), r = R(Math.atan2(dy, dx) + Math.PI);
+        if (d >= r) continue;
+        g.fillStyle = d > r - 0.12 ? INK : '#ffffff';
+        g.fillRect(x, y, 1, 1);
+      }
+      return (burstCache[k] = c);
+    }
+
+    function pop(word, color, x, y, tier) {
+      const T = TIER[tier];
+      const chars = [...word].map((ch) => charImg(ch, color));
+      const adv = 6 * T.scale;
+      const w = chars.length * adv + 2 * T.scale, h = 9 * T.scale + (chars.length - 1) * T.slant * T.scale;
+      const V = cfg.view;
+      if (mirror) x = V.w - x; // ④エクストラ: 位置だけ左右反転（文字は反転しない）
+      const left = Math.max(1, Math.min(V.w - w - 1, Math.round(x - w / 2)));
+      const top = Math.max(1, Math.min(V.h - h - 1, Math.round(y - h / 2)));
+      pops.push({ chars, T, x: left, y: top, w, h, t: 0, bg: T.burst ? burst(w + 16, h + 14) : null });
+      if (pops.length > 8) pops.shift();
+    }
+
+    function on(e, app) {
+      const R = Game.render;
+      mirror = !!(app && app.rules && app.rules.extra);
+      const y = e.lane != null ? R.laneY(e.lane) - 22 : 40;
+      const x = e.x != null ? e.x + (e.lane != null ? R.laneDx(e.lane) : 0) : 96;
+      switch (e.type) {
+        case 'near_miss': pop('ギリッ', '#fee761', x + 10, y - 6, 'S'); break;
+        case 'pickup':
+          if (e.k === 'gem') pop('キラッ', '#2ce8f5', x, R.laneY(e.lane) - (e.h || 0) - 16, 'S');
+          else if (e.k === 'big') pop('ザクッ', '#feae34', x, R.laneY(e.lane) - (e.h || 0) - 18, 'M');
+          else if (e.k === 'pup') pop('ありがと!', '#f6757a', x, R.laneY(e.lane) - 22, 'M');
+          else if (e.k === 'statue') pop('ピカーッ', '#fee761', x, R.laneY(e.lane) - (e.h || 0) - 18, 'M');
+          break;
+        case 'row_bonus': pop('ぜんぶ!', '#feae34', x + 10, y - 10, 'M'); break;
+        case 'rock_land': {
+          pop('ゴッ', '#c0cbdc', e.x, R.laneY(Math.max(...e.lanes)) - 18, 'M');
+          shake = Math.max(shake, 1); shakeT = 0.12;
+          break;
+        }
+        case 'block_swap': pop('ズズッ', '#e4a672', e.x, 46, 'S'); break;
+        case 'hit': pop('ドカッ', '#e43b44', x + 10, y - 6, 'L'); shake = cfg.fx.shakeMax; shakeT = 0.3; break;
+        case 'life_used': pop('ポンッ', '#f6757a', x + 6, y - 14, 'M'); break;
+        case 'levelup_start':
+          if (e.extra) { pop('よじよじ', '#ffffff', 96, 30, 'M'); break; }
+          pop(e.final ? 'ゴゴゴ' : 'ガラッ', '#ffffff', 96, 50, 'L'); shake = cfg.fx.shakeMax; shakeT = 0.25; break;
+        case 'levelup_land':
+          if (e.extra) { pop('よいしょ', '#ffffff', x + 4, y, 'M'); shake = 1; shakeT = 0.1; break; }
+          pop('ドスン', '#ffffff', x + 4, y, 'M'); shake = cfg.fx.shakeMax; shakeT = 0.15; break;
+        // ④脱出エクストラ
+        case 'collapse': pop('ゴゴゴ', '#e4a672', 150, 16, 'L'); shake = cfg.fx.shakeMax; shakeT = 0.6; break;
+        case 'escape': pop('だっしゅつ!', '#fee761', 96, 26, 'L'); break;
+        case 'all_max': pop('ぜんぶ さいだい!', '#feae34', 96, 18, 'M'); break;
+        case 'levelup_pick': if (e.id === 'lane' && e.rank === 1) pop('ガラガラ', '#e4a672', 96, 88, 'M'); break;
+        case 'clear': pop('ジャーン', '#feae34', 96, 22, 'L'); break;
+        case 'mimic_tell': pop('ガタガタ', '#feae34', x, y - 4, 'S'); break;
+        case 'mimic_bite': pop('ガブッ', '#e43b44', x + 6, y - 8, 'M'); shake = 1; shakeT = 0.15; break;
+        case 'mimic_give': pop('ポロッ', '#feae34', x, y - 6, 'M'); break;
+        case 'fly_catch': pop('パクッ', '#fee761', x, R.laneY(e.lane) - (e.h || 0) - 20, 'M'); break;
+        case 'bat': pop('パタパタ', '#c0cbdc', e.x, e.y + 12, 'S'); break;
+        case 'camp_count_end': pop('ジャラッ', '#feae34', 60, 14, 'M'); break;
+      }
+    }
+
+    function update(dt) {
+      for (const p of pops) p.t += dt;
+      pops = pops.filter((p) => p.t < p.T.life);
+      if (shakeT > 0) shakeT -= dt; else shake = 0;
+      seq++;
+    }
+
+    function draw(g) {
+      for (const p of pops) {
+        const T = p.T;
+        if (p.t > T.life - 0.15 && Math.floor(p.t * 20) % 2 === 0) continue; // 消える前は点滅
+        let ox = 0, oy = 0;
+        if (T.tremble && p.t < T.tremble) { ox = (seq % 2) ? 1 : -1; oy = (seq % 3) - 1; }
+        if (p.bg) g.drawImage(p.bg, p.x - 8 + ox, p.y - 7 + oy);
+        for (const layer of ['line', 'fill']) {
+          p.chars.forEach((c, i) => {
+            const local = p.t - i * T.stagger;
+            if (local < 0) return;
+            const sc = T.scale + (local < 0.06 ? 1 : 0);  // ハンコ: 1段大きく出てから落ち着く
+            const n = p.chars.length - 1 - i;
+            const cx = p.x + i * 6 * T.scale + ox, cy = p.y + n * T.slant * T.scale + oy;
+            const d = (sc - T.scale) * 4;
+            g.drawImage(c[layer], cx - d, cy - d, 8 * sc, 9 * sc);
+          });
+        }
+      }
+    }
+
+    // app があれば、崩れる遺跡の小さな揺れ（ときどき 1 ドット）も足す
+    function shakeOffset(app) {
+      let s = shake;
+      if (!s && app && collapsing(app)) { const slot = Math.floor(app.time * 5); if (hash(slot * 3 + 1) < 0.22) s = 1; }
+      if (!s) return { x: 0, y: 0 };
+      const k = seq % 4;
+      return { x: k === 0 ? s : k === 2 ? -s : 0, y: k === 1 ? s : k === 3 ? -s : 0 };
+    }
+
+    // ---- ④崩れる遺跡 ----
+    const C = { every: 0.2, g: 260, shatter: 0.25, top: -4 };
+    // 崩れている場面か（宝の間で崩れ始めたあと、エクストラを走っている間）
+    function collapsing(app) {
+      const s = app.rules;
+      if (!s || app.mode === 'result') return false;
+      return (s.extra && s.phase === 'run') || (s.phase === 'clear' && app.clearPath === 'extra');
+    }
+    // 小石 k: 出る時刻、x、大きさ（2〜4）、落ちる床の高さ、落ちるのにかかる秒
+    function pebble(k) {
+      const t0 = k * C.every + hash(k) * C.every * 0.9;
+      const lane = Math.floor(hash(k + 7777) * 3), floorY = Game.render.laneY(lane);
+      return { t0, x: 4 + Math.floor(hash(k + 3333) * (cfg.view.w - 8)), size: 2 + Math.floor(hash(k + 5555) * 3), floorY, fall: Math.sqrt((2 * (floorY - C.top)) / C.g) };
+    }
+    // この dt に床へ着いた小石の数（音を鳴らす数）
+    function collapseTick(app, dt) {
+      if (!collapsing(app)) return 0;
+      const t = app.time, k0 = Math.max(0, Math.floor((t - dt - 1.2) / C.every) - 1), k1 = Math.floor(t / C.every) + 1;
+      let n = 0;
+      for (let k = k0; k <= k1; k++) { const p = pebble(k), tl = p.t0 + p.fall; if (tl > t - dt && tl <= t) n++; }
+      return n;
+    }
+    function drawCollapse(g, app) {
+      if (!collapsing(app)) return;
+      const t = app.time, V = cfg.view;
+      // 砂: 窓の上の端からこぼれる筋（1.5 秒ごとに場所が変わる）
+      const slot = Math.floor(t / 1.5);
+      for (let i = 0; i < 4; i++) {
+        if (hash(slot * 17 + i) > 0.6) continue;
+        const x = 6 + Math.floor(hash(slot * 31 + i * 7) * (V.w - 12)), u = (t % 1.5) / 1.5, len = Math.min(1, u * 3) * (20 + hash(i + slot) * 30);
+        g.fillStyle = '#e4a672';
+        g.fillRect(x, 0, 2, 1);
+        for (let y = 1; y < len; y += 3) if (hash(Math.floor(y + t * 40) + i * 101) < 0.75) g.fillRect(x + ((y >> 2) % 2), Math.round(y + ((t * 60) % 3)), 1, 1);
+      }
+      // 小石: 落ちて、床で砕ける
+      const k0 = Math.max(0, Math.floor((t - 1.5) / C.every) - 1), k1 = Math.floor(t / C.every) + 1;
+      for (let k = k0; k <= k1; k++) {
+        const p = pebble(k), a = t - p.t0;
+        if (a < 0) continue;
+        if (a < p.fall) {
+          const y = Math.round(C.top + 0.5 * C.g * a * a);
+          g.fillStyle = INK; g.fillRect(p.x - 1, y - 1, p.size + 2, p.size + 2);
+          g.fillStyle = '#8b9bb4'; g.fillRect(p.x, y, p.size, p.size);
+          g.fillStyle = '#c0cbdc'; g.fillRect(p.x, y, 1, 1);
+        } else if (a < p.fall + C.shatter) {
+          const u = (a - p.fall) / C.shatter;
+          g.fillStyle = '#8b9bb4';
+          for (const [dx, dy] of [[-1, -1], [1, -1], [-2, 0], [2, 0]]) g.fillRect(Math.round(p.x + dx * u * 5), Math.round(p.floorY - 2 + dy * 4 * u + 6 * u * u), 1, 1);
+        }
+      }
+    }
+
+    return { on, update, draw, shakeOffset, collapseTick, drawCollapse, reset() { pops = []; shake = 0; } };
+  }
+
+  Game.fx = { create };
+})();
+</script>
+<script>
+// Web Audio の合成音（矩形波・三角波・ノイズ）。ファイルは使わない。最初に触るまでは鳴らさない（ブラウザの制約）
+// FEVER TANK の audio.js の作り（unlock / env / tone / noise）を流用
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  const semi = (base, n) => base * Math.pow(2, n / 12);
+
+  // opt.context: 使う AudioContext（BGM の書き出しでは OfflineAudioContext を渡す）、opt.lookahead: 先に予約する秒数
+  function create(cfg, opt = {}) {
+    let ac = null, master = null, noiseBuf = null, hidden = false;
+    const enabled = () => cfg.audio.enabled && ac && !hidden;
+
+    function unlock() {
+      if (!ac) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC && !opt.context) return;
+        ac = opt.context || new AC();
+        const comp = ac.createDynamicsCompressor();
+        comp.threshold.value = -14; comp.ratio.value = 6;
+        master = ac.createGain();
+        master.gain.value = cfg.audio.volume;
+        master.connect(comp).connect(ac.destination);
+        noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+        const d = noiseBuf.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      }
+      if (ac.state !== 'running' && !opt.context) ac.resume();
+      if (musicKey != null && !bgm) { const k = musicKey; musicKey = undefined; music(k); }
+    }
+
+    function env(node, t, a, peak, dec) {
+      node.gain.setValueAtTime(0.0001, t);
+      node.gain.exponentialRampToValueAtTime(peak, t + a);
+      node.gain.exponentialRampToValueAtTime(0.0001, t + a + dec);
+    }
+    function tone(freq, { type = 'square', vol = 0.15, a = 0.003, dec = 0.1, slide = 0, delay = 0 } = {}) {
+      const t = ac.currentTime + delay;
+      const o = ac.createOscillator(), v = ac.createGain();
+      o.type = type; o.frequency.setValueAtTime(freq, t);
+      if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, freq * slide), t + a + dec);
+      env(v, t, a, vol, dec);
+      o.connect(v).connect(master);
+      o.start(t); o.stop(t + a + dec + 0.05);
+    }
+    function noise({ vol = 0.2, dec = 0.15, freq = 2000, q = 1, type = 'bandpass', sweep = 0, delay = 0 } = {}) {
+      const t = ac.currentTime + delay;
+      const src = ac.createBufferSource(); src.buffer = noiseBuf;
+      const f = ac.createBiquadFilter(); f.type = type; f.frequency.setValueAtTime(freq, t); f.Q.value = q;
+      if (sweep) f.frequency.exponentialRampToValueAtTime(Math.max(30, freq * sweep), t + dec);
+      const v = ac.createGain(); env(v, t, 0.002, vol, dec);
+      src.connect(f).connect(v).connect(master);
+      src.start(t, Math.random() * 0.5); src.stop(t + dec + 0.05);
+    }
+
+    function on(e) {
+      if (!enabled()) return;
+      switch (e.type) {
+        case 'jump': tone(330, { type: 'square', vol: 0.08, dec: 0.12, slide: 2 }); break;
+        case 'land': noise({ vol: 0.05, dec: 0.04, freq: 400 }); break;
+        case 'move': noise({ vol: 0.06, dec: 0.05, freq: 3000, sweep: 0.5 }); break;
+        case 'pass_trap': case 'pass_block': case 'dodge_rock':
+          tone(e.near ? 1320 : 880, { type: 'triangle', vol: 0.06, dec: 0.06 });
+          break;
+        case 'near_miss':
+          tone(1568, { type: 'square', vol: 0.07, dec: 0.05 });
+          tone(2093, { type: 'square', vol: 0.06, dec: 0.08, delay: 0.05 });
+          break;
+        case 'pickup':
+          if (e.k === 'pup') { [0, 4, 7, 12].forEach((n, i) => tone(semi(880, n), { type: 'triangle', vol: 0.09, dec: 0.12, delay: i * 0.07 })); break; }
+          if (e.k === 'seed') tone(semi(659, Math.min(24, (e.run || 1) - 1)), { type: 'square', vol: 0.06, dec: 0.06 });
+          else {
+            const base = e.k === 'gem' ? 988 : e.k === 'big' ? 784 : 659;
+            for (let i = 0; i < 3; i++) tone(semi(base, i * 4), { type: 'square', vol: 0.08, dec: 0.08, delay: i * 0.05 });
+          }
+          break;
+        case 'row_bonus': for (let i = 0; i < 5; i++) tone(semi(784, i * 2), { type: 'square', vol: 0.07, dec: 0.08, delay: i * 0.05 }); break;
+        case 'rock_land': noise({ vol: 0.2, dec: 0.15, freq: 300, type: 'lowpass' }); break;
+        case 'hit':
+          noise({ vol: 0.35, dec: 0.3, freq: 800, type: 'lowpass', sweep: 0.2 });
+          tone(220, { type: 'square', vol: 0.15, dec: 0.3, slide: 0.3 });
+          break;
+        case 'life_used': tone(523, { type: 'square', vol: 0.1, dec: 0.1, slide: 1.5 }); break;
+        case 'levelup_start':
+          if (e.extra) { [0, 3, 5, 7].forEach((n, i) => { noise({ vol: 0.07, dec: 0.05, freq: 1200 + i * 300, delay: i * 0.09 }); tone(semi(392, n), { type: 'triangle', vol: 0.07, dec: 0.07, delay: i * 0.09 }); }); break; } // よじ登る
+          noise({ vol: 0.3, dec: 0.4, freq: 600, type: 'lowpass', sweep: 0.3 });
+          tone(880, { type: 'triangle', vol: 0.1, dec: 0.6, slide: 0.25, delay: 0.15 });
+          break;
+        case 'levelup_pick': for (let i = 0; i < 3; i++) tone(semi(523, [0, 4, 7][i]), { type: 'square', vol: 0.08, dec: 0.1, delay: i * 0.06 }); break;
+        case 'levelup_land': // 高いところから落ちた重さ: 低い音で長めに響かせる（④エクストラでは登りきった軽い音）
+          if (e.extra) { noise({ vol: 0.12, dec: 0.08, freq: 500, type: 'lowpass' }); tone(659, { type: 'square', vol: 0.06, dec: 0.08, slide: 1.5 }); break; }
+          noise({ vol: 0.4, dec: 0.45, freq: 110, type: 'lowpass' }); tone(55, { type: 'triangle', vol: 0.45, dec: 0.5, slide: 0.5 }); tone(41, { type: 'sine', vol: 0.3, dec: 0.6, delay: 0.02 }); break;
+        case 'clear':
+          [0, 4, 7, 12, 7, 12, 16].forEach((n, i) => tone(semi(523, n), { type: 'square', vol: 0.1, dec: 0.18, delay: 0.3 + i * 0.12 }));
+          break;
+        // ---- キャンプ ----
+        case 'camp_count': tone(semi(880, Math.min(19, e.i || 0)), { type: 'square', vol: 0.04, dec: 0.04 }); break; // 宝の数え上げ（短い音を連ねる）
+        case 'camp_count_end': for (let i = 0; i < 3; i++) noise({ vol: 0.08, dec: 0.06, freq: 5000 + i * 1500, delay: i * 0.04 }); tone(1760, { type: 'triangle', vol: 0.06, dec: 0.15, delay: 0.1 }); break;
+        case 'camp_plus': tone(659, { type: 'square', vol: 0.07, dec: 0.05 }); tone(988, { type: 'square', vol: 0.07, dec: 0.08, delay: 0.05 }); break;
+        case 'camp_minus': tone(659, { type: 'square', vol: 0.06, dec: 0.05 }); tone(440, { type: 'square', vol: 0.06, dec: 0.08, delay: 0.05 }); break;
+        case 'camp_deny': tone(147, { type: 'square', vol: 0.07, dec: 0.12 }); break;
+        case 'camp_page': noise({ vol: 0.06, dec: 0.06, freq: 2500, sweep: 1.6 }); break;
+        case 'camp_go': [0, 4, 7, 12].forEach((n, i) => tone(semi(392, n), { type: 'square', vol: 0.08, dec: 0.1, delay: i * 0.06 })); break;
+        // ③実績とシークレット
+        case 'achieve': tone(1319, { type: 'triangle', vol: 0.07, dec: 0.1 }); tone(1976, { type: 'triangle', vol: 0.07, dec: 0.25, delay: 0.08 }); break; // ピロン（小さく）
+        case 'rare_start': [0, 3, 6].forEach((n, i) => tone(semi(587, n), { type: 'triangle', vol: 0.06, dec: 0.12, delay: i * 0.1 })); break;
+        case 'mimic_tell': for (let i = 0; i < 4; i++) noise({ vol: 0.07, dec: 0.03, freq: 900, q: 3, delay: i * 0.1 }); break; // ガタガタ
+        case 'mimic_bite': tone(196, { type: 'square', vol: 0.12, dec: 0.12, slide: 0.5 }); noise({ vol: 0.12, dec: 0.08, freq: 1500 }); break;
+        case 'mimic_dodge': tone(784, { type: 'square', vol: 0.06, dec: 0.06, delay: 0.02 }); break;
+        case 'mimic_give': [0, 4, 7, 12, 16].forEach((n, i) => tone(semi(523, n), { type: 'square', vol: 0.07, dec: 0.1, delay: i * 0.06 })); break;
+        case 'fly_catch': [0, 7, 12, 19].forEach((n, i) => tone(semi(988, n), { type: 'triangle', vol: 0.08, dec: 0.12, delay: i * 0.05 })); break;
+        case 'bat': for (let i = 0; i < 5; i++) noise({ vol: 0.06, dec: 0.03, freq: 2500 + (i % 2) * 800, delay: i * 0.07 }); tone(2637, { type: 'triangle', vol: 0.05, dec: 0.06, slide: 1.3 }); break;
+        // ④脱出エクストラ
+        case 'collapse': // 崩れ始め: 低いゴゴゴ
+          noise({ vol: 0.4, dec: 1.6, freq: 160, type: 'lowpass', sweep: 0.5 });
+          for (let i = 0; i < 6; i++) tone(48 + (i % 2) * 4, { type: 'triangle', vol: 0.3, dec: 0.25, delay: i * 0.22 });
+          break;
+        case 'pebble': noise({ vol: 0.035, dec: 0.03, freq: 2600 + Math.random() * 1500, q: 2 }); break; // 小石が砕ける（小さく）
+        case 'escape': [0, 4, 7, 12, 7, 12, 16, 19, 24].forEach((n, i) => tone(semi(523, n), { type: i % 2 ? 'square' : 'triangle', vol: 0.1, dec: i === 8 ? 0.5 : 0.14, delay: 0.1 + i * 0.1 })); break;
+        case 'extra_denied': [0, -3, -6, -12].forEach((n, i) => tone(semi(330, n), { type: 'triangle', vol: 0.09, dec: 0.35, delay: i * 0.3 })); break; // 暗転の下がる音
+        case 'all_max': [0, 7, 12, 16, 19, 24].forEach((n, i) => tone(semi(1047, n), { type: 'triangle', vol: 0.06, dec: 0.1, delay: i * 0.04 })); break;
+        case 'unlock_new': [0, 7, 12, 16, 19].forEach((n, i) => tone(semi(523, n), { type: 'triangle', vol: 0.1, dec: 0.2, delay: 0.2 + i * 0.1 })); break;
+      }
+    }
+
+
+    // ---- BGM（チップチューン）----
+    // メロディは「音階の何番目か」で書く（0 = 主音。7 で1オクターブ上、負は下）。'-' は伸ばす、'.' は休み。
+    // 同じ曲を、階の色合いごとに調・音階・テンポ・音色・ドラムを変えてアレンジする
+    const SONG = {
+      lead: [
+        '0 . 2 . 4 . 2 . 3 . 5 . 4 - - .', '4 . 5 . 6 . 7 . 6 . 4 . 2 - - .',
+        '7 . 6 . 4 . 5 . 6 . 4 . 2 . 3 .', '4 . 2 . 1 . -1 . 0 - - - . . . .',
+      ].join(' ').split(' '),
+      chords: [0, 3, 4, 0],     // 小節ごとの和音の根音（音階の何番目か）
+    };
+    const SCALES = { major: [0, 2, 4, 5, 7, 9, 11], minor: [0, 2, 3, 5, 7, 8, 10], dorian: [0, 2, 3, 5, 7, 9, 10], mixo: [0, 2, 4, 5, 7, 9, 10] };
+    // k: キック, s: スネア, h: ハイハット（16分の16マス）
+    const ARR = {
+      title: { tempo: 104, root: 72, scale: 'major', lead: 'triangle', leadVol: 0.07, bass: 'R . . . . . . . R . . . . . . .', bassType: 'triangle', drums: null },
+      0: { tempo: 128, root: 72, scale: 'major', lead: 'pulse', leadVol: 0.06, bass: 'R . R . R . R . R . R . R . R .', bassType: 'triangle', drums: { k: 'x . . . . . . . x . . . . . . .', s: '. . . . x . . . . . . . x . . .', h: '. . x . . . x . . . x . . . x .' } },
+      1: { tempo: 116, root: 69, scale: 'dorian', lead: 'triangle', leadVol: 0.09, echo: true, bass: 'R . . R . . R . R . . R . . R .', bassType: 'pulse', drums: { k: 'x . . . . . x . x . . . . . . .', s: '. . . . x . . . . . . . x . . x', h: 'x . x x x . x x x . x x x . x x' } },
+      2: { tempo: 148, root: 74, scale: 'minor', lead: 'square', leadVol: 0.05, bass: 'R . O . R . O . R . O . R . O .', bassType: 'square', drums: { k: 'x . . . x . . . x . . . x . . .', s: '. . . . x . . . . . . . x . x .', h: 'x . x . x . x . x . x . x . x .' } },
+      3: { tempo: 164, root: 76, scale: 'mixo', lead: 'pulse', leadVol: 0.06, arp: true, bass: 'R . O . R . O . R . O . R O R O', bassType: 'triangle', drums: { k: 'x . . x x . . . x . . x x . . .', s: '. . . . x . . . . . . . x . x x', h: 'x x x x x x x x x x x x x x x x' } },
+      // ④脱出エクストラ: かなり急いだアレンジ（テンポを大きく上げ、短調、ドラムを詰める）。エクストラの間はずっとこれ
+      extra: { tempo: 196, root: 69, scale: 'minor', lead: 'square', leadVol: 0.05, arp: true, bass: 'R O R O R O R O R O R O R O R O', bassType: 'square', drums: { k: 'x . x . x . x . x . x . x . x x', s: '. . . . x . . x . . . . x . x x', h: 'x x x x x x x x x x x x x x x x' } },
+    };
+    const parse = (str) => str.split(' ');
+    for (const a of Object.values(ARR)) {
+      a.bassP = parse(a.bass);
+      if (a.drums) a.drumP = { k: parse(a.drums.k), s: parse(a.drums.s), h: parse(a.drums.h) };
+    }
+
+    let bgm = null, pulseWave = null, musicKey = null, nextT = 0, stepN = 0, musicGain = null;
+    const midiHz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+    function degree(arr, d) {
+      const sc = SCALES[arr.scale], o = Math.floor(d / 7), i = ((d % 7) + 7) % 7;
+      return arr.root + sc[i] + 12 * o;
+    }
+    function voice(type, freq, t, dur, vol) {
+      const o = ac.createOscillator(), v = ac.createGain();
+      if (type === 'pulse') { if (!pulseWave) { const n = 32, re = new Float32Array(n), im = new Float32Array(n); for (let k = 1; k < n; k++) im[k] = (2 / (k * Math.PI)) * Math.sin(k * Math.PI * 0.25); pulseWave = ac.createPeriodicWave(re, im); } o.setPeriodicWave(pulseWave); }
+      else o.type = type;
+      o.frequency.setValueAtTime(freq, t);
+      v.gain.setValueAtTime(vol, t);
+      v.gain.setValueAtTime(vol, t + dur * 0.7);
+      v.gain.linearRampToValueAtTime(0.0001, t + dur);
+      o.connect(v).connect(musicGain);
+      o.start(t); o.stop(t + dur + 0.02);
+    }
+    function drum(kind, t) {
+      if (kind === 'k') {
+        const o = ac.createOscillator(), v = ac.createGain();
+        o.type = 'sine'; o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+        v.gain.setValueAtTime(0.35, t); v.gain.exponentialRampToValueAtTime(0.0001, t + 0.14);
+        o.connect(v).connect(musicGain); o.start(t); o.stop(t + 0.16);
+        return;
+      }
+      const src = ac.createBufferSource(); src.buffer = noiseBuf;
+      const f = ac.createBiquadFilter(); f.type = kind === 'h' ? 'highpass' : 'bandpass'; f.frequency.value = kind === 'h' ? 7000 : 1800;
+      const v = ac.createGain(), dec = kind === 'h' ? 0.03 : 0.1, vol = kind === 'h' ? 0.06 : 0.16;
+      v.gain.setValueAtTime(vol, t); v.gain.exponentialRampToValueAtTime(0.0001, t + dec);
+      src.connect(f).connect(v).connect(musicGain); src.start(t, Math.random() * 0.5); src.stop(t + dec + 0.02);
+    }
+    function scheduleStep(a, n, t) {
+      const sd = 60 / a.tempo / 4;
+      const L = SONG.lead, i = n % L.length, tok = L[i];
+      if (tok !== '.' && tok !== '-') {
+        let hold = 1;
+        while (L[(i + hold) % L.length] === '-') hold++;
+        const f = midiHz(degree(a, +tok));
+        voice(a.lead, f, t, hold * sd * 0.95, a.leadVol);
+        if (a.echo) voice(a.lead, f, t + sd * 3, hold * sd * 0.9, a.leadVol * 0.35);
+      }
+      const bar = Math.floor(i / 16) % SONG.chords.length, s16 = i % 16, root = SONG.chords[bar];
+      const b = a.bassP[s16];
+      if (b === 'R' || b === 'O') voice(a.bassType, midiHz(degree(a, root) - 24 + (b === 'O' ? 12 : 0)), t, sd * 1.6, 0.09);
+      if (a.arp && s16 % 2 === 1) voice('square', midiHz(degree(a, root + [0, 2, 4, 7][(s16 >> 1) % 4]) + 12), t, sd * 0.8, 0.025);
+      if (a.drumP) for (const k of ['k', 's', 'h']) if (a.drumP[k][s16] === 'x') drum(k, t);
+    }
+
+    // key: 'title' | 0..3（階の色合い）| 'extra'（④）| null（止める）
+    function music(key) {
+      if (key === musicKey) return;
+      musicKey = key;
+      if (!ac) return;
+      if (!musicGain) { musicGain = ac.createGain(); musicGain.gain.value = cfg.audio.bgmVolume; musicGain.connect(master); }
+      bgm = key == null ? null : ARR[key];
+      nextT = ac.currentTime + 0.05; stepN = 0;
+    }
+    function tick() {
+      if (!enabled() || !bgm || !musicGain) return;
+      const sd = 60 / bgm.tempo / 4;
+      if (nextT < ac.currentTime - 0.2) nextT = ac.currentTime + 0.02; // 止まっていたら追いつかずに今から
+      while (nextT < ac.currentTime + (opt.lookahead || 0.12)) { scheduleStep(bgm, stepN++, nextT); nextT += sd; }
+    }
+
+    return {
+      unlock, on, music, tick,
+      setHidden(h) { hidden = h; if (!ac) return; if (h) ac.suspend(); else ac.resume(); },
+    };
+  }
+
+  Game.audio = { create };
+})();
+</script>
+<script>
+// タッチとキーを命令に変える。ジャンプは、操作の数にかかわらず、いつも「離したとき」に出す
+// 出す命令: { type: 'cmd', cmd: 'jump' | 'fwd' | 'back' | 'far' | 'near', swipe, control } / { type: 'tap', x, y（CSS px）, control } / { type: 'pick', i }
+// control: 下の3分の2（操作の範囲）で始めた指か。上の3分の1を操作にするかは場面ごとに main が決める（ランでは使わない、キャンプでは使う）
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  function create(cfg, target, emit) {
+    const I = cfg.input;
+    let touch = null; // { id, x, y, swiped, control }
+
+    const inControl = (y) => y >= innerHeight * I.controlFrom;
+
+    target.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (touch) return;
+      touch = { id: e.pointerId, x: e.clientX, y: e.clientY, swiped: false, control: inControl(e.clientY) };
+      emit({ type: 'down', x: e.clientX, y: e.clientY });
+    });
+    target.addEventListener('pointermove', (e) => {
+      if (!touch || e.pointerId !== touch.id || touch.swiped) return;
+      const dx = e.clientX - touch.x, dy = e.clientY - touch.y;
+      if (Math.max(Math.abs(dx), Math.abs(dy)) < I.swipePx) return;
+      touch.swiped = true;
+      const cmd = Math.abs(dx) >= Math.abs(dy) ? (dx > 0 ? 'fwd' : 'back') : (dy < 0 ? 'far' : 'near');
+      emit({ type: 'cmd', cmd, swipe: true, control: touch.control });
+    });
+    const up = (e) => {
+      if (!touch || e.pointerId !== touch.id) return;
+      const t = touch;
+      touch = null;
+      if (t.swiped) return;
+      emit({ type: 'tap', x: e.clientX, y: e.clientY, control: t.control });
+    };
+    target.addEventListener('pointerup', up);
+    target.addEventListener('pointercancel', () => { touch = null; });
+
+    const KEYS = { ArrowRight: 'fwd', ArrowLeft: 'back', ArrowUp: 'far', ArrowDown: 'near', d: 'fwd', a: 'back', w: 'far', s: 'near' };
+    addEventListener('keydown', (e) => {
+      if (e.repeat) return;
+      if (KEYS[e.key]) { e.preventDefault(); emit({ type: 'cmd', cmd: KEYS[e.key] }); }
+      else if (e.key === '1' || e.key === '2' || e.key === '3') emit({ type: 'pick', i: +e.key - 1 });
+      else if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
+    });
+    addEventListener('keyup', (e) => {
+      if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); emit({ type: 'key' }); }
+    });
+  }
+
+  // ④エクストラ（見た目が左右反転）の間は、画面の向きどおりに 前・後ろ を入れ替える
+  const orient = (cmd, mirrored) => (!mirrored ? cmd : cmd === 'fwd' ? 'back' : cmd === 'back' ? 'fwd' : cmd);
+
+  Game.input = { create, orient };
+})();
+</script>
+<script>
+// 描画。画面全体を「ドット」単位の小さな Canvas に描き、整数倍 k で実際の画素へ拡大する。
+// 遊ぶ窓（192×108）はその中の整数の位置に置く。状態は読むだけ
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const B = Game.bake;
+
+  const R = {
+    canvas: null, g: null, low: null, lg: null,
+    k: 1, Lw: 0, Lh: 0, fx: 0, fy: 0, cssK: 1, portrait: true,
+
+    init(canvas) {
+      R.canvas = canvas;
+      R.g = canvas.getContext('2d');
+      R.low = B.mk(8, 8);
+      R.lg = R.low.getContext('2d');
+      const resize = () => {
+        const V = Game.config.view;
+        const dpr = window.devicePixelRatio || 1;
+        const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
+        canvas.width = w; canvas.height = h;
+        R.k = Math.max(1, Math.floor(Math.min(w / V.w, h / V.h)));
+        R.Lw = Math.ceil(w / R.k); R.Lh = Math.ceil(h / R.k);
+        R.low.width = R.Lw; R.low.height = R.Lh;
+        R.portrait = h > w;
+        R.fx = Math.floor((R.Lw - V.w) / 2);
+        R.fy = R.portrait ? Math.max(0, Math.floor(R.Lh * 0.4 - V.h / 2)) : Math.floor((R.Lh - V.h) / 2);
+        R.cssK = R.k / dpr; // 1ドットが CSS px でいくつか
+      };
+      addEventListener('resize', resize);
+      resize();
+    },
+
+    // CSS px → 窓の中のドット座標
+    toField(cx, cy) { return { x: cx / R.cssK - R.fx, y: cy / R.cssK - R.fy }; },
+    // 窓の中のドット座標 → CSS px（テスト用）
+    toCss(x, y) { return { x: (x + R.fx + 0.5) * R.cssK, y: (y + R.fy + 0.5) * R.cssK }; },
+
+    draw(app) {
+      const g = R.lg, cfg = Game.config, V = cfg.view, A = B.all();
+      const camp = app.mode === 'camp';
+      const s = camp ? null : app.rules;
+      const theme = A.themes[themeOf(s)];
+      const mir = !!(s && s.extra); // ④エクストラ: 窓の中と窓の外の背景を、窓の真ん中を軸に左右反転して描く（文字はしない）
+      g.imageSmoothingEnabled = false;
+      // 窓の外も含めた背景
+      g.fillStyle = theme.sky;
+      g.fillRect(0, 0, R.Lw, R.Lh);
+      const dist = s ? s.dist : app.titleDist || 0;
+      const shake = app.fx ? app.fx.shakeOffset(app) : { x: 0, y: 0 };
+      if (mir) { g.save(); g.translate(2 * R.fx + V.w, 0); g.scale(-1, 1); }
+      drawBackground(g, theme, dist, shake);
+      if (mir) g.restore();
+      if (camp) drawCampOutside(g, app, A);
+      if (s && s.phase === 'run' && s.ranks.lane < 1) { g.save(); g.translate(shake.x, R.fy + shake.y); drawRubble(g, A, theme, s.dist, s.h.lane); g.restore(); }
+      g.save();
+      g.translate(R.fx + shake.x, R.fy + shake.y);
+      g.beginPath(); g.rect(0, 0, V.w, V.h); g.clip();
+      if (s) {
+        if (mir) { g.save(); g.translate(V.w, 0); g.scale(-1, 1); }
+        drawWorld(g, app, s, A, theme);
+        if (mir) g.restore();
+      } else if (!camp) drawHamsterTitle(g, app, A);
+      if (app.fx) { app.fx.drawCollapse(g, app); app.fx.draw(g, app); }
+      g.restore();
+      g.save();
+      g.translate(R.fx, R.fy);
+      if (camp) drawCamp(g, app, A); else drawUi(g, app, s, A, theme);
+      g.restore();
+      R.g.imageSmoothingEnabled = false;
+      R.g.drawImage(R.low, 0, 0, R.Lw * R.k, R.Lh * R.k);
+    },
+
+    // 3択のカードの位置（窓の中のドット）
+    cards(n) {
+      const w = 58, h = 66, gap = 4, total = n * w + (n - 1) * gap, x0 = Math.floor((Game.config.view.w - total) / 2);
+      return Array.from({ length: n }, (_, i) => ({ x: x0 + i * (w + gap), y: 30, w, h }));
+    },
+  };
+
+  const themeIndex = (floor, cfg) => Math.min(3, Math.floor((floor - 1) / 4));
+  // 階の色合い。④エクストラでは、登った割合で 黄金 → 赤い岩 → 苔 → 砂岩 と戻っていく（ahead: 1 なら次の階）
+  function themeOf(s, ahead = 0) {
+    if (!s) return 0;
+    const E = s.extra;
+    if (!E) return themeIndex(s.floor + ahead);
+    const climbed = Math.min(E.n, E.n - E.left + ahead);
+    return 3 - Math.min(3, Math.floor((4 * climbed) / E.n));
+  }
+  const laneY = (lp) => Game.config.layout.laneGroundY[0] + lp * 8;
+  // 奥のレーンほど右へずらして描く（宝がどのレーンのわなの上か分かるように）
+  const laneDx = (lp) => Math.round((2 - lp) * Game.config.layout.skew);
+  const hamSet = (s, A) => (A.hamG && A.hamG[s.ranks.greed]) || A.ham;
+
+  function tile(g, img, x0, y, offset, from, to) {
+    const w = img.width;
+    let x = from - (((offset % w) + w) % w);
+    for (; x < to; x += w) g.drawImage(img, Math.round(x + x0), y);
+  }
+
+  function drawBackground(g, th, dist, shake) {
+    const V = Game.config.view, fx = R.fx + shake.x, fy = R.fy + shake.y;
+    // 遠くの壁: 窓の上 64 ドットから床の上まで、縦にも繰り返す
+    for (let y = fy + 60 - 10; y > -10; y -= 10) tile(g, th.far, 0, y, dist * 0.25, -fx, R.Lw);
+    // 柱（64 ドットおき）
+    const off = dist * 0.5, P = 64;
+    for (let x = -(((off % P) + P) % P); x < R.Lw + P; x += P) g.drawImage(th.pillar, Math.round(x + 18), fy + 49, 11, 23);
+    // 床（レーン3本ぶん、窓の外へも続ける）
+    // 床の行も、物と同じだけ奥ほど右へずらす（継ぎ目が斜めに並ぶ）
+    for (let r = 0; r < 4; r++) tile(g, th.floor, 0, fy + 70 + r * 8, dist - laneDx(Math.min(r, 3)), -fx, R.Lw);
+    // 地中
+    g.fillStyle = th.ground;
+    g.fillRect(-1, fy + 102, R.Lw + 2, R.Lh); // 1 ドット広く（左右反転したときに端が空かないように）
+    g.fillStyle = th.dark;
+    for (let y = fy + 106; y < R.Lh; y += 6) for (let x = -(Math.round(dist) % 24); x < R.Lw; x += 24) g.fillRect(x + ((y / 6) % 2) * 12, y, 3, 1);
+  }
+
+  // ---- 窓の中 ----
+  function drawWorld(g, app, s, A, th) {
+    const cfg = Game.config, L = cfg.layout, h = s.h;
+    const t = app.time;
+    if (s.phase === 'choose' && s.extra) return drawClimb(g, app, s, A);
+    if (s.phase === 'choose' || app.mode === 'falling') return drawFalling(g, app, s, A);
+    if (s.phase === 'clear') return drawTreasure(g, app, s, A);
+    if (s.phase === 'escaped') return drawEscape(g, app, s, A);
+    drawPanels(g, s, th);
+    // 落石の影（窓に固定したマス）
+    const rocksByLane = [[], [], []];
+    for (const r of s.rocks) if (s.t >= r.tWarn) for (const l of r.lanes) rocksByLane[l].push(r);
+    const hamLane = Math.round(h.lp);
+    const open = s.ranks.lane >= 1;
+    for (let lane = 0; lane < 3; lane++) {
+      if (!open && lane !== h.lane) continue;
+      const gy = laneY(lane), dx = laneDx(lane);
+      const vis = [];
+      for (const o of s.objs) {
+        const lanes = o.lanes || [o.lane];
+        if (!lanes.includes(lane) || (o.done && o.got)) continue;
+        const sx = Math.round(o.wx - s.dist) + dx, half = (o.w || 0) / 2;
+        if (sx + half < -20 || sx - half > cfg.view.w + 20 + s.assist.preview * Game.rules.speedOf(s, cfg)) continue;
+        vis.push({ o, sx });
+      }
+      // 落石の影: 予告の初めから当たる範囲の大きさで、落ちる直前ほど濃く。⊗ の印（らくせきの よこく ③）は影より手前で点滅
+      for (const r of rocksByLane[lane]) {
+        const k = Math.max(0, Math.min(1, 1 - (r.tImpact - s.t) / (r.tImpact - r.tWarn)));
+        const cx = L.colX[r.col] + dx;
+        g.globalAlpha = 0.6 + 0.35 * k;
+        g.drawImage(A.rockShadow, Math.round(cx - A.rockShadow.width / 2), gy - 3);
+        g.globalAlpha = 1;
+        if (s.assist.rockMark) {
+          g.globalAlpha = Math.floor(t * 8) % 2 ? 0.55 : 1;
+          g.drawImage(A.rockMark, Math.round(cx - A.rockMark.width / 2), gy - 4);
+          g.globalAlpha = 1;
+        }
+      }
+      for (const { o, sx } of vis) if (o.k === 'stal') g.drawImage(A.shadowSmall, sx - 5, gy - 1);
+      // わな・柵・つらら石
+      for (const { o, sx } of vis) {
+        if (o.k === 'trap') drawTrap(g, A, sx, gy, o.w);
+        else if (o.k === 'block') g.drawImage(A.block, sx - 6, gy - 27);
+        else if (o.k === 'stal') drawStal(g, A, sx, gy - cfg.obj.stal.bottom);
+      }
+      // 宝の影（わなの上にも描いて、どのレーンの宝か分かるように）
+      for (const { o, sx } of vis) if (!isThreatK(o.k)) g.drawImage(A.shadowSmall, sx - 5, gy - 1);
+      // 宝
+      for (const { o, sx } of vis) {
+        if (isThreatK(o.k)) continue;
+        const img = A[o.k];
+        const bob = o.k === 'seed' ? 0 : Math.round(Math.sin(t * 6 + o.id) * 1);
+        const top = gy - (o.h || 0) - img.height - 1 + bob;
+        g.drawImage(img, sx - Math.floor(img.width / 2), top);
+        if (o.k !== 'seed' && Math.floor(t * 3 + o.id) % 4 === 0) g.drawImage(A.sparkle[Math.floor(t * 6) % 2], sx + 2, top - 2);
+      }
+      drawRare(g, app, s, A, lane);
+      if (lane === hamLane) drawHamster(g, app, s, A);
+      if (s.assist.preview > 0) drawPreview(g, s, A, lane, vis);
+    }
+    drawBats(g, app, s, A);
+    // 落ちてくる石（影の上から）
+    for (const r of s.rocks) {
+      if (s.t < r.tWarn) continue;
+      const k = 1 - (r.tImpact - s.t) / (r.tImpact - r.tWarn);
+      const top = laneY(Math.min(...r.lanes));
+      const y = Math.round(top - 13 - (1 - k * k) * (top + 10));
+      const l0 = Math.min(...r.lanes);
+      for (let i = 0; i < r.lanes.length; i++) g.drawImage(A.rock, Math.round(L.colX[r.col] + laneDx(l0 + i) - 7), y + i * 8);
+    }
+  }
+
+  const isThreatK = (k) => k === 'trap' || k === 'block' || k === 'stal';
+
+  // 床のマス（行けるマス = 前後の列 × 使えるレーン）。窓に固定して流さない。前後かレーンが使えるときだけ描く。
+  // 床と同じ傾き（2行で1ドット）の平行四辺形。今いるマスは少し明るく塗る
+  function drawPanels(g, s, th) {
+    const L = Game.config.layout, h = s.h, mv = s.ranks.move >= 1, ln = s.ranks.lane >= 1;
+    if (!mv && !ln) return;
+    const cols = mv ? [0, 1, 2] : [h.col], lanes = ln ? [0, 1, 2] : [h.lane];
+    const half = (L.colX[1] - L.colX[0]) / 2, off = (y) => Math.round((L.laneGroundY[2] - y) / 2);
+    const cur = { col: h.col, lane: Math.round(h.lp) };
+    for (const lane of lanes) for (const col of cols) {
+      const gy = laneY(lane), y0 = gy - 6, y1 = gy + 1, x0 = L.colX[col] - half, x1 = L.colX[col] + half - 1;
+      const here = col === cur.col && lane === cur.lane;
+      if (here) {
+        g.fillStyle = '#ffffff'; g.globalAlpha = 0.22;
+        for (let y = y0; y <= y1; y++) g.fillRect(x0 + off(y), y, x1 - x0 + 1, 1);
+      }
+      g.fillStyle = here ? '#ffffff' : INK; g.globalAlpha = here ? 0.75 : 0.28;
+      g.fillRect(x0 + off(y0) + 1, y0, x1 - x0 - 1, 1);   // 上の辺
+      g.fillRect(x0 + off(y1) + 1, y1, x1 - x0 - 1, 1);   // 下の辺
+      for (let y = y0; y <= y1; y++) { g.fillRect(x0 + off(y), y, 1, 1); g.fillRect(x1 + off(y), y, 1, 1); }
+      g.globalAlpha = 1;
+    }
+  }
+
+  // ③ランダムイベント: たからばこの まもの、そらとぶ たね（まいごの こハムスターは宝と同じ描き方）
+  function drawRare(g, app, s, A, lane) {
+    const r = s.rare, e = r && r.state === 'on' ? r.e : null;
+    if (!e || Math.round(e.lp) !== lane) return;
+    const gy = laneY(e.lp), x = Math.round(e.x + laneDx(e.lp)), t = app.time;
+    if (r.kind === 'mimic') {
+      const open = e.ph === 'leap' || (e.ph === 'tell' && Math.floor(t * 14) % 2 === 0);
+      const img = A.mimic[open ? 1 : 0], jx = e.ph === 'tell' ? (Math.floor(t * 30) % 2 ? 1 : -1) : 0;
+      g.drawImage(e.z > 2 ? A.shadowSmall : A.shadow, x - (e.z > 2 ? 5 : 6), gy - 1);
+      g.drawImage(img, x - 7 + jx, Math.round(gy - img.height - e.z));
+    } else if (r.kind === 'fly') {
+      const img = A.flySeed[Math.floor(t * 10) % 2], top = Math.round(gy - e.h - img.height);
+      g.drawImage(A.shadowSmall, x - 5, gy - 1);
+      g.drawImage(img, x - 5, top);
+      if (Math.floor(t * 4) % 2 === 0) g.drawImage(A.sparkle[Math.floor(t * 8) % 2], x + 4, top - 3);
+    }
+  }
+
+  // ③てんじょうの コウモリ: 柱の層（0.5 倍）に沿って流れる。番号 i の位置と、出るかどうかは、番号から決める（乱数の状態を持たない）
+  const batHash = (i) => ((Math.imul(i + 7, 2654435761) ^ (i * 40503)) >>> 0) / 4294967296;
+  function bats(app, s) {
+    const B = Game.config.achieve.bat, V = Game.config.view, off = s.dist * 0.5, out = [];
+    const i0 = Math.floor((off - 20) / B.every), i1 = Math.floor((off + V.w + 20) / B.every);
+    for (let i = i0; i <= i1; i++) {
+      if (i < 1 || batHash(i) >= B.chance) continue;
+      const x = Math.round(i * B.every + Math.floor(batHash(i + 1000) * (B.every - 20)) - off);
+      const gone = app.batGone[i];
+      if (gone != null && app.time - gone > B.flySec) continue;
+      out.push({ i, x, y: B.y, gone: gone != null ? app.time - gone : null });
+    }
+    return out;
+  }
+  function drawBats(g, app, s, A) {
+    if (s.phase !== 'run' && s.phase !== 'over') return;
+    for (const b of bats(app, s)) {
+      if (b.gone == null) { g.drawImage(A.batHang, b.x - 3, b.y); continue; }
+      const k = b.gone / Game.config.achieve.bat.flySec, img = A.batFly[Math.floor(b.gone * 12) % 2];
+      g.drawImage(img, Math.round(b.x - 5 + k * 60), Math.round(b.y + 2 - k * 30 + Math.sin(k * 12) * 2));
+    }
+  }
+  R.bats = (app) => (app.rules ? bats(app, app.rules) : []);
+  // タップした CSS px にいる（まだ飛んでいない）コウモリ
+  R.batAt = function (app, cx, cy) {
+    const s = app.rules;
+    if (!s || s.phase !== 'run') return null;
+    const p = R.toField(cx, cy), B = Game.config.achieve.bat;
+    if (s.extra) p.x = Game.config.view.w - p.x; // ④左右反転して描いているので
+    for (const b of bats(app, s)) if (b.gone == null && Math.abs(p.x - b.x) <= B.hit && Math.abs(p.y - (b.y + 4)) <= B.hit) return b;
+    return null;
+  };
+
+  // わな。ながい わなは、トゲ1本分（4ドット）を並べる
+  function drawTrap(g, A, sx, gy, w) {
+    if (!w) return g.drawImage(A.trap, sx - 6, gy - 5);
+    const x0 = Math.round(sx - w / 2) - 2, n = Math.ceil((w + 4) / 4);
+    for (let i = 0; i < n; i++) g.drawImage(A.trap, 0, 0, 4, 6, x0 + i * 4, gy - 5, 4, 6);
+  }
+
+  // つらら石: 先っぽ（tipY が下の端）と、窓の外の上まで続く幹
+  function drawStal(g, A, sx, tipY) {
+    const top = tipY - A.stalTip.height, x = sx - 5;
+    g.drawImage(A.stalTip, x, top);
+    for (let y = top - A.stalStem.height; y > -R.fy - 8; y -= A.stalStem.height) g.drawImage(A.stalStem, x, y);
+  }
+
+  // レーン移動の解禁前: 行けないレーンはがれきでふさぐ
+  function drawRubble(g, A, th, dist, lane) {
+    const V = { w: R.Lw };
+    const bands = [[68, 80, 0], [80, 88, 1], [88, 102, 2]].filter((_, i) => i !== lane);
+    for (const [y0, y1, l] of bands) {
+      g.fillStyle = th.ground; g.fillRect(0, y0, V.w, y1 - y0);
+      g.fillStyle = th.dark;
+      for (let x = -(Math.round(dist) % 12) - 12 + laneDx(l); x < V.w + 12; x += 12) {
+        g.fillRect(x, y0 + 1, 7, 3); g.fillRect(x + 6, y0 + 4, 5, 3);
+      }
+    }
+    g.fillStyle = th.dark;
+    if (lane > 0) g.fillRect(0, laneY(lane) - 5, V.w, 1);
+  }
+
+  function hamFrame(app, s, A) {
+    const h = s.h;
+    const H = hamSet(s, A);
+    if (app.hitT > 0) return H.hit;
+    if (h.jt >= 0) return h.jt < Game.rules.jumpOf(s.ranks, Game.config).sec / 2 ? H.jumpUp : H.jumpDown;
+    if (app.landT > 0) return H.land;
+    if (h.mv && h.mv.k === 'col') return H.lean;
+    const sp = Game.rules.speedOf(s, Game.config);
+    const frameSec = 0.1 * 60 / sp;
+    return H.run[Math.floor(app.time / frameSec) % H.run.length];
+  }
+
+  function drawHamster(g, app, s, A) {
+    const h = s.h, gy = laneY(h.lp), hx = h.x + laneDx(h.lp);
+    g.drawImage(h.z > 2 ? A.shadowSmall : A.shadow, Math.round(hx - (h.z > 2 ? 5 : 6)), Math.round(gy - 1));
+    const f = hamFrame(app, s, A);
+    const blink = s.invuln > 0 && Math.floor(app.time * 12) % 2 === 0;
+    const img = app.hitT > 0 || blink ? f.w : underRock(s) ? f.d : f.n;
+    g.drawImage(img, Math.round(hx - 8), Math.round(gy - 16 - h.z));
+  }
+
+  // 影の出た落石の、当たる範囲の下にいるか（rules の当たりと同じ幅）。いる間はハムスターを暗く描く
+  function underRock(s) {
+    const cfg = Game.config, h = s.h, half = (cfg.hamster.box + cfg.obj.rock.w) / 2;
+    return s.rocks.some((r) => s.t >= r.tWarn && Math.abs(cfg.layout.colX[r.col] - h.x) < half && r.lanes.some((l) => Math.abs(h.lp - l) < 0.5));
+  }
+
+  // さきみ: まだ窓の外にある物を、右端の、そのレーンの位置に小さな印で知らせる（窓に入ると消える）。種は出さない
+  const PV_RANK = { block: 4, stal: 3, trap: 2 };
+  function drawPreview(g, s, A, lane, vis) {
+    const cfg = Game.config, V = cfg.view, far = V.w + 8 + s.assist.preview * Game.rules.speedOf(s, cfg);
+    let best = null;
+    for (const { o } of vis) {
+      if (o.k === 'seed' || o.done) continue;
+      const sx = o.wx - s.dist, half = (o.w || cfg.obj.item.w) / 2;
+      if (sx - half <= V.w || sx > far) continue;
+      if (!best || (PV_RANK[o.k] || 1) > (PV_RANK[best.k] || 1)) best = o;
+    }
+    if (!best) return;
+    const img = best.k === 'trap' ? A.pvTrap : best.k === 'stal' ? A.pvStal : best.k === 'block' ? A.pvBlock : A.pvItem;
+    const x = V.w - 11 - 2 * cfg.layout.skew + laneDx(lane), y = laneY(lane) - 10;
+    g.fillStyle = INK; g.fillRect(x - 1, y - 1, 11, 11);
+    g.fillStyle = '#3a4466'; g.fillRect(x, y, 9, 9);
+    g.drawImage(img, x + 1, y + 1);
+  }
+
+  // 床が抜けて落ちていく（3択を選んでいる間）
+  function drawFalling(g, app, s, A) {
+    const V = Game.config.view, t = app.time;
+    // 縦に流れる壁
+    const th = A.themes[themeIndex(s.floor + 1, Game.config)];
+    for (let y = -(Math.floor(t * 120) % 10) - 10; y < V.h + 10; y += 10) for (let x = 0; x < V.w; x += 32) g.drawImage(th.far, x, y);
+    for (let i = 0; i < 6; i++) {
+      const y = ((i * 37 + t * 140) % (V.h + 20)) - 10;
+      g.drawImage(A.rock, (i * 53) % (V.w - 14), Math.round(V.h - y), 7, 6);
+    }
+    const f = hamSet(s, A).fall[Math.floor(t * 8) % 2];
+    g.drawImage(f.n, Math.round(V.w / 2 - 8 + Math.sin(t * 5) * 3), 8);
+  }
+
+  // ④よじ登る（エクストラの3択の間）: 壁が下へ流れ、がれきが落ち、ハムスターが綱を登る（左右反転の中で描く）
+  function drawClimb(g, app, s, A) {
+    const V = Game.config.view, t = app.time;
+    const th = A.themes[themeOf(s, 1)];
+    for (let y = (Math.floor(t * 90) % 10) - 10; y < V.h + 10; y += 10) for (let x = 0; x < V.w; x += 32) g.drawImage(th.far, x, y);
+    // 綱（結び目も壁と一緒に流れる）
+    const rx = Math.round(V.w / 2) + 7;
+    g.fillStyle = '#743f39'; g.fillRect(rx, 0, 2, V.h);
+    g.fillStyle = '#b86f50';
+    for (let y = (Math.floor(t * 90) % 8) - 8; y < V.h; y += 8) g.fillRect(rx, y, 2, 2);
+    for (let i = 0; i < 6; i++) {
+      const y = ((i * 37 + t * 150) % (V.h + 20)) - 10;
+      g.drawImage(A.rock, (i * 53) % (V.w - 14), Math.round(y), 7, 6);
+    }
+    const f = hamSet(s, A).climb[Math.floor(t * 6) % 2];
+    g.drawImage(f.n, Math.round(V.w / 2 - 8), Math.round(52 + Math.sin(t * 6) * 2));
+  }
+
+  // ④脱出成功: 窓の上から空の光が差し、ハムスターが宝を掲げる（左右反転の中で描く）
+  function drawEscape(g, app, s, A) {
+    const V = Game.config.view, t = app.escT || 0, th = A.themes[0];
+    g.fillStyle = th.sky; g.fillRect(0, 0, V.w, V.h);
+    for (let y = 0; y < 70; y += 10) for (let x = 0; x < V.w; x += 32) g.drawImage(th.far, x, y);
+    for (let x = 0; x < V.w; x += 16) for (let r = 0; r < 4; r++) g.drawImage(th.floor, x, 70 + r * 8);
+    // 空の穴と光の筋（だんだん広がる）
+    const k = Math.min(1, t / 0.8);
+    g.fillStyle = '#2ce8f5'; g.fillRect(Math.round(96 - 30 * k), 0, Math.round(60 * k), 6);
+    g.fillStyle = '#ffffff'; g.fillRect(Math.round(96 - 18 * k), 0, Math.round(36 * k), 2);
+    g.fillStyle = '#fee761';
+    for (let y = 0; y < 102; y++) {
+      const half = Math.round((14 + y * 0.45) * k);
+      g.globalAlpha = 0.28 + 0.1 * Math.sin(t * 4 + y * 0.2);
+      g.fillRect(96 - half, y, half * 2, 1);
+    }
+    g.globalAlpha = 1;
+    g.fillStyle = '#feae34';
+    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + t; g.fillRect(Math.round(96 + Math.cos(a) * 30), Math.round(40 + Math.sin(a) * 20), 2, 2); }
+    const up = Math.min(1, t / 0.6);
+    g.drawImage(A.crown, 90, Math.round(56 - up * 20));
+    g.drawImage(hamSet(s, A).hold.n, 88, 68);
+  }
+
+  // 宝の間（クリア）。④そのあと: 崩れ始める（最後に振り返る）か、ハムスターと宝が暗くなって暗転する
+  let darkCan = null;
+  function drawTreasure(g, app, s, A) {
+    const U = Game.config.ui, V = Game.config.view, t = app.clearT || 0;
+    const denied = app.clearPath === 'denied', dk = denied ? Math.min(1, (t - U.clearSec) / U.darkSec) : 0;
+    g.fillStyle = '#3e2731'; g.fillRect(0, 0, V.w, V.h);
+    const th = A.themes[3];
+    for (let x = 0; x < V.w; x += 16) for (let r = 0; r < 4; r++) g.drawImage(th.floor, x, 70 + r * 8);
+    // 光の筋（暗くなるときは消えていく）
+    g.fillStyle = '#feae34';
+    g.globalAlpha = 1 - dk;
+    for (let i = 0; i < 8; i++) { const a = i * Math.PI / 4 + t; g.fillRect(Math.round(96 + Math.cos(a) * 30), Math.round(40 + Math.sin(a) * 20), 2, 2); }
+    g.globalAlpha = 1;
+    const up = Math.min(1, t / 0.8);
+    const ham = hamSet(s, A).hold.n;
+    if (denied) {
+      // ハムスターと宝を、別の Canvas に描いてから暗くする
+      const ox = 86, oy = 30, cw = 26, ch = 56;
+      if (!darkCan) darkCan = B.mk(cw, ch);
+      const c = darkCan.getContext('2d');
+      c.globalCompositeOperation = 'source-over'; c.clearRect(0, 0, cw, ch);
+      c.drawImage(A.crown, 90 - ox, Math.round(56 - up * 20) - oy);
+      c.drawImage(ham, 88 - ox, 68 - oy);
+      c.globalCompositeOperation = 'source-atop'; c.fillStyle = INK; c.globalAlpha = 0.85 * dk; c.fillRect(0, 0, cw, ch); c.globalAlpha = 1;
+      g.drawImage(darkCan, ox, oy);
+      // 窓の暗転（ハムスターが暗くなりきる少し前から）
+      g.fillStyle = INK; g.globalAlpha = Math.max(0, Math.min(1, (t - U.clearSec - U.darkSec * 0.6) / (U.darkSec * 0.4 + 0.3)));
+      g.fillRect(0, 0, V.w, V.h); g.globalAlpha = 1;
+      return;
+    }
+    g.drawImage(A.crown, 90, Math.round(56 - up * 20));
+    // 崩れ始めの最後に振り返る（左を向く）
+    const turn = app.clearPath === 'extra' && t >= U.clearSec + U.extraIntroSec - 0.4;
+    if (turn) { g.save(); g.translate(V.w, 0); g.scale(-1, 1); g.drawImage(hamSet(s, A).lean.n, V.w - 88 - B.HW, 68); g.restore(); }
+    else g.drawImage(ham, 88, 68);
+  }
+
+  function drawHamsterTitle(g, app, A) {
+    const V = Game.config.view, t = app.time;
+    const f = A.ham.run[Math.floor(t * 10) % 6];
+    g.drawImage(A.shadow, 90, 83);
+    g.drawImage(f.n, 88, 68);
+  }
+
+  // ---- 文字・カードなど ----
+  const WHITE = '#ffffff', INK = '#181425', GOLD = '#feae34';
+
+  function centerText(g, str, y, color, outline, scale = 1) {
+    const V = Game.config.view;
+    if (scale === 1) return B.text(g, str, Math.floor((V.w - B.textW(str)) / 2), y, color, outline);
+    const tw = B.textW(str) + 2, c = B.mk(tw, 9), cg = c.getContext('2d');
+    B.text(cg, str, 1, 1, color, outline);
+    g.drawImage(c, Math.floor((V.w - tw * scale) / 2), y, tw * scale, 9 * scale);
+  }
+
+  function drawUi(g, app, s, A, th) {
+    const cfg = Game.config, V = cfg.view;
+    if (app.mode === 'title') {
+      centerText(g, 'HOPPE DIVE', 14, GOLD, INK, 2);
+      if (Math.floor(app.time * 2) % 2 === 0) centerText(g, 'タップで スタート', 92, WHITE, INK);
+      return;
+    }
+    if (!s) return;
+    // 上の帯: 階（④エクストラでは だっしゅつ あと N）、点、残機、経験値
+    const E = s.extra, XT = cfg.extra.text;
+    const label = E ? XT.left + Math.max(0, E.left) : 'B' + s.floor + 'F';
+    B.text(g, label, 3, 3, E ? GOLD : WHITE, INK);
+    const sc = String(s.score);
+    B.text(g, sc, V.w - 3 - B.textW(sc), 3, WHITE, INK);
+    const lx = Math.max(30, B.textW(label) + 8);
+    for (let i = 0; i < s.lives; i++) g.drawImage(A.seed, lx + i * 7, 3);
+    if (app.achFlash > 0 && Math.floor(app.achFlash * 6) % 2 === 0) g.drawImage(A.medalS, lx + 2 + s.lives * 7, 2); // 実績を取った（名前はあとで）
+    const prev = E ? s.xpNeed - cfg.extra.xpPer : s.level === 0 ? 0 : s.xpNeed - cfg.xpBase * Math.pow(cfg.xpGrowth, s.level);
+    const k = Math.max(0, Math.min(1, (s.xp - prev) / (s.xpNeed - prev)));
+    g.fillStyle = INK; g.fillRect(3, 12, V.w - 6, 2);
+    g.fillStyle = GOLD; g.fillRect(3, 12, Math.round((V.w - 6) * k), 2);
+
+    if (s.phase === 'choose') drawCards(g, app, s);
+    // ④宝の間のあと: 崩れ始め の文字 / 入れないときのヒント
+    if (s.phase === 'clear' && app.mode !== 'result') {
+      const U = cfg.ui, t = app.clearT;
+      if (app.clearPath === 'extra' && t >= U.clearSec + 0.3) centerText(g, XT.go, 46, '#fee761', INK, 2);
+      if (app.clearPath === 'denied' && t >= U.clearSec + U.darkSec) {
+        centerText(g, XT.hint, 40, WHITE, INK);
+        drawHintPanels(g, Math.min(1, (t - U.clearSec - U.darkSec - 0.4) / 0.8));
+      }
+    }
+    if (app.mode === 'result') drawResult(g, app, s);
+    if (app.mode === 'countdown') {
+      g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h);
+      centerText(g, String(Math.ceil(app.countdown)), 44, WHITE, INK, 3);
+    }
+    if (app.paused) { g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h); centerText(g, 'ポーズ', 50, WHITE, INK); }
+  }
+
+  // ④入れないときのヒントに添える 9マス（床のマスと同じ傾きの小さな平行四辺形）。真ん中だけ光る = 今は1マスしか動けない
+  function drawHintPanels(g, k) {
+    if (k <= 0) return;
+    const w = 13, h = 6, x0 = 96 - Math.round((3 * w) / 2) - 2, y0 = 58;
+    g.globalAlpha = k;
+    for (let lane = 0; lane < 3; lane++) for (let col = 0; col < 3; col++) {
+      const here = lane === 1 && col === 1, y = y0 + lane * (h + 1), dx = (2 - lane) * 2;
+      for (let r = 0; r < h; r++) {
+        const sx = x0 + col * (w + 1) + dx + Math.floor((h - 1 - r) / 2), yy = y + r;
+        if (here) { g.fillStyle = '#ffffff'; g.fillRect(sx, yy, w, 1); }
+        else { g.fillStyle = '#5a6988'; if (r === 0 || r === h - 1) g.fillRect(sx + 1, yy, w - 2, 1); else { g.fillRect(sx, yy, 1, 1); g.fillRect(sx + w - 1, yy, 1, 1); } }
+      }
+    }
+    g.globalAlpha = 1;
+  }
+
+  function drawCards(g, app, s) {
+    const cfg = Game.config;
+    const cs = R.cards(s.offer.length);
+    const ready = app.chooseT >= cfg.ui.chooseLock;
+    centerText(g, 'ひとつ えらんでね', 19, WHITE, INK);
+    cs.forEach((c, i) => {
+      const id = s.offer[i], rank = s.ranks[id] + 1;
+      const info = Game.levelup.card(cfg, id, rank);
+      g.fillStyle = INK; g.fillRect(c.x - 1, c.y - 1, c.w + 2, c.h + 2);
+      g.fillStyle = ready ? '#3a4466' : '#262b44'; g.fillRect(c.x, c.y, c.w, c.h);
+      g.fillStyle = '#5a6988'; g.fillRect(c.x, c.y, c.w, 1);
+      B.text(g, info.name, c.x + 3, c.y + 4, GOLD, INK);
+      // 段階の印
+      const max = cfg.upgrades.find((u) => u.id === id).max;
+      for (let r = 0; r < max; r++) { g.fillStyle = r < rank ? GOLD : '#262b44'; g.fillRect(c.x + 3 + r * 5, c.y + 14, 4, 3); }
+      B.wrap(info.desc, 9).slice(0, 5).forEach((line, j) => B.text(g, line, c.x + 3, c.y + 22 + j * 9, WHITE));
+      B.text(g, String(i + 1), c.x + c.w - 8, c.y + c.h - 9, '#8b9bb4');
+    });
+  }
+
+  function drawResult(g, app, s) {
+    const V = Game.config.view, res = app.result;
+    g.fillStyle = 'rgba(24,20,37,0.85)'; g.fillRect(0, 0, V.w, V.h);
+    const clear = s.cleared, E = s.extra, XT = Game.config.extra.text;
+    centerText(g, clear ? 'クリア!' : 'ゲームオーバー', 14, clear ? GOLD : WHITE, INK, 2);
+    let y = 36;
+    // ④エクストラ: だっしゅつ せいこう / だっしゅつ しっぱい (B○F)
+    if (E) { centerText(g, E.escaped ? XT.ok : XT.ng + ' (B' + s.floor + 'F)', 33, E.escaped ? '#63c74d' : '#f6757a', INK); y = 43; }
+    if (res) {
+      centerText(g, 'てん ' + s.score + '  ' + fmtMul(res.mult), y, WHITE, INK); y += 10;
+      centerText(g, '= さいごの てん ' + res.final, y, GOLD, INK); y += 10;
+    } else { centerText(g, 'てん ' + s.score, y, WHITE, INK); y += 10; }
+    if (clear) { centerText(g, E && E.escaped ? '(はやさ +' + s.timeBonus + ' だっしゅつ +' + E.bonus + ' こみ)' : '(はやさボーナス +' + s.timeBonus + ' こみ)', y, '#8b9bb4', INK); y += 10; }
+    if (res) { centerText(g, 'もちかえった たから +' + res.gain.gain, y + 2, '#2ce8f5', INK); y += 12; }
+    centerText(g, (E ? '' : 'B' + s.floor + 'F  ') + fmtTime(s.t), y, WHITE, INK); y += 10;
+    if (res && res.gain.unlocked.length) centerText(g, unlockText(res.gain.unlocked), y, GOLD, INK);
+    B.text(g, 'SEED ' + s.seed, 3, V.h - 10, '#5a6988');
+    if (res && res.ach && res.ach.length) {
+      const t = 'じっせき +' + res.ach.length;
+      g.drawImage(Game.bake.all().medalS, V.w - 13 - B.textW(t), V.h - 11);
+      B.text(g, t, V.w - 3 - B.textW(t), V.h - 10, GOLD, INK);
+    }
+    if (app.resultT > 0.8 && Math.floor(app.time * 2) % 2 === 0) centerText(g, 'タップで キャンプへ', 97, WHITE, INK);
+  }
+
+  const fmtMul = (m) => 'x' + (Math.floor(m * 100 + 1e-6) / 100).toFixed(2);
+  const unlockText = (ids) => ids.map((id) => Game.config.meta.unlocks.find((u) => u.id === id).name).join('と ') + 'が つかえるように なった!';
+
+  // ---- キャンプ ----
+  // 位置（窓の中のドット）: 上の帯、◀ しゅっぱつ ▶、カード（3択と同じ位置）、カードの下半分の − ＋
+  const CAMP = { prev: { x: 4, y: 13, w: 30, h: 15 }, go: { x: 48, y: 13, w: 96, h: 15 }, next: { x: 158, y: 13, w: 30, h: 15 }, perPage: 3 };
+  R.campLayout = function (n) {
+    return {
+      prev: CAMP.prev, go: CAMP.go, next: CAMP.next,
+      cards: R.cards(n).map((c) => Object.assign({}, c, { minus: { x: c.x, y: c.y + 43, w: 28, h: c.h - 43 }, plus: { x: c.x + 30, y: c.y + 43, w: c.w - 30, h: c.h - 43 } })),
+    };
+  };
+  // ページ: 恒久強化・アンロックのカード（3枚ずつ）のあとに、実績のページ（ACH.perPage 個ずつ）
+  const ACH = { cols: 7, rows: 2, w: 24, h: 18, gap: 2, y: 31 };
+  ACH.perPage = ACH.cols * ACH.rows;
+  R.campPerkPages = () => Math.ceil(Game.meta.order(Game.config).length / CAMP.perPage);
+  R.achPages = () => Math.ceil(Game.config.achieve.list.length / ACH.perPage);
+  R.campPages = () => R.campPerkPages() + R.achPages();
+  R.campIds = (page) => (page < R.campPerkPages() ? Game.meta.order(Game.config).slice(page * CAMP.perPage, page * CAMP.perPage + CAMP.perPage) : []);
+  R.achIds = (page) => { const k = page - R.campPerkPages(); return k < 0 ? [] : Game.config.achieve.list.slice(k * ACH.perPage, (k + 1) * ACH.perPage).map((a) => a.id); };
+  R.achPageOf = (id) => R.campPerkPages() + Math.floor(Game.config.achieve.list.findIndex((a) => a.id === id) / ACH.perPage);
+  R.achLayout = function (n) {
+    const x0 = Math.floor((Game.config.view.w - (ACH.cols * ACH.w + (ACH.cols - 1) * ACH.gap)) / 2);
+    return {
+      cells: Array.from({ length: n }, (_, i) => ({ x: x0 + (i % ACH.cols) * (ACH.w + ACH.gap), y: ACH.y + Math.floor(i / ACH.cols) * (ACH.h + ACH.gap), w: ACH.w, h: ACH.h })),
+      panel: { x: x0, y: ACH.y + ACH.rows * (ACH.h + ACH.gap) + 1, w: ACH.cols * ACH.w + (ACH.cols - 1) * ACH.gap, h: 26 },
+    };
+  };
+
+  // キャンプの小物は窓の外に置く（窓の中はカードで埋まるので）: 縦持ちは窓の下、横持ちは窓の左右
+  function drawCampOutside(g, app, A) {
+    const fire = A.fire[Math.floor(app.time * 6) % 2];
+    const ham = A.ham.hold.n;
+    if (R.portrait) {
+      const cx = Math.floor(R.Lw / 2), y = R.fy + 108 + Math.min(60, Math.floor((R.Lh - R.fy - 108) * 0.3));
+      g.drawImage(A.tent, cx - 52, y - A.tent.height);
+      g.drawImage(fire, cx - 4, y - fire.height);
+      g.drawImage(ham, cx + 8, y - 16);
+      g.drawImage(A.pile, cx + 30, y - A.pile.height);
+    } else if (R.fx >= 26) {
+      const y = R.fy + 92;
+      g.drawImage(A.tent, Math.floor(R.fx / 2) - 12, y - A.tent.height);
+      g.drawImage(A.pile, R.fx + 192 + Math.floor(R.fx / 2) - 10, y - A.pile.height);
+    }
+  }
+
+  function button(g, r, label, on, color = WHITE) {
+    g.fillStyle = INK; g.fillRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2);
+    g.fillStyle = on ? '#5a6988' : '#262b44'; g.fillRect(r.x, r.y, r.w, r.h);
+    if (on) { g.fillStyle = '#8b9bb4'; g.fillRect(r.x, r.y, r.w, 1); }
+    if (typeof label === 'string') B.text(g, label, r.x + Math.floor((r.w - B.textW(label)) / 2), r.y + Math.floor((r.h - 7) / 2), on ? color : '#5a6988');
+    else g.drawImage(label, r.x + Math.floor((r.w - label.width) / 2), r.y + Math.floor((r.h - label.height) / 2));
+  }
+  // 大きな − ＋（文字を2倍にする）
+  function bigSign(g, r, ch, on) {
+    button(g, r, '', on);
+    const c = B.mk(7, 9), cg = c.getContext('2d');
+    B.text(cg, ch, 1, 1, on ? WHITE : '#5a6988', INK);
+    g.drawImage(c, r.x + Math.floor((r.w - 14) / 2), r.y + Math.floor((r.h - 18) / 2), 14, 18);
+  }
+
+  function drawCamp(g, app, A) {
+    const cfg = Game.config, V = cfg.view, M = Game.meta, save = app.save, cp = app.camp;
+    // 上の帯: たから（のこり）と倍率。数え上げの間は表示だけ少ない値から
+    const shown = cp.count ? Math.round(cp.count.from + (cp.count.to - cp.count.from) * Math.min(1, cp.count.t / cp.count.dur)) : save.treasure;
+    const view = Object.assign({}, save, { treasure: shown });
+    g.drawImage(A.gem, 3, 3);
+    B.text(g, String(shown), 12, 3, GOLD, INK);
+    B.text(g, '(のこり ' + M.unspent(view, cfg) + ')', 14 + B.textW(String(shown)) + 3, 3, WHITE, INK);
+    const mul = fmtMul(M.multiplier(view, cfg));
+    B.text(g, 'ばいりつ ' + mul, V.w - 3 - B.textW('ばいりつ ' + mul), 3, GOLD, INK);
+    // ◀ しゅっぱつ ▶
+    const ids = R.campIds(cp.page), L = R.campLayout(ids.length);
+    button(g, L.prev, A.arrowL, true);
+    button(g, L.next, A.arrowR, true);
+    button(g, L.go, 'しゅっぱつ', true, GOLD);
+    // カード、または実績のページ
+    ids.forEach((id, i) => drawCampCard(g, app, A, L.cards[i], M.card(id, view, cfg)));
+    const achIds = R.achIds(cp.page);
+    if (achIds.length) drawAchPage(g, app, A, achIds);
+    // 下: ページの印、または新しく使えるようになったアンロック
+    if (cp.msg && cp.msg.t > 0) centerText(g, cp.msg.text, 99, GOLD, INK);
+    else {
+      const n = R.campPages(), x0 = Math.floor(V.w / 2 - (n * 6 - 2) / 2);
+      for (let p = 0; p < n; p++) { g.fillStyle = p === cp.page ? GOLD : '#3a4466'; g.fillRect(x0 + p * 6, 101, 4, 3); }
+    }
+    if (app.paused) { g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h); centerText(g, 'ポーズ', 50, WHITE, INK); }
+  }
+
+  // 実績のページ: メダルを並べ、選んだものの名前と条件（シークレットのまだのものはヒント）を下の枠に出す
+  function drawAchPage(g, app, A, ids) {
+    const cfg = Game.config, rec = app.rec, L = R.achLayout(ids.length), t = app.time;
+    ids.forEach((id, i) => {
+      const c = L.cells[i], a = Game.achieve.info(id, cfg), got = !!rec.got[id], sel = app.camp.sel === id;
+      g.fillStyle = sel ? GOLD : INK; g.fillRect(c.x - 1, c.y - 1, c.w + 2, c.h + 2);
+      g.fillStyle = got ? '#3a4466' : '#262b44'; g.fillRect(c.x, c.y, c.w, c.h);
+      const img = A.medal[got ? a.kind : 'locked'];
+      g.drawImage(img, c.x + Math.floor((c.w - img.width) / 2), c.y + 3);
+      if (!got && a.kind === 'secret') B.text(g, '?', c.x + 10, c.y + 9, '#8b9bb4');
+      if (got && rec.fresh.includes(id) && Math.floor(t * 3) % 2 === 0) { g.fillStyle = '#e43b44'; g.fillRect(c.x + c.w - 4, c.y + 1, 3, 3); } // 新しい印
+    });
+    const P = L.panel;
+    g.fillStyle = INK; g.fillRect(P.x - 1, P.y - 1, P.w + 2, P.h + 2);
+    g.fillStyle = '#262b44'; g.fillRect(P.x, P.y, P.w, P.h);
+    const id = app.camp.sel;
+    if (!id) {
+      B.text(g, 'じっせき ' + Game.achieve.count(rec) + ' / ' + cfg.achieve.list.length, P.x + 3, P.y + 3, GOLD);
+      B.text(g, 'メダルを タップで せつめい', P.x + 3, P.y + 14, '#8b9bb4');
+      return;
+    }
+    const a = Game.achieve.info(id, cfg), got = !!rec.got[id], hidden = !got && a.kind === 'secret';
+    B.text(g, hidden ? '???' : a.name, P.x + 3, P.y + 3, got ? GOLD : WHITE);
+    if (got) B.text(g, 'とった!', P.x + P.w - 3 - B.textW('とった!'), P.y + 3, '#63c74d');
+    B.wrap(hidden ? a.hint : a.desc, 29).slice(0, 2).forEach((line, j) => B.text(g, line, P.x + 3, P.y + 12 + j * 7, hidden ? '#8b9bb4' : WHITE));
+  }
+
+  function drawCampCard(g, app, A, c, info) {
+    g.fillStyle = INK; g.fillRect(c.x - 1, c.y - 1, c.w + 2, c.h + 2);
+    g.fillStyle = '#3a4466'; g.fillRect(c.x, c.y, c.w, c.h);
+    g.fillStyle = '#5a6988'; g.fillRect(c.x, c.y, c.w, 1);
+    B.text(g, info.name, c.x + 3, c.y + 2, GOLD, INK);
+    const lines = (str, color) => B.wrap(str, 9).slice(0, 3).forEach((line, j) => B.text(g, line, c.x + 3, c.y + 19 + j * 8, color));
+    if (info.kind === 'perk') {
+      for (let r = 0; r < info.max; r++) { g.fillStyle = r < info.rank ? GOLD : '#262b44'; g.fillRect(c.x + 3 + r * 6, c.y + 12, 4, 4); }
+      if (info.full) B.text(g, 'さいだい', c.x + c.w - 3 - B.textW('さいだい'), c.y + 11, GOLD);
+      else {
+        const p = String(info.price);
+        B.text(g, p, c.x + c.w - 3 - B.textW(p), c.y + 11, info.canBuy ? WHITE : '#e43b44');
+        g.drawImage(A.gem, c.x + c.w - 13 - B.textW(p), c.y + 11);
+      }
+      lines(info.desc, WHITE);
+      bigSign(g, c.minus, '-', info.canRefund);
+      bigSign(g, c.plus, '+', info.canBuy);
+    } else {
+      B.text(g, 'ばいりつ+' + Game.config.meta.mul.unlock.toFixed(2), c.x + 3, c.y + 11, info.on ? GOLD : '#8b9bb4');
+      if (!info.unlocked) {
+        lines('ランで さいだいに すると つかえる', '#8b9bb4');
+        button(g, { x: c.x, y: c.y + 43, w: c.w, h: c.h - 43 }, 'まだ', false);
+      } else {
+        lines(info.desc, WHITE);
+        button(g, c.minus, 'きる', !info.on ? false : true);
+        button(g, c.plus, 'いれる', !info.on, GOLD);
+        // 今の状態に印
+        const cur = info.on ? c.plus : c.minus;
+        g.fillStyle = info.on ? GOLD : WHITE; g.fillRect(cur.x + 2, cur.y + cur.h - 3, cur.w - 4, 1);
+      }
+    }
+  }
+
+  const fmtTime = (t) => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
+
+  R.laneY = laneY;
+  R.laneDx = laneDx;
+  Game.render = R;
+})();
+</script>
+<script>
+// 保存データの読み書き。②の恒久強化（hoppe-dive.meta、検め方は meta.parse）と③の実績（hoppe-dive.records、検め方は achieve.parse）。
+// 読めない・壊れている・版が違うときは最初の状態から始める。書けない（容量・プライベートモード）ときは黙って続ける
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  function read(key) {
+    try { return localStorage.getItem(key); } catch (e) { return null; }
+  }
+  function write(key, data) {
+    try { localStorage.setItem(key, JSON.stringify(data)); return true; } catch (e) { return false; }
+  }
+
+  const load = (cfg = Game.config) => Game.meta.parse(read(cfg.meta.key), cfg);
+  const store = (save, cfg = Game.config) => write(cfg.meta.key, save);
+  const loadRecords = (cfg = Game.config) => Game.achieve.parse(read(cfg.achieve.key), cfg);
+  const storeRecords = (rec, cfg = Game.config) => write(cfg.achieve.key, rec);
+
+  Game.save = { load, store, loadRecords, storeRecords };
+})();
+</script>
+<script>
+// ループと場面の切り替え（タイトル → キャンプ → ラン ⇄ 3択 → 結果 → キャンプ）。決まった刻みでルールを進め、出来事を fx / audio に配る
+// URL: ?seed=123 で乱数を固定、?bot=near|relaxed で自動プレイ（キャンプを飛ばす）、?lives=3&pretaken=move,lane で恒久強化を上書き（テスト用）、
+//      ?rare=pup|mimic|fly&rareFloor=2 で③のランダムイベントを必ず起こす
+// window.HOPPE_TEST = { rare, rareFloor, preset: 'max' | 'unlocks', noStore, nearClear } で、確かめ用の HTML を作る（tests/variants.mjs）。
+//   preset: 保存データの代わりに使う設定（max: 恒久強化を全部最大＋アンロック2つ、unlocks: アンロック2つだけ）。noStore: 保存しない。
+//   nearClear: 宝の間の直前から始める（④脱出エクストラの確かめ用）
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const cfg = Game.config;
+  const q = new URLSearchParams(location.search);
+  const T = window.HOPPE_TEST || {};
+  const A = Game.achieve;
+
+  const app = (Game.app = {
+    mode: 'title',          // title | camp | run | countdown | result
+    save: null,             // ②の保存データ（meta.js）
+    rec: null,              // ③の実績の記録（achieve.js）
+    tr: null, maxDiff: false, runAch: [], achFlash: 0, // 1回のランの数え、始めに最大難易度だったか、このランで取った実績、上の帯の印の残り秒
+    batGone: {},            // てんじょうの コウモリ: 飛び去った番号 → 時刻（描画だけ。ルールに入れない）
+    camp: { page: 0, count: null, msg: null, sel: null }, // sel: 実績のページで選んだ実績 // count: 宝の数え上げ { from, to, t, dur, n }、msg: 下に出す知らせ { text, t }
+    result: null,           // ランの終わり: { mult, final, gain: meta.applyRun の返り値 }
+    rules: null, bot: null,
+    time: 0, acc: 0, paused: false, manual: false,
+    countdown: 0, chooseT: 0, hitT: 0, landT: 0, resultT: 0, clearT: 0, titleDist: 0,
+    clearPath: null, escT: 0, // ④宝の間のあと: 'extra'（崩れ始める → エクストラ）| 'denied'（暗転とヒント → 結果）、脱出成功の場面の秒
+    cmds: [], lastEvents: [],
+    fx: null, audio: null,
+  });
+
+  function runOptions() {
+    const o = Object.assign(Game.meta.runOptions(app.save, cfg), { seed: q.get('seed') != null ? +q.get('seed') : Math.floor(Math.random() * 1e9) });
+    if (q.get('lives')) o.lives = +q.get('lives');
+    if (q.get('pretaken')) o.pretaken = q.get('pretaken').split(',');
+    const rare = q.get('rare') || T.rare;
+    if (rare) { o.rare = rare; o.rareFloor = +(q.get('rareFloor') || T.rareFloor || 2); }
+    return o;
+  }
+
+  function makeBot(kind, seed) {
+    const k = cfg.bot[kind] != null ? kind : 'near';
+    return Game.bot.create(cfg, { reaction: cfg.bot[k], rockJudge: cfg.bot.rockJudge[k], seed });
+  }
+
+  function start() {
+    app.rules = Game.rules.create(cfg, runOptions());
+    app.bot = q.get('bot') ? makeBot(q.get('bot'), app.rules.seed) : app.bot && app.botForce ? makeBot('near', app.rules.seed) : null;
+    app.mode = 'run';
+    app.result = null;
+    app.tr = A.tracker(); app.maxDiff = Game.meta.isMaxDifficulty(app.save, cfg); app.runAch = []; app.achFlash = 0; app.batGone = {};
+    app.acc = 0; app.cmds = []; app.chooseT = 0; app.hitT = 0; app.landT = 0; app.resultT = 0; app.clearT = 0;
+    app.clearPath = null; app.escT = 0;
+    app.fx.reset();
+    if (T.nearClear) nearClear();
+  }
+
+  // 確かめ用: 宝の間の直前にする（3択を offer[0] で 15 回取り、あと少しで 16 回目のレベルアップ）
+  function nearClear() {
+    const s = app.rules, LV = Game.levelup;
+    for (let i = 1; i < cfg.clearLevel; i++) {
+      const o = LV.offer(s, cfg);
+      if (o.length) Game.rules.pick(Object.assign(s, { phase: 'choose', offer: o }), 0, cfg);
+      s.level = i;
+      s.xpNeed += cfg.xpBase * Math.pow(cfg.xpGrowth, i);
+    }
+    s.phase = 'run'; s.floor = cfg.clearLevel; s.intro = [];
+    s.xp = s.xpNeed - 60;
+    s.nextSpawnT = s.t + 1;
+  }
+
+  // ランの終わり: 倍率はランで使った設定で計算してから、宝を足して保存する
+  function finishRun() {
+    const s = app.rules;
+    const before = app.save.treasure;
+    const mult = Game.meta.multiplier(app.save, cfg), final = Game.meta.finalScore(s.score, app.save, cfg);
+    const gain = Game.meta.applyRun(app.save, s, cfg);
+    persist();
+    gainAch(A.update(app.rec, { s, tr: app.tr, maxDiff: app.maxDiff, final, gain: gain.gain }, cfg), true);
+    app.result = { mult, final, gain, before, ach: app.runAch.slice() };
+    app.mode = 'result'; app.resultT = 0;
+    if (gain.unlocked.length) app.audio.on({ type: 'unlock_new' });
+  }
+
+  // 保存（確かめ用の HTML では保存しない）
+  function persist() { if (!T.noStore) Game.save.store(app.save, cfg); }
+  function persistRec() { if (!T.noStore) Game.save.storeRecords(app.rec, cfg); }
+
+  // ---- 実績 ----
+  // 新しく取った実績（記録には付けてある）。ランの最中は上の帯の印と小さな音だけ
+  function gainAch(ids, quiet) {
+    if (!ids.length) return;
+    app.runAch.push(...ids);
+    persistRec();
+    if (quiet) return;
+    app.achFlash = cfg.achieve.flashSec;
+    app.audio.on({ type: 'achieve' });
+  }
+
+  // キャンプで満たした実績（強化を買った・アンロックを入れた・全部最大）。下の知らせと音
+  function campAch() {
+    const ids = A.update(app.rec, { save: app.save }, cfg);
+    if (!ids.length) return;
+    persistRec();
+    app.audio.on({ type: 'achieve' });
+    app.camp.msg = { text: 'じっせき: ' + A.info(ids[0], cfg).name + (ids.length > 1 ? ' ほか ' + (ids.length - 1) : ''), t: 4 };
+  }
+
+  // てんじょうの コウモリをタップした
+  function tapBat(e) {
+    const b = Game.render.batAt(app, e.x, e.y);
+    if (!b) return false;
+    app.batGone[b.i] = app.time;
+    app.fx.on({ type: 'bat', x: b.x, y: b.y }, app);
+    app.audio.on({ type: 'bat' });
+    if (A.grant(app.rec, 'bat')) gainAch(['bat']);
+    return true;
+  }
+
+  // ---- キャンプ ----
+  function enterCamp() {
+    const res = app.result;
+    app.mode = 'camp';
+    app.fx.reset();
+    app.camp.count = res && res.gain.gain > 0 ? { from: res.before, to: app.save.treasure, t: 0, dur: Math.min(2, 0.6 + res.gain.gain / 400), n: 0 } : null;
+    app.camp.msg = null; app.camp.sel = null;
+    if (res && res.gain.unlocked.length) {
+      app.camp.msg = { text: res.gain.unlocked.map((id) => cfg.meta.unlocks.find((u) => u.id === id).name).join('と ') + 'が つかえる!', t: 4 };
+      app.camp.page = Game.render.campPerkPages() - 1; // アンロックのページを開く
+    } else if (res && res.ach.length) {
+      const n = res.ach.length;
+      app.camp.msg = { text: 'じっせき: ' + A.info(res.ach[0], cfg).name + (n > 1 ? ' ほか ' + (n - 1) : ''), t: 4 };
+      app.camp.page = Game.render.achPageOf(res.ach[0]); // 実績のページを開く
+    }
+    app.result = null;
+    campAch(); // 前からの保存データで、もう満たしているもの
+  }
+
+  // 実績のページを離れたら、そのページの新しい印を消す
+  function leavePage() {
+    const ids = Game.render.achIds(app.camp.page);
+    if (ids.length && A.seen(app.rec, ids)) persistRec();
+    app.camp.sel = null;
+  }
+
+  function campPage(d) {
+    const n = Game.render.campPages();
+    leavePage();
+    app.camp.page = (app.camp.page + d + n) % n;
+    app.audio.on({ type: 'camp_page' });
+  }
+
+  function campGo() {
+    app.camp.count = null;
+    leavePage();
+    persist();
+    app.audio.on({ type: 'camp_go' });
+    start();
+  }
+
+  // カードの − ＋（アンロックは きる／いれる）
+  function campCard(id, plus) {
+    const M = Game.meta, save = app.save;
+    let ok;
+    if (cfg.meta.unlocks.some((u) => u.id === id)) ok = save.unlocked[id] && save.use[id] !== plus && M.toggleUnlock(save, id);
+    else ok = plus ? M.buy(save, id, cfg) : M.refund(save, id, cfg);
+    app.audio.on({ type: ok ? (plus ? 'camp_plus' : 'camp_minus') : 'camp_deny' });
+    if (ok) { persist(); campAch(); }
+    return ok;
+  }
+
+  function campInput(e) {
+    if (e.type === 'cmd') {
+      // スワイプは中身を指でずらす向き（左へ払う = 次）。キーは矢印の向き
+      if (e.cmd === 'fwd' || e.cmd === 'back') campPage((e.cmd === 'fwd') === !!e.swipe ? -1 : 1);
+      return;
+    }
+    if (e.type === 'key') return campGo();
+    if (e.type !== 'tap') return;
+    const p = Game.render.toField(e.x, e.y);
+    const inR = (r) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
+    const ids = Game.render.campIds(app.camp.page), L = Game.render.campLayout(ids.length);
+    if (inR(L.go)) return campGo();
+    if (inR(L.prev)) return campPage(-1);
+    if (inR(L.next)) return campPage(1);
+    const achIds = Game.render.achIds(app.camp.page);
+    if (achIds.length) {
+      Game.render.achLayout(achIds.length).cells.forEach((c, i) => { if (inR(c)) { app.camp.sel = achIds[i]; app.audio.on({ type: 'camp_plus' }); } });
+      return;
+    }
+    L.cards.forEach((c, i) => { if (inR(c.minus)) campCard(ids[i], false); else if (inR(c.plus)) campCard(ids[i], true); });
+  }
+
+  function updateCamp(dt) {
+    const c = app.camp.count;
+    if (app.camp.msg && app.camp.msg.t > 0) app.camp.msg.t -= dt;
+    if (!c) return;
+    c.t += dt;
+    const k = Math.min(1, c.t / c.dur), every = 0.06;
+    while (c.n * every < Math.min(c.t, c.dur)) app.audio.on({ type: 'camp_count', i: c.n++ });
+    if (k >= 1) { app.camp.count = null; app.audio.on({ type: 'camp_count_end' }); app.fx.on({ type: 'camp_count_end' }, app); }
+  }
+
+  function dispatch(events) {
+    for (const e of events) {
+      app.lastEvents.push(e);
+      if (app.lastEvents.length > 300) app.lastEvents.shift();
+      app.fx.on(e, app);
+      app.audio.on(e, app);
+      if (e.type === 'levelup_start') app.chooseT = 0;
+      if (e.type === 'levelup_land' || e.type === 'land') app.landT = cfg.ui.landSec;
+      if (e.type === 'hit') app.hitT = e.fatal ? cfg.ui.hitFreeze : 0.25;
+    }
+    // 実績（ランの最中に満たしたもの）
+    if (app.tr && app.rules) {
+      A.observe(app.tr, events);
+      gainAch(A.update(app.rec, { s: app.rules, tr: app.tr, maxDiff: app.maxDiff }, cfg));
+    }
+  }
+
+  function pick(i) {
+    const s = app.rules;
+    if (!s || s.phase !== 'choose' || app.chooseT < cfg.ui.chooseLock || i < 0 || i >= s.offer.length) return;
+    dispatch(Game.rules.pick(s, i, cfg));
+  }
+
+  // ---- 入力 ----
+  function onInput(e) {
+    if (e.type === 'down') app.audio.unlock();
+    if (app.paused || app.mode === 'countdown') return;
+    const s = app.rules;
+    if (app.mode === 'title') { if (e.type === 'tap' || e.type === 'key') enterCamp(); return; }
+    if (app.mode === 'camp') return campInput(e);
+    if (app.mode === 'result') { if ((e.type === 'tap' || e.type === 'key') && app.resultT > 0.8) enterCamp(); return; }
+    if (!s) return;
+    // ④入れないとき: ヒントが出てから少しあとのタップで結果へ
+    if (s.phase === 'clear') {
+      if (app.clearPath === 'denied' && (e.type === 'tap' || e.type === 'key') && app.clearT >= cfg.ui.clearSec + cfg.ui.darkSec + 0.5) finishRun();
+      return;
+    }
+    if (s.phase === 'choose') {
+      if (e.type === 'pick') pick(e.i);
+      if (e.type === 'tap') {
+        const p = Game.render.toField(e.x, e.y);
+        Game.render.cards(s.offer.length).forEach((c, i) => { if (p.x >= c.x && p.x < c.x + c.w && p.y >= c.y && p.y < c.y + c.h) pick(i); });
+      }
+      return;
+    }
+    if (s.phase !== 'run') return;
+    if (e.type === 'tap' && tapBat(e) && !e.control) return; // 上の3分の1ならジャンプにしない
+    if (e.type === 'cmd' && e.control !== false) app.cmds.push(Game.input.orient(e.cmd, !!s.extra)); // ④エクストラでは画面の向きどおり
+    if ((e.type === 'tap' && e.control) || e.type === 'key') app.cmds.push('jump');
+  }
+
+  // ---- 1フレーム ----
+  // 今の場面に合う BGM（タイトル / 階の色合い / 3択と終わりは止める）
+  function musicKey() {
+    if (app.mode === 'title' || app.mode === 'camp') return 'title';
+    const s = app.rules;
+    if (!s || app.mode === 'result') return null;
+    if (s.extra && (s.phase === 'run' || s.phase === 'choose')) return 'extra'; // ④エクストラの間はずっと同じ曲
+    if (s.phase !== 'run') return null;
+    return Math.min(3, Math.floor((s.floor - 1) / 4));
+  }
+
+  function update(dt) {
+    app.time += dt;
+    app.fx.update(dt);
+    app.audio.music(musicKey());
+    app.audio.tick();
+    if (app.paused) return;
+    if (app.mode === 'title') { app.titleDist += 40 * dt; return; }
+    if (app.mode === 'camp') return updateCamp(dt);
+    if (app.mode === 'countdown') { app.countdown -= dt; if (app.countdown <= 0) app.mode = 'run'; return; }
+    if (app.mode === 'result') { app.resultT += dt; return; }
+    const s = app.rules;
+    if (app.landT > 0) app.landT -= dt;
+    if (app.achFlash > 0) app.achFlash -= dt;
+    // ④崩れる遺跡: 小石が床で砕ける音（演出は fx が時間から作る）
+    if ((s.extra && s.phase === 'run') || app.clearPath === 'extra') for (let n = app.fx.collapseTick(app, dt); n > 0; n--) app.audio.on({ type: 'pebble' });
+    if (s.phase === 'run') {
+      if (app.hitT > 0) { app.hitT -= dt; }
+      app.acc = Math.min(app.acc + dt, 0.25);
+      while (app.acc >= cfg.dt && s.phase === 'run') {
+        app.acc -= cfg.dt;
+        const cmds = app.cmds.splice(0);
+        if (app.bot) cmds.push(...Game.bot.act(app.bot, s, cfg));
+        dispatch(Game.rules.step(s, cmds, cfg));
+      }
+    } else if (s.phase === 'choose') {
+      app.chooseT += dt;
+      if (app.bot && app.chooseT >= cfg.ui.chooseLock) pick(Game.bot.pick(app.bot, s));
+    } else if (s.phase === 'over') {
+      app.hitT -= dt;
+      if (app.hitT <= 0) finishRun();
+    } else if (s.phase === 'clear') {
+      const U = cfg.ui;
+      app.clearT += dt;
+      if (!app.clearPath && app.clearT >= U.clearSec) {
+        app.clearPath = Game.meta.canEnterExtra(s.ranks) ? 'extra' : 'denied';
+        const e = { type: app.clearPath === 'extra' ? 'collapse' : 'extra_denied' };
+        app.fx.on(e, app); app.audio.on(e, app);
+      }
+      if (app.clearPath === 'extra' && app.clearT >= U.clearSec + U.extraIntroSec) { app.acc = 0; dispatch(Game.rules.startExtra(s, cfg)); }
+      else if (app.clearPath === 'denied' && app.clearT >= U.clearSec + U.darkSec + U.hintSec) finishRun();
+    } else if (s.phase === 'escaped') {
+      app.escT += dt;
+      if (app.escT >= cfg.ui.escapeSec) finishRun();
+    }
+  }
+
+  function setHidden(h) {
+    app.audio.setHidden(h);
+    if (h) { app.paused = true; return; }
+    if (!app.paused) return;
+    app.paused = false;
+    if (app.mode === 'run' && app.rules && app.rules.phase === 'run') { app.mode = 'countdown'; app.countdown = cfg.ui.countdown; }
+  }
+
+  // ---- 起動 ----
+  function boot() {
+    app.save = T.preset ? presetSave(T.preset) : Game.save.load(cfg);
+    app.rec = T.noStore ? A.fresh(cfg) : Game.save.loadRecords(cfg);
+    const canvas = document.getElementById('c');
+    Game.render.init(canvas);
+    app.fx = Game.fx.create(cfg);
+    app.audio = Game.audio.create(cfg);
+    Game.input.create(cfg, canvas, onInput);
+    document.addEventListener('visibilitychange', () => setHidden(document.hidden));
+    let last = performance.now();
+    const frame = (now) => {
+      const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
+      last = now;
+      if (!app.manual) update(dt);
+      Game.render.draw(app);
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+    if (q.get('bot')) start();
+  }
+
+  // 確かめ用の HTML の設定（max: 恒久強化を全部最大＋アンロック2つ、unlocks: アンロック2つだけ）
+  function presetSave(kind) {
+    const M = Game.meta, sv = M.fresh(cfg);
+    for (const u of cfg.meta.unlocks) { sv.unlocked[u.id] = true; sv.use[u.id] = true; }
+    if (kind === 'max') { sv.treasure = M.total(cfg); for (const p of cfg.meta.perks) sv.alloc[p.id] = p.max; }
+    return sv;
+  }
+
+  // テスト用: 実時間に関係なく進める
+  Game.debug = {
+    step(sec) { app.manual = true; for (let i = 0; i < Math.round(sec * 60); i++) update(1 / 60); Game.render.draw(app); },
+    start() { start(); },
+    nearClear() { nearClear(); },
+    camp() { enterCamp(); },
+    reload() { app.save = Game.save.load(cfg); app.rec = Game.save.loadRecords(cfg); },
+    input: onInput,
+    setHidden,
+  };
+
+  boot();
+})();
+</script>
+</body>
+</html>
