@@ -3923,12 +3923,35 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (app.mode === 'run' && app.rules && app.rules.phase === 'run') { app.mode = 'countdown'; app.countdown = cfg.ui.countdown; }
   }
 
+  // ファビコンとホーム画面のアイコン: 主人公（ほっぺ少し・走る姿）のドット絵を、ぼかさずに整数倍で拡大して作る
+  function setIcons() {
+    const img = Game.bake.all().hamG[1].run[0].n;
+    // 色の付いたドットの範囲だけを切り出す
+    const d = img.getContext('2d').getImageData(0, 0, img.width, img.height).data;
+    let x0 = img.width, y0 = img.height, x1 = -1, y1 = -1;
+    for (let y = 0; y < img.height; y++) for (let x = 0; x < img.width; x++) if (d[(y * img.width + x) * 4 + 3]) { x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    if (x1 < 0) return;
+    const w = x1 - x0 + 1, h = y1 - y0 + 1;
+    const make = (size, bg, pad) => {
+      const c = Game.bake.mk(size, size), g = c.getContext('2d');
+      g.imageSmoothingEnabled = false;
+      if (bg) { g.fillStyle = bg; g.fillRect(0, 0, size, size); }
+      const k = Math.max(1, Math.floor((size - 2 * pad) / Math.max(w, h)));
+      g.drawImage(img, x0, y0, w, h, Math.floor((size - w * k) / 2), Math.floor((size - h * k) / 2), w * k, h * k);
+      return c.toDataURL('image/png');
+    };
+    const link = (rel, href) => { const l = document.createElement('link'); l.rel = rel; l.href = href; document.head.appendChild(l); };
+    link('icon', make(64, null, 0));
+    link('apple-touch-icon', make(180, '#181425', 18));
+  }
+
   // ---- 起動 ----
   function boot() {
     app.save = T.preset ? presetSave(T.preset) : Game.save.load(cfg);
     app.rec = T.noStore ? A.fresh(cfg) : Game.save.loadRecords(cfg);
     const canvas = document.getElementById('c');
     Game.render.init(canvas);
+    setIcons();
     app.fx = Game.fx.create(cfg);
     app.audio = Game.audio.create(cfg);
     Game.input.create(cfg, canvas, onInput);
