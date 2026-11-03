@@ -229,12 +229,31 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       },
     },
 
+    // 操作説明（キャンプの あそびかた のページとタイトル）。設計書: docs/specs/2026-11-03-hoppe-dive-howto-design.md
+    // rows の scene: 見本の場面（0 ジャンプ / 1 よこに はらう / 2 たてに はらう）。sub: 灰色の添え書き
+    howto: {
+      rows: [
+        { text: 'ゆびを はなすと ジャンプ', scene: 0 },
+        { text: ' おしたままでは とばない', scene: 0, sub: true },
+        { text: 'よこに はらう: まえうしろ', scene: 1 },
+        { text: 'たてに はらう: おく・てまえ', scene: 2 },
+        { text: 'カードは タップで えらぶ' },
+        { text: 'うえ 3ぶんの1 では とばない' },
+        { text: 'エクストラは さゆう ぎゃく' },
+        { text: 'キー: ←→↑↓ スペース 123', sub: true },
+      ],
+      scenes: ['はなすと ジャンプ', 'よこに はらう', 'たてに はらう'],
+      after: 'とったら つかえる', // 場面 1・2 の添え書き
+      title: ['ゆびを はなすと ジャンプ', 'くわしくは キャンプの あそびかた'],
+    },
+
     // 演出・音
     fx: { shakeMax: 2, popSec: 0.5 },
     audio: { enabled: true, volume: 0.5, bgmVolume: 0.6, seedResetSec: 1.0 },
     input: { swipePx: 24, controlFrom: 1 / 3 },
     ui: { chooseLock: 0.5, fallSec: 0.6, landSec: 0.15, hitFreeze: 0.8, clearSec: 2.5, countdown: 3,
-          extraIntroSec: 2.0, darkSec: 1.5, hintSec: 4, escapeSec: 3 }, // ④: 崩れ始めの演出 / 入れないときに暗くなるまで・ヒントを出したまま結果へ進むまで / 脱出成功の場面
+          extraIntroSec: 2.0, darkSec: 1.5, hintSec: 4, escapeSec: 3,
+          howtoSec: 2.4 }, // あそびかたの見本の1場面の秒 // ④: 崩れ始めの演出 / 入れないときに暗くなるまで・ヒントを出したまま結果へ進むまで / 脱出成功の場面
   };
 })();
 </script>
@@ -1621,6 +1640,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // 記号
   def(' ', '..... ..... ..... ..... ..... ..... .....');
   def('!', '..#.. ..#.. ..#.. ..#.. ..#.. ..... ..#..');
+  // 矢印（あそびかたのキーの行）
+  def('←', '..... ..#.. .#... ##### .#... ..#.. .....');
+  def('→', '..... ..#.. ...#. ##### ...#. ..#.. .....');
+  def('↑', '..#.. .###. #.#.# ..#.. ..#.. ..#.. ..#..');
+  def('↓', '..#.. ..#.. ..#.. ..#.. #.#.# .###. ..#..');
   def('…', '..... ..... ..... ..... ..... #.#.# .....');
   def('?', '.###. #...# ....# ...#. ..#.. ..... ..#..');
   def('.', '..... ..... ..... ..... ..... ..... ..#..');
@@ -2101,6 +2125,19 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     ['...i.....', '...ii.i..', '..ijiji..', '..ijkki..', '.ijklkji.', '.ijkkkji.', 'ffefffeff', '.ff.f.ff.'],
   ];
   // ◀ ▶（キャンプのページめくり）
+  // あそびかたの指（下を指す。指先は下の端の真ん中 x=3〜4）
+  S.finger = [
+    '.000000.',
+    '0xxxxxx0',
+    '0xyxyxx0',
+    '0xxxxxx0',
+    '.0xxxx0.',
+    '..0xx0..',
+    '..0xx0..',
+    '..0xx0..',
+    '..0xx0..',
+    '...00...',
+  ];
   S.arrowL = ['...00', '..060', '.0660', '06660', '.0660', '..060', '...00'];
   S.arrowR = S.arrowL.map((r) => r.split('').reverse().join(''));
 
@@ -2375,7 +2412,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       return set;
     });
     b.ham = b.hamG[0];
-    for (const k of ['shadow', 'shadowSmall', 'trap', 'rock', 'block', 'seed', 'gem', 'big', 'statue', 'crown', 'stalTip', 'stalStem', 'rockShadow', 'rockMark', 'pvTrap', 'pvStal', 'pvBlock', 'pvItem', 'tent', 'pile', 'arrowL', 'arrowR']) b[k] = bake(S[k]);
+    for (const k of ['shadow', 'shadowSmall', 'trap', 'rock', 'block', 'seed', 'gem', 'big', 'statue', 'crown', 'stalTip', 'stalStem', 'rockShadow', 'rockMark', 'pvTrap', 'pvStal', 'pvBlock', 'pvItem', 'tent', 'pile', 'arrowL', 'arrowR', 'finger']) b[k] = bake(S[k]);
     b.fire = S.fire.map((r) => bake(r));
     // ③実績とシークレット
     for (const k of ['medalS', 'pup', 'batHang']) b[k] = bake(S[k]);
@@ -3309,11 +3346,85 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     else g.drawImage(ham, 88, 68);
   }
 
+  // タイトル: 走るハムスターの横で指が 押す → 離す。離した瞬間に跳ぶ（あそびかたの場面 0 と同じ動き）
   function drawHamsterTitle(g, app, A) {
-    const V = Game.config.view, t = app.time;
-    const f = A.ham.run[Math.floor(t * 10) % 6];
-    g.drawImage(A.shadow, 90, 83);
-    g.drawImage(f.n, 88, 68);
+    const t = app.time, d = demoJump(t % Game.config.ui.howtoSec);
+    const f = d.z > 0 ? A.ham.jumpUp : A.ham.run[Math.floor(t * 10) % 6];
+    g.drawImage(d.z > 2 ? A.shadowSmall : A.shadow, d.z > 2 ? 91 : 90, 83);
+    g.drawImage(f.n, 88, Math.round(68 - d.z));
+    drawFinger(g, A, 122, d.pressed ? 84 : 79, d.pressed);
+  }
+
+  // ---- あそびかた ----
+  // 見本の場面 0（ジャンプ）: 押す（0.4〜1.2 秒）→ 離した瞬間に跳ぶ（0.6 秒）。t は場面の頭からの秒
+  function demoJump(t, H = 14) {
+    const pressed = t >= 0.4 && t < 1.2, u = (t - 1.2) / 0.6;
+    return { pressed, z: u > 0 && u < 1 ? 4 * H * u * (1 - u) : 0 };
+  }
+  // 見本の場面 1・2（はらう）: 押して滑らせ（0.3〜0.7 秒）、離す。1.2 秒から逆向きにもう一度
+  function demoSwipe(t) {
+    const k = (a) => Math.max(0, Math.min(1, (t - a) / 0.4));
+    const there = t >= 0.5 && t < 1.4; // ハムスターが動いた先にいる
+    const pressed = (t >= 0.3 && t < 0.8) || (t >= 1.2 && t < 1.7);
+    const slide = t < 1.2 ? k(0.3) : 1 - k(1.2); // 0 → 1 → 0
+    return { pressed, slide, there, move: t >= 0.5 && t < 0.6 ? (t - 0.5) / 0.1 : t >= 1.4 && t < 1.5 ? 1 - (t - 1.4) / 0.1 : there ? 1 : 0 };
+  }
+  // 指（指先が x, y）。押している間は指先に小さな輪
+  function drawFinger(g, A, x, y, pressed) {
+    if (pressed) {
+      g.fillStyle = '#ffffff';
+      for (const [dx, dy] of [[-4, 0], [4, 0], [-3, -2], [3, -2], [-3, 2], [3, 2], [0, 3]]) g.fillRect(x + dx, y + dy, 1, 1);
+    }
+    g.drawImage(A.finger, Math.round(x - 4), Math.round(y - A.finger.height + 1));
+  }
+
+  // 位置（窓の中のドット）: 左に見本の枠、右に一覧（1行 8 ドット）
+  R.howtoLayout = function () {
+    const rows = Game.config.howto.rows;
+    return { box: { x: 4, y: 31, w: 70, h: 66 }, rows: rows.map((r, i) => ({ x: 80, y: 31 + i * 8, w: 110, h: 8, scene: r.scene })) };
+  };
+  // 今の場面（タップで選んだ場面から、howtoSec ごとに次へ）
+  const howtoScene = (app) => { const h = app.camp.howto || { scene: 0, t0: 0 }, k = (app.time - h.t0) / Game.config.ui.howtoSec; return { scene: (h.scene + Math.floor(k)) % 3, t: (k % 1) * Game.config.ui.howtoSec }; };
+
+  function drawHowto(g, app, A) {
+    const cfg = Game.config, H = cfg.howto, L = R.howtoLayout(), b = L.box, cur = howtoScene(app);
+    // 一覧（今の場面の行は金色）。背景が騒がしいので、暗い板を敷く
+    const r0 = L.rows[0], rn = L.rows[L.rows.length - 1];
+    g.fillStyle = INK; g.fillRect(r0.x - 3, r0.y - 2, r0.w + 2, rn.y + rn.h - r0.y + 3);
+    g.fillStyle = '#262b44'; g.fillRect(r0.x - 2, r0.y - 1, r0.w, rn.y + rn.h - r0.y + 1);
+    H.rows.forEach((r, i) => {
+      const on = r.scene === cur.scene, rr = L.rows[i];
+      B.text(g, r.text, rr.x, rr.y, on ? (r.sub ? '#feae34' : GOLD) : r.sub ? '#8b9bb4' : WHITE, INK);
+    });
+    // 見本の枠
+    g.fillStyle = INK; g.fillRect(b.x - 1, b.y - 1, b.w + 2, b.h + 2);
+    g.fillStyle = '#262b44'; g.fillRect(b.x, b.y, b.w, b.h);
+    g.save(); g.beginPath(); g.rect(b.x, b.y, b.w, b.h); g.clip(); g.translate(b.x, b.y);
+    const th = A.themes[0];
+    for (let r = 0; r < 3; r++) for (let x = -16; x < b.w + 16; x += 16) g.drawImage(th.floor, x + (2 - r) * 2 - Math.floor(app.time * 30) % 16, 12 + r * 8);
+    const colX = [17, 35, 53], gy = (lane) => 18 + lane * 8, skew = (lane) => (2 - lane) * 2;
+    let col = 1, lane = 1, z = 0, pressed = false, fx = 52, fy = 41;
+    if (cur.scene === 0) {
+      const d = demoJump(cur.t, 12);
+      z = d.z; pressed = d.pressed; fy = pressed ? 45 : 41;
+    } else {
+      const d = demoSwipe(cur.t);
+      pressed = d.pressed; fy = pressed ? 45 : 41;
+      if (cur.scene === 1) { fx = 26 + 20 * d.slide; col = 1 + d.move; }
+      else { fx = 52; fy = (pressed ? 45 : 41) - 6 * d.slide; lane = 1 - d.move; }
+      // 滑った跡
+      if (pressed) { g.fillStyle = '#8b9bb4'; if (cur.scene === 1) for (let x = 26; x < fx - 2; x += 3) g.fillRect(x, 45, 1, 1); else for (let y = 45; y > fy + 2; y -= 3) g.fillRect(52, y, 1, 1); }
+    }
+    const hx = colX[0] + (colX[1] - colX[0]) * col + skew(lane), hy = gy(lane);
+    const f = z > 0 ? A.ham.jumpUp : A.ham.run[Math.floor(app.time * 10) % 6];
+    g.drawImage(z > 2 ? A.shadowSmall : A.shadow, Math.round(hx - (z > 2 ? 5 : 6)), hy - 1);
+    g.drawImage(f.n, Math.round(hx - 8), Math.round(hy - 16 - z));
+    drawFinger(g, A, Math.round(fx), Math.round(fy), pressed);
+    g.restore();
+    // 場面の名前（前後・レーンは、ランで取ってから使える）
+    const name = H.scenes[cur.scene];
+    B.text(g, name, b.x + Math.floor((b.w - B.textW(name)) / 2), b.y + 49, WHITE, INK);
+    if (cur.scene > 0) B.text(g, H.after, b.x + Math.floor((b.w - B.textW(H.after)) / 2), b.y + 57, '#8b9bb4', INK);
   }
 
   // ---- 文字・カードなど ----
@@ -3331,6 +3442,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const cfg = Game.config, V = cfg.view;
     if (app.mode === 'title') {
       centerText(g, 'HOPPE DIVE', 14, GOLD, INK, 2);
+      const T = cfg.howto.title;
+      centerText(g, T[0], 38, WHITE, INK);
+      centerText(g, T[1], 48, '#8b9bb4', INK);
       if (Math.floor(app.time * 2) % 2 === 0) centerText(g, 'タップで スタート', 92, WHITE, INK);
       return;
     }
@@ -3445,7 +3559,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   ACH.perPage = ACH.cols * ACH.rows;
   R.campPerkPages = () => Math.ceil(Game.meta.order(Game.config).length / CAMP.perPage);
   R.achPages = () => Math.ceil(Game.config.achieve.list.length / ACH.perPage);
-  R.campPages = () => R.campPerkPages() + R.achPages();
+  // あそびかた: いちばん最後のページ（1ページ目から ◀ で開く）
+  R.howtoPage = () => R.campPerkPages() + R.achPages();
+  R.campPages = () => R.howtoPage() + 1;
   R.campIds = (page) => (page < R.campPerkPages() ? Game.meta.order(Game.config).slice(page * CAMP.perPage, page * CAMP.perPage + CAMP.perPage) : []);
   R.achIds = (page) => { const k = page - R.campPerkPages(); return k < 0 ? [] : Game.config.achieve.list.slice(k * ACH.perPage, (k + 1) * ACH.perPage).map((a) => a.id); };
   R.achPageOf = (id) => R.campPerkPages() + Math.floor(Game.config.achieve.list.findIndex((a) => a.id === id) / ACH.perPage);
@@ -3508,6 +3624,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     ids.forEach((id, i) => drawCampCard(g, app, A, L.cards[i], M.card(id, view, cfg)));
     const achIds = R.achIds(cp.page);
     if (achIds.length) drawAchPage(g, app, A, achIds);
+    if (cp.page === R.howtoPage()) drawHowto(g, app, A);
     // 下: ページの印、または新しく使えるようになったアンロック
     if (cp.msg && cp.msg.t > 0) centerText(g, cp.msg.text, 99, GOLD, INK);
     else {
@@ -3625,7 +3742,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     rec: null,              // ③の実績の記録（achieve.js）
     tr: null, maxDiff: false, runAch: [], achFlash: 0, // 1回のランの数え、始めに最大難易度だったか、このランで取った実績、上の帯の印の残り秒
     batGone: {},            // てんじょうの コウモリ: 飛び去った番号 → 時刻（描画だけ。ルールに入れない）
-    camp: { page: 0, count: null, msg: null, sel: null }, // sel: 実績のページで選んだ実績 // count: 宝の数え上げ { from, to, t, dur, n }、msg: 下に出す知らせ { text, t }
+    camp: { page: 0, count: null, msg: null, sel: null, howto: null }, // howto: あそびかたの見本 { scene: 選んだ場面, t0: 選んだ時刻 } // sel: 実績のページで選んだ実績 // count: 宝の数え上げ { from, to, t, dur, n }、msg: 下に出す知らせ { text, t }
     result: null,           // ランの終わり: { mult, final, gain: meta.applyRun の返り値 }
     rules: null, bot: null,
     time: 0, acc: 0, paused: false, manual: false,
@@ -3738,6 +3855,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       app.camp.msg = { text: 'じっせき: ' + A.info(res.ach[0], cfg).name + (n > 1 ? ' ほか ' + (n - 1) : ''), t: 4 };
       app.camp.page = Game.render.achPageOf(res.ach[0]); // 実績のページを開く
     }
+    // はじめての人（保存データがまっさら）には、あそびかたを開いて見せる
+    if (!res && app.save.treasure === 0 && A.count(app.rec) === 0) { app.camp.page = Game.render.howtoPage(); app.camp.howto = { scene: 0, t0: app.time }; }
     app.result = null;
     campAch(); // 前からの保存データで、もう満たしているもの
   }
@@ -3753,6 +3872,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const n = Game.render.campPages();
     leavePage();
     app.camp.page = (app.camp.page + d + n) % n;
+    app.camp.howto = { scene: 0, t0: app.time }; // あそびかたは、開いたら場面 0 から
     app.audio.on({ type: 'camp_page' });
   }
 
@@ -3789,6 +3909,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (inR(L.go)) return campGo();
     if (inR(L.prev)) return campPage(-1);
     if (inR(L.next)) return campPage(1);
+    // あそびかた: 一覧の行をタップすると、その場面の見本にする
+    if (app.camp.page === Game.render.howtoPage()) {
+      Game.render.howtoLayout().rows.forEach((r) => { if (r.scene != null && inR(r)) { app.camp.howto = { scene: r.scene, t0: app.time }; app.audio.on({ type: 'camp_page' }); } });
+      return;
+    }
     const achIds = Game.render.achIds(app.camp.page);
     if (achIds.length) {
       Game.render.achLayout(achIds.length).cells.forEach((c, i) => { if (inR(c)) { app.camp.sel = achIds[i]; app.audio.on({ type: 'camp_plus' }); } });
