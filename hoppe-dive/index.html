@@ -225,11 +225,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       ],
       th: { fastSec: 360, score: [10000, 30000, 50000], statue: 3, rows: 3, rich: 800, near: 50, seeds: 15 }, // sim.mjs --ach の分布で決めた（設計書③ 8節）
       // ランダムイベント（シークレット）: 階の色ごとに 1 つ。イベントごとに chance で別に引く。stage: 出る色（0 茶 B1〜4F / 1 緑 / 2 赤。stageFloors 階ごと）。
-      // その色の最初の階で、needs（段階の下限）がそろっていれば始める。そろうまで、その色のうちは持ち越す。startSec: 階に着いてから何秒あとに始めるか（紹介のあと、操作の猶予）
+      // その色の最初の階で、needs（段階の下限）がそろっていれば始める。そろうまで、その色のうちは持ち越す。始めるのは、ものが出始めるのと同じ、階に着いてから landGrace 秒あと（紹介のあと、操作の猶予）
       // 設計書: docs/specs/2026-11-04-hoppe-dive-rare-luck-design.md A
       rare: {
         chance: { pup: 0.3, mimic: 0.3, fly: 0.3 }, // 実機の感想: もうレアでなくていい（0.05 → 0.1 → 0.3）
-        stage: { pup: 0, fly: 1, mimic: 2 }, stageFloors: 4, startSec: 2.5,
+        stage: { pup: 0, fly: 1, mimic: 2 }, stageFloors: 4,
         needs: { pup: { lane: 1 }, fly: { move: 1, lane: 1 }, mimic: {} },
         pup: { at: 0.3 },
         mimic: { behind: 22, enterSec: 1.0, waitSec: 1.0, tellSec: 0.5, leapSec: 0.4, leapDx: 40, leapH: 4, backSec: 0.6, laneLag: 0.4, needDodge: 3, biteH: 8, biteW: 10, steal: 0.1 },
@@ -569,11 +569,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     // 終わった（成功・失敗・取りやめ）なら、次の予定へ
     if (r.state !== 'wait' && r.state !== 'on' && s.rareNext && s.rareNext.length) r = s.rare = s.rareNext.shift();
     if (r.state === 'wait') {
-      const C = cfg.achieve.rare;
       // 色の決まった予定: 色が過ぎたら取りやめ（次の予定は、次の刻みで見る）
       if (r.stage != null && stageOf(s.floor, cfg) > r.stage) { r.state = 'skip'; return; }
-      // 予定の階から。出る条件がそろうまで待つ。階に着いてから startSec 秒あと（紹介を読んで、操作に戻る猶予）
-      if (s.floor >= r.floor && ready(s, cfg, r.kind) && (r.stage == null || s.t >= (s.floorAt || 0) + C.startSec)) begin(s, cfg, ev);
+      // 予定の階から。出る条件がそろうまで待つ。ものが出始めるのと同じ、階に着いてから landGrace 秒あと（紹介を読んで、操作に戻る猶予）
+      if (s.floor >= r.floor && ready(s, cfg, r.kind) && (r.stage == null || s.t >= (s.floorAt || 0) + cfg.landGrace)) begin(s, cfg, ev);
     }
     if (r.state !== 'on') return;
     // まものは、金の階に入ったら あきらめる（ごほうびなし）
@@ -4527,7 +4526,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   // ---- はじめて取ったときの操作の紹介（ヒント）。設計書: docs/specs/2026-11-04-hoppe-dive-tips-design.md ----
-  // この階で始まるレアイベント（紹介用。始まるのは着いてから rare.startSec 秒あと）
+  // この階で始まるレアイベント（紹介用。始まるのは着いてから landGrace 秒あと＝ものが出始めるのと同じ）
   const rareTip = () => { const k = Game.rare && app.rules ? Game.rare.upcoming(app.rules, cfg) : null; return k ? [k] : []; };
   // ids のうち、まだ見ていないものを順に出す。ボットが遊んでいるときは出さない
   function showTips(ids) {
