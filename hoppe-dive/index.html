@@ -168,7 +168,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       ],
       value: { seed: 1, gem: 3, big: 10, statue: 30 }, // 持ち帰る宝の値打ち
       clearBonus: 100,           // クリアしたときに足す宝
-      mul: { unspent: 1.0, unlock: 0.25 }, // 倍率 = 1 + unspent × min(振っていない宝, T) / T + unlock × 入れたアンロックの数
+      mul: { unspent: 1.0, unlock: 0.25 }, // 倍率 = 1 + unspent × min(振っていない宝, T − 振った宝) / T + unlock × 入れたアンロックの数
     },
 
     // ③実績とシークレット。設計書: docs/specs/2026-11-03-hoppe-dive-achievements-design.md
@@ -316,10 +316,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   // 追いつき型の出やすさ p = min(step × 連敗, cap)。ランの開始時に決めて runOptions で渡す
   function boost(save, cfg) { const K = C(cfg).catchup; return Math.min(K.step * (save.streak || 0), K.cap); }
-  // 罰を含めない倍率（最大難易度・最大の倍率と同じ物差し）
+  // 罰を含めない倍率（最大難易度・最大の倍率と同じ物差し）。
+  // 振っていない宝のうち「まだ振れる分（T − 振った宝）」だけを数える。全部最大のあとにためた宝は倍率にならない（倍率は難しさに払うもの）
   function baseMultiplier(save, cfg) {
     const M = C(cfg), T = total(cfg);
-    return 1 + M.mul.unspent * Math.min(Math.max(0, unspent(save, cfg)), T) / T + M.mul.unlock * unlocksOn(save, cfg);
+    return 1 + M.mul.unspent * Math.min(Math.max(0, unspent(save, cfg)), T - spent(save, cfg)) / T + M.mul.unlock * unlocksOn(save, cfg);
   }
   // 倍率: p はそのランの出やすさ（省くと保存データの連敗から）。追いつきの罰 (1 − k × p) をかける
   function multiplier(save, cfg, p) {
