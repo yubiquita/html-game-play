@@ -144,6 +144,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         { id: 'bag', name: 'たからぶくろ', max: 3, price: 160, desc: ['', 'もちかえる たから x1.25', 'もちかえる たから x1.5', 'もちかえる たから x2'] },
         // 実機の感想（落石とわなが重なると迷う）: いしの すきま。らくせきわなの ずれを伸ばし、石の型の前後にも すきまを足す
         { id: 'rockGap', name: 'いしの すきま', max: 2, price: 280, desc: ['', 'いしと わなの あいだが すこし あく', 'いしと わなの あいだが もっと あく'] },
+        { id: 'luck', name: 'こううん', max: 3, price: 240, desc: ['', 'わなや いしが たまに こない', 'わなや いしが ときどき こない', 'わなや いしが よく こない'] }, // 設計書: docs/specs/2026-11-04-hoppe-dive-rare-luck-design.md B
       ],
       // 段階ごとの効果（runOptions へ変換するときに使う）
       effect: {
@@ -158,6 +159,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         magnet: [0, 1, 2],                            // magnet: 1 拾える範囲が広い / 2 隣のレーンの宝も引き寄せる
         bagMul: [1, 1.25, 1.5, 2],                    // bag: 持ち帰る宝の倍率（切り捨て）
         rockGap: [0, 0.15, 0.3],                      // rockGap: 石と地面の物の ずれに足す秒。石の型の前後にも同じ秒の すきま
+        luck: [0, 0.06, 0.12, 0.18],                  // luck: 型が出てくるたびに、丸ごと来ない確率（仮。テストプレイで決める）
       },
       // 追いつき型（おたからの けはい）: 連敗 streak で p = min(step × streak, cap)。3択に p でおたからを入れ、倍率に (1 − k × p) をかける
       catchup: { step: 0.15, cap: 0.9, k: 0.5 },
@@ -166,9 +168,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         { id: 'move', name: 'まえうしろ', desc: 'さいしょから うごける' },
         { id: 'lane', name: 'レーン', desc: 'さいしょから うごける' },
       ],
+      // さいしょの はやさ（はやさの アンロック）: ランで はやさを最大にすると使えるようになる。キャンプで 0〜最大の段階を選び、ランの始めからその速さで走る。
+      // 倍率は 1 段階 mul。設計書: docs/specs/2026-11-04-hoppe-dive-speed-unlock-design.md
+      speedStart: { id: 'speedStart', name: 'さいしょの はやさ', desc: 'さいしょから はやく はしる', locked: 'ランで はやさを さいだいに すると つかえる', mul: 0.1,
+                    same: 'もう この はやさ。えらんでも かわらない', samePop: 'そのまま' }, // same: 3択の はやさ の灰色のカードの説明。samePop: 選んだときの文字
       value: { seed: 1, gem: 3, big: 10, statue: 30 }, // 持ち帰る宝の値打ち
       clearBonus: 100,           // クリアしたときに足す宝
-      mul: { unspent: 1.0, unlock: 0.25 }, // 倍率 = 1 + unspent × min(振っていない宝, T − 振った宝) / T + unlock × 入れたアンロックの数
+      mul: { unspent: 1.0, unlock: 0.25 }, // 倍率 = 1 + unspent × min(振っていない宝, T − 振った宝) / T + unlock × 入れたアンロックの数 + speedStart.mul × さいしょの はやさ
     },
 
     // ③実績とシークレット。設計書: docs/specs/2026-11-03-hoppe-dive-achievements-design.md
@@ -191,10 +197,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         { id: 'floor13', kind: 'floor', name: 'おうごんの かいそう', desc: 'B13F に つく' },
         { id: 'clear', kind: 'floor', name: 'たからの ま', desc: 'クリアする' },
         { id: 'noHit', kind: 'floor', name: 'むきず', desc: 'いちども あたらずに クリアする' },
-        { id: 'maxDiff', kind: 'floor', name: 'さいだいの むずかしさ', desc: 'きょうかを ふらずに クリアする' },
+        { id: 'maxDiff', kind: 'floor', name: 'さいだいの むずかしさ', desc: 'きょうかを ふらず まえうしろと レーンを いれて クリアする' },
         { id: 'fast', kind: 'floor', name: 'はやぬけ', desc: '6ぷん いないに クリアする' },
         { id: 'escape', kind: 'floor', name: 'だっしゅつ', desc: 'くずれる いせきから だっしゅつする' },
-        { id: 'escapeMax', kind: 'floor', name: 'さいだいの むずかしさで だっしゅつ', desc: 'きょうかを ふらずに だっしゅつする' },
+        { id: 'escapeMax', kind: 'floor', name: 'さいだいの むずかしさで だっしゅつ', desc: 'きょうかを ふらず まえうしろと レーンを いれて だっしゅつする' },
         { id: 'score1', kind: 'score', name: 'いちまんてん', desc: 'さいごの てんが 10000 いじょう' },
         { id: 'score2', kind: 'score', name: 'さんまんてん', desc: 'さいごの てんが 30000 いじょう' },
         { id: 'score3', kind: 'score', name: 'ごまんてん', desc: 'さいごの てんが 50000 いじょう' },
@@ -211,17 +217,20 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         { id: 'maxGreed', kind: 'max', up: 'greed', name: 'よくばりの さいだい', desc: 'ランで よくばりを さいだいに する' },
         { id: 'allMax', kind: 'max', name: 'ぜんぶ さいだい', desc: '1かいの ランで きょうかを ぜんぶ さいだいに する' },
         { id: 'perkAll', kind: 'max', name: 'じゅんび ばんたん', desc: 'キャンプの きょうかを ぜんぶ さいだいに する' },
-        { id: 'pup', kind: 'secret', name: 'まいごの こハムスター', desc: 'まいごの こハムスターを たすける', hint: 'まれに だれかが まいごに なっている…' },
-        { id: 'mimic', kind: 'secret', name: 'たからばこの まもの', desc: 'たからばこの まものから 3かい にげきる', hint: 'まれに たからばこが ついてくる…' },
-        { id: 'fly', kind: 'secret', name: 'そらとぶ たね', desc: 'そらとぶ たねを つかまえる', hint: 'まれに たねが そらを とんでいる…' },
+        { id: 'pup', kind: 'secret', name: 'まいごの こハムスター', desc: 'まいごの こハムスターを たすける', hint: 'すなの かいで だれかが まいごに なっている…' },
+        { id: 'mimic', kind: 'secret', name: 'たからばこの まもの', desc: 'たからばこの まものから 3かい にげきる', hint: 'あかい かいで たからばこが ついてくる…' },
+        { id: 'fly', kind: 'secret', name: 'そらとぶ たね', desc: 'そらとぶ たねを つかまえる', hint: 'こけの かいで たねが そらを とんでいる…' },
         { id: 'bat', kind: 'secret', name: 'てんじょうの コウモリ', desc: 'コウモリを おこす', hint: 'てんじょうに なにか いる…' },
         { id: 'platinum', kind: 'platinum', name: 'でんせつの たんけんか', desc: 'ほかの じっせきを ぜんぶ とる' }, // 全部の実績（いわゆるプラチナトロフィー）
       ],
       th: { fastSec: 360, score: [10000, 30000, 50000], statue: 3, rows: 3, rich: 800, near: 50, seeds: 15 }, // sim.mjs --ach の分布で決めた（設計書③ 8節）
-      // ランダムイベント（シークレット）: 1回のランで最大1つ。それぞれ chance。起きる階は floors[0]〜floors[1]
+      // ランダムイベント（シークレット）: 階の色ごとに 1 つ。イベントごとに chance で別に引く。stage: 出る色（0 茶 B1〜4F / 1 緑 / 2 赤。stageFloors 階ごと）。
+      // その色の最初の階で、needs（段階の下限）がそろっていれば始める。そろうまで、その色のうちは持ち越す。startSec: 階に着いてから何秒あとに始めるか（紹介のあと、操作の猶予）
+      // 設計書: docs/specs/2026-11-04-hoppe-dive-rare-luck-design.md A
       rare: {
-        chance: { pup: 0.05, mimic: 0.05, fly: 0.05 },
-        floors: [3, 11],
+        chance: { pup: 0.3, mimic: 0.3, fly: 0.3 }, // 実機の感想: もうレアでなくていい（0.05 → 0.1 → 0.3）
+        stage: { pup: 0, fly: 1, mimic: 2 }, stageFloors: 4, startSec: 2.5,
+        needs: { pup: { lane: 1 }, fly: { move: 1, lane: 1 }, mimic: {} },
         pup: { at: 0.3 },
         mimic: { behind: 22, enterSec: 1.0, waitSec: 1.0, tellSec: 0.5, leapSec: 0.4, leapDx: 40, leapH: 4, backSec: 0.6, laneLag: 0.4, needDodge: 3, biteH: 8, biteW: 10, steal: 0.1 },
         fly: { sec: 10, h: [12, 18], stay: 0.8, moveSec: 0.4, enterSec: 0.8 }, // 高さは地面から届かない（obj.item.reach 8 より上）
@@ -281,6 +290,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       cps: 30, fadeSec: 0.25,
     },
 
+    // こううん（恒久強化）の見せ方。showMax: さきみがあるとき、来なかった物を予告に出しておく秒の上限（さきみの秒の半分まで）
+    luck: { showMax: 0.3 },
+
     // はじめて取ったときの操作の紹介（ヒント）。設計書: docs/specs/2026-11-04-hoppe-dive-tips-design.md
     // key: 見たかどうか（localStorage。ほかの保存とは別のフラグ）。closeSec: 出てから閉じられるまで。scene: あそびかたの見本の場面
     // lines: 1 行 18 字まで。sub: 灰色にする行
@@ -289,6 +301,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       order: ['move', 'lane'],
       move: { title: 'まえうしろ を とった!', scene: 1, lines: ['よこに はらうと', 'まえ・うしろへ うごける', '← → でも うごける', 'いしの かげから にげよう'], sub: [2] },
       lane: { title: 'レーン を とった!', scene: 2, lines: ['たてに はらうと', 'おく・てまえへ うごける', '↑ ↓ でも うごける', 'とおせんぼを よけよう'], sub: [2] },
+      // レアイベント: はじめて起きたとき（rare_start）に出す。rare: 見本に出すイベント
+      rare: ['pup', 'fly', 'mimic'],
+      pup: { title: 'まいごの こハムスター!', rare: 'pup', lines: ['ちがう レーンで', 'まいごに なっている', 'おなじ マスへ いって', 'たすけよう'], sub: [] },
+      fly: { title: 'そらとぶ たね!', rare: 'fly', lines: ['マスを とびまわる', 'おなじ マスで', 'ジャンプして', 'つかまえよう'], sub: [] },
+      mimic: { title: 'たからばこの まもの!', rare: 'mimic', lines: ['うしろから とびかかる', 'ジャンプで よけよう', '3かい よけると', 'たからを おとす'], sub: [] },
       next: 'タップで つづける',
     },
 
@@ -301,16 +318,18 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 <script>
 // ②の外側のループ: 宝（通貨）、恒久強化の値段と付け外し、アンロック、点の倍率、保存データ → runOptions。
 // 保存データはただのデータ。DOM・localStorage には触らない（読み書きは save.js）。設計書: docs/specs/2026-11-03-hoppe-dive-meta-design.md
-// save: { v, treasure, alloc: { 恒久強化の id: 段階 }, unlocked: { move, lane }, use: { move, lane }, streak: 連敗の数（追いつき型。設計書 perks2 3 節） }
+// save: { v, treasure, alloc: { 恒久強化の id: 段階 }, unlocked: { move, lane, speed }, use: { move, lane }, streak: 連敗の数（追いつき型。設計書 perks2 3 節）,
+//         speedStart: さいしょの はやさ の段階（unlocked.speed のときだけ。設計書 speed-unlock） }
 (function () {
   const Game = (window.Game = window.Game || {});
   const C = (cfg) => (cfg || Game.config).meta;
   const perk = (id, cfg) => C(cfg).perks.find((p) => p.id === id);
 
   function fresh(cfg) {
-    const M = C(cfg), s = { v: M.version, treasure: 0, alloc: {}, unlocked: {}, use: {}, streak: 0 };
+    const M = C(cfg), s = { v: M.version, treasure: 0, alloc: {}, unlocked: {}, use: {}, streak: 0, speedStart: 0 };
     for (const p of M.perks) s.alloc[p.id] = 0;
     for (const u of M.unlocks) { s.unlocked[u.id] = false; s.use[u.id] = false; }
+    s.unlocked.speed = false;
     return s;
   }
 
@@ -324,6 +343,15 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   function spent(save, cfg) { return C(cfg).perks.reduce((n, p) => n + costTo(p.id, save.alloc[p.id] || 0, cfg), 0); }
   function unspent(save, cfg) { return save.treasure - spent(save, cfg); }
   const unlocksOn = (save, cfg) => C(cfg).unlocks.filter((u) => save.unlocked[u.id] && save.use[u.id]).length;
+  // さいしょの はやさ: 使える段階の上限（はやさの最大）と、今の段階（使えなければ 0）
+  const speedMax = (cfg) => (cfg || Game.config).upgrades.find((u) => u.id === 'speed').max;
+  const speedStartOf = (save) => (save.unlocked && save.unlocked.speed ? save.speedStart || 0 : 0);
+  // 段階を n にする（◀ ▶）。使えないとき・範囲の外は false
+  function setSpeedStart(save, n, cfg) {
+    if (!save.unlocked.speed || !Number.isInteger(n) || n < 0 || n > speedMax(cfg) || n === save.speedStart) return false;
+    save.speedStart = n;
+    return true;
+  }
 
   // 追いつき型の出やすさ p = min(step × 連敗, cap)。ランの開始時に決めて runOptions で渡す
   function boost(save, cfg) { const K = C(cfg).catchup; return Math.min(K.step * (save.streak || 0), K.cap); }
@@ -331,7 +359,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // 振っていない宝のうち「まだ振れる分（T − 振った宝）」だけを数える。全部最大のあとにためた宝は倍率にならない（倍率は難しさに払うもの）
   function baseMultiplier(save, cfg) {
     const M = C(cfg), T = total(cfg);
-    return 1 + M.mul.unspent * Math.min(Math.max(0, unspent(save, cfg)), T - spent(save, cfg)) / T + M.mul.unlock * unlocksOn(save, cfg);
+    return 1 + M.mul.unspent * Math.min(Math.max(0, unspent(save, cfg)), T - spent(save, cfg)) / T + M.mul.unlock * unlocksOn(save, cfg) + M.speedStart.mul * speedStartOf(save);
   }
   // 倍率: p はそのランの出やすさ（省くと保存データの連敗から）。追いつきの罰 (1 − k × p) をかける
   function multiplier(save, cfg, p) {
@@ -356,6 +384,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const r = (id) => a[id] || 0;
     return {
       lives: E.lives[r('lives')],
+      speedStart: speedStartOf(save),
       pretaken: M.unlocks.filter((u) => save.unlocked[u.id] && save.use[u.id]).map((u) => u.id),
       assist: {
         warnPlus: E.warnPlus[r('rockWarn')],
@@ -367,6 +396,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         speedCap: E.speedCap[r('calm')],
         magnet: E.magnet[r('magnet')],
         rockGap: E.rockGap[r('rockGap')],
+        luck: E.luck[r('luck')],
         lootBoost: boost(save, cfg),
       },
     };
@@ -384,17 +414,18 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     save.streak = state.cleared ? 0 : (save.streak || 0) + 1;
     const unlocked = [];
     for (const u of M.unlocks) if ((state.ranks[u.id] || 0) >= 3 && !save.unlocked[u.id]) { save.unlocked[u.id] = true; unlocked.push(u.id); }
+    if ((state.ranks.speed || 0) >= speedMax(cfg) && !save.unlocked.speed) { save.unlocked.speed = true; unlocked.push(M.speedStart.id); }
     return { loot, bonus, escape, bag: gain - sum, gain, unlocked };
   }
 
   // ④ 脱出エクストラに入れるか（クリアの時点で、レーン移動と前後移動がどちらも段階 1 以上）
   function canEnterExtra(ranks) { return (ranks.move || 0) >= 1 && (ranks.lane || 0) >= 1; }
-  // 最大難易度: 宝を T 以上持ち、何も振らず、アンロックを全部入れている（罰を含めない倍率が最大。連敗は問わない）
+  // 最大難易度: 何も振らず、アンロック（まえうしろ・レーン）を全部入れている。宝の量・さいしょの はやさ・連敗は問わない（設計書 speed-unlock 1 節）
   function isMaxDifficulty(save, cfg) {
     const M = C(cfg);
-    return spent(save, cfg) === 0 && save.treasure >= total(cfg) && unlocksOn(save, cfg) === M.unlocks.length;
+    return spent(save, cfg) === 0 && unlocksOn(save, cfg) === M.unlocks.length;
   }
-  function maxMultiplier(cfg) { const M = C(cfg); return 1 + M.mul.unspent + M.mul.unlock * M.unlocks.length; }
+  function maxMultiplier(cfg) { const M = C(cfg); return 1 + M.mul.unspent + M.mul.unlock * M.unlocks.length + M.speedStart.mul * speedMax(cfg); }
 
   // ---- 保存データの読み込み（壊れていたら最初の状態） ----
   // raw: JSON の文字列か、読んだ値。足りない項目は最初の値で補う。振りすぎ（値段が変わったなど）は振りを外す
@@ -418,6 +449,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       s.unlocked[u.id] = !!(d.unlocked && d.unlocked[u.id] === true);
       s.use[u.id] = s.unlocked[u.id] && !!(d.use && d.use[u.id] === true);
     }
+    // さいしょの はやさ: 使えないとき・範囲の外は 0（はやさの アンロックの前の保存データには無い）
+    s.unlocked.speed = !!(d.unlocked && d.unlocked.speed === true);
+    s.speedStart = s.unlocked.speed && Number.isInteger(d.speedStart) && d.speedStart >= 0 && d.speedStart <= speedMax(cfg) ? d.speedStart : 0;
     if (spent(s, cfg) > s.treasure) for (const p of M.perks) s.alloc[p.id] = 0;
     return s;
   }
@@ -429,13 +463,18 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       const r = save.alloc[id] || 0, max = r >= p.max;
       return { kind: 'perk', id, name: p.name, rank: r, max: p.max, desc: p.desc[max ? r : r + 1], price: max ? 0 : cost(id, r + 1, cfg), full: max, canBuy: canBuy(save, id, cfg), canRefund: r > 0 };
     }
+    if (id === M.speedStart.id) return { kind: 'speed', id, name: M.speedStart.name, desc: M.speedStart.desc, unlocked: !!save.unlocked.speed, level: speedStartOf(save), max: speedMax(cfg) };
     const u = M.unlocks.find((x) => x.id === id);
     return { kind: 'unlock', id, name: u.name, desc: u.desc, unlocked: !!save.unlocked[id], on: !!save.use[id] };
   }
-  // キャンプに並べるカードの順（恒久強化 → アンロック）
-  const order = (cfg) => C(cfg).perks.map((p) => p.id).concat(C(cfg).unlocks.map((u) => u.id));
+  // キャンプに並べるカード: 恒久強化と、アンロック（まえうしろ・レーン・さいしょの はやさ）。アンロックは新しいページから
+  const perkIds = (cfg) => C(cfg).perks.map((p) => p.id);
+  const unlockIds = (cfg) => C(cfg).unlocks.map((u) => u.id).concat(C(cfg).speedStart.id);
+  const order = (cfg) => perkIds(cfg).concat(unlockIds(cfg));
+  // 新しく使えるようになったアンロックの名前
+  const unlockName = (id, cfg) => (id === C(cfg).speedStart.id ? C(cfg).speedStart.name : C(cfg).unlocks.find((u) => u.id === id).name);
 
-  Game.meta = { fresh, cost, costTo, total, spent, unspent, boost, baseMultiplier, multiplier, finalScore, canBuy, buy, refund, toggleUnlock, runOptions, applyRun, canEnterExtra, isMaxDifficulty, maxMultiplier, parse, card, order };
+  Game.meta = { fresh, cost, costTo, total, spent, unspent, boost, baseMultiplier, multiplier, finalScore, canBuy, buy, refund, toggleUnlock, runOptions, applyRun, canEnterExtra, isMaxDifficulty, maxMultiplier, parse, card, order, perkIds, unlockIds, unlockName, setSpeedStart, speedStartOf };
 })();
 </script>
 <script>
@@ -467,35 +506,40 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 </script>
 <script>
 // ③ランダムイベント（シークレット）: まいごの こハムスター / たからばこの まもの / そらとぶ たね。
-// 起きるか・どれか・何階かは、ランのシードから作る別の乱数で決める（ランの乱数の列は変えない）。
-// 前後とレーンの両方が使えるときだけ起きる（その階でまだなら、両方そろった階まで待つ）。
-// 状態はルールの状態の中の s.rare（ただのデータ）。DOM に触らない。設計書: docs/specs/2026-11-03-hoppe-dive-achievements-design.md 3節
+// 階の色ごとに 1 つ（まいご = 茶 / たね = 緑 / まもの = 赤）。起きるかは、イベントごとにランのシードから作る別の乱数で引く（ランの乱数の列は変えない）。
+// その色の最初の階で始める。出る条件（needs: まえうしろ・レーンの段階）がそろっていなければ、その色の階のうちは持ち越す。色が過ぎたら取りやめ。
+// 1 つのイベントは 1 回のランで 1 回まで。同時には起こさない（前のが終わるまで待つ）。
+// 状態はルールの状態の中の s.rare（今の予定。ただのデータ）と s.rareNext（あとの予定の並び）。DOM に触らない。
+// 設計書: docs/specs/2026-11-03-hoppe-dive-achievements-design.md 3節、docs/specs/2026-11-04-hoppe-dive-rare-luck-design.md A
 (function () {
   const Game = (window.Game = window.Game || {});
   const RNG = Game.rng;
   const KINDS = ['pup', 'mimic', 'fly'];
 
-  // シードから決める。null なら何も起きない
+  // シードから決める。起きるイベントの予定を、色の順に並べて返す（空なら何も起きない）。イベントごとに別に引く
   function decide(seed, cfg) {
     const C = cfg.achieve.rare, o = { rng: (RNG.seedFrom(seed) ^ 0x2545f491) | 0 };
-    const u = RNG.next(o);
-    let acc = 0, kind = null;
-    for (const k of KINDS) { acc += C.chance[k]; if (u < acc) { kind = k; break; } }
-    if (!kind) return null;
-    return plan(kind, C.floors[0] + RNG.int(o, C.floors[1] - C.floors[0] + 1), o.rng);
+    const out = [];
+    for (const k of KINDS) if (RNG.next(o) < C.chance[k]) out.push(k);
+    // イベントの中の乱数は、イベントごとに別の列（シードと種類から）
+    return out.sort((a, b) => C.stage[a] - C.stage[b]).map((k) => plan(k, C.stage[k] * C.stageFloors + 1, (RNG.seedFrom(seed) ^ (0x2545f491 + 0x9e3779b * (KINDS.indexOf(k) + 1))) | 0, C.stage[k]));
   }
-  const plan = (kind, floor, rng) => ({ kind, floor, rng, state: 'wait', e: null });
+  // stage: 出る色（0 茶 / 1 緑 / 2 赤）。null は確かめ用（色を問わず floor の階から）
+  const plan = (kind, floor, rng, stage = null) => ({ kind, floor, rng, stage, state: 'wait', e: null });
 
-  // runOptions.rare: 'mimic' か { kind, floor }（確かめ用）。null なら起こさない
+  // runOptions.rare: 'mimic' か { kind, floor }（確かめ用。その 1 つだけを起こす）。null なら起こさない。予定の並びを返す
   function fromOptions(opt, seed, cfg) {
-    if (opt.rare === null || (opt.noSpawn && opt.rare === undefined)) return null;
+    if (opt.rare === null || (opt.noSpawn && opt.rare === undefined)) return [];
     if (opt.rare) {
       const kind = typeof opt.rare === 'string' ? opt.rare : opt.rare.kind;
-      if (!KINDS.includes(kind)) return null;
-      return plan(kind, (opt.rare.floor || opt.rareFloor || 2), (RNG.seedFrom(seed) ^ 0x2545f491) | 0);
+      if (!KINDS.includes(kind)) return [];
+      return [plan(kind, (opt.rare.floor || opt.rareFloor || 2), (RNG.seedFrom(seed) ^ 0x2545f491) | 0)];
     }
     return decide(seed, cfg);
   }
+  // 出る条件（まえうしろ・レーンの段階の下限）がそろっているか
+  const ready = (s, cfg, kind) => Object.entries(cfg.achieve.rare.needs[kind] || {}).every(([id, n]) => (s.ranks[id] || 0) >= n);
+  const stageOf = (floor, cfg) => Math.floor((floor - 1) / cfg.achieve.rare.stageFloors);
 
   const end = (r, ok, ev, s) => { r.state = ok ? 'ok' : 'fail'; r.e = null; ev.push({ type: 'rare_end', t: s.t, kind: r.kind, ok }); };
 
@@ -520,11 +564,20 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   function update(s, cfg, ev) {
-    const r = s.rare;
+    let r = s.rare;
     if (!r || s.phase !== 'run' || s.extra) return; // ④エクストラでは起こさない
-    // 前後とレーンの両方が使えるときだけ始める（ジャンプだけ・1本のレーンでは起こさない）。予定の階でまだなら、使えるようになるまで待つ
-    if (r.state === 'wait' && s.floor >= r.floor && s.ranks.move >= 1 && s.ranks.lane >= 1) begin(s, cfg, ev);
+    // 終わった（成功・失敗・取りやめ）なら、次の予定へ
+    if (r.state !== 'wait' && r.state !== 'on' && s.rareNext && s.rareNext.length) r = s.rare = s.rareNext.shift();
+    if (r.state === 'wait') {
+      const C = cfg.achieve.rare;
+      // 色の決まった予定: 色が過ぎたら取りやめ（次の予定は、次の刻みで見る）
+      if (r.stage != null && stageOf(s.floor, cfg) > r.stage) { r.state = 'skip'; return; }
+      // 予定の階から。出る条件がそろうまで待つ。階に着いてから startSec 秒あと（紹介を読んで、操作に戻る猶予）
+      if (s.floor >= r.floor && ready(s, cfg, r.kind) && (r.stage == null || s.t >= (s.floorAt || 0) + C.startSec)) begin(s, cfg, ev);
+    }
     if (r.state !== 'on') return;
+    // まものは、金の階に入ったら あきらめる（ごほうびなし）
+    if (r.kind === 'mimic' && r.stage != null && stageOf(s.floor, cfg) > r.stage) return end(r, false, ev, s);
     const dt = cfg.dt;
     if (r.kind === 'pup') {
       const o = s.objs.find((x) => x.id === r.e.id);
@@ -628,13 +681,27 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     }
   }
 
-  // 床が抜けたとき・残機を使ったときの吹き飛ばしで、途中のイベントは消える
-  function cancel(s, ev) {
-    const r = s.rare;
-    if (r && r.state === 'on') end(r, false, ev, s);
+  // この階で始まる予定のイベント（紹介を、階に着いたときに出すため）。前のイベントが続いていれば null
+  function upcoming(s, cfg) {
+    let r = s.rare;
+    if (!r || s.extra) return null;
+    if (r.state === 'on') return null;
+    if (r.state !== 'wait') r = (s.rareNext || [])[0];
+    if (!r || r.state !== 'wait') return null;
+    if (r.stage != null && stageOf(s.floor, cfg) !== r.stage) return null;
+    return s.floor >= r.floor && ready(s, cfg, r.kind) ? r.kind : null;
   }
 
-  Game.rare = { KINDS, decide, fromOptions, update, cancel };
+  // 床が抜けたとき・残機を使ったときの吹き飛ばしで、途中のイベントは消える。
+  // ただし まものは、階をまたいで追い続ける（速いと 1 階のうちに 3 回よけきれないため）。次の階で後ろから入り直す。よけた数は残す
+  function cancel(s, ev) {
+    const r = s.rare;
+    if (!r || r.state !== 'on') return;
+    if (r.kind === 'mimic' && r.e.ph !== 'flee') { Object.assign(r.e, { ph: 'enter', t: 0, x: -16, x0: -16, z: 0, lp: s.h.lp }); return; }
+    end(r, false, ev, s);
+  }
+
+  Game.rare = { KINDS, decide, fromOptions, update, cancel, upcoming };
 })();
 </script>
 <script>
@@ -818,7 +885,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       const t = R.pick(o, traps);
       const { lo, hi, J } = safeJump(ranks, cfg, t.w || cfg.obj.trap.w, cap);
       const j = (lo + hi) / 2;
-      for (const u of [0.15, 0.32, 0.5, 0.68, 0.85]) inst.items.push({ k: 'seed', at: t.at + j + u * J.sec, lane: t.lane, h: Math.round(arcZ(J, u)), filler: true });
+      for (const u of [0.15, 0.32, 0.5, 0.68, 0.85]) inst.items.push({ k: 'seed', at: t.at + j + u * J.sec, lane: t.lane, h: Math.round(arcZ(J, u)), filler: true, arc: true });
       return;
     }
     const end = inst.items.reduce((m, x) => Math.max(m, x.at), 0);
@@ -894,7 +961,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   function choose(state, cfg) {
     const ranks = state.ranks, open = (ranks.lane || 0) >= 1;
     const here = { col: state.h.col, lane: state.h.lane, open }, reach = open ? [0, 1, 2] : [state.h.lane];
-    const cap = maxThreats(state, cfg), sc = (state.assist && state.assist.speedCap) || 0, rg = (state.assist && state.assist.rockGap) || 0;
+    const cap = maxThreats(state, cfg), sc = (state.assist && state.assist.speedCap) || 0, rg = (state.assist && state.assist.rockGap) || 0, lk = (state.assist && state.assist.luck) || 0;
     let pool = LIST.filter((p) => meets(p.requires, ranks) && p.threats <= cap);
     let intro = false;
     while (state.intro.length) {
@@ -915,6 +982,12 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       inst.gap = Math.max(gap, cfg.spawn.minGapSec) + (intro ? 0.6 : 0);
       // いしの すきま: 石の入った型は、全部を rg 秒あとにずらし（前の型との すきま）、型の間にも rg 秒足す（次の型との すきま）
       if (rg > 0 && inst.items.some((x) => x.k === 'rock')) { for (const x of inst.items) x.at += rg; inst.gap += rg; }
+      // こううん: 当たると、この 1 回の出現の物（障害と添えた宝。わなを越える弧の種も）が丸ごと来ない。型の間の種の列は残す。
+      // 引くのはランの乱数とは別の列（state.luckR）。紹介の型では引かない。消えた物は inst.lucky（画面の演出だけに使う）
+      if (lk > 0 && !intro && state.luckR && R.next(state.luckR) < lk) {
+        inst.lucky = inst.items.filter((x) => !x.filler || x.arc);
+        inst.items = inst.items.filter((x) => x.filler && !x.arc);
+      }
       return inst;
     }
     return resolve(state, byId.trap1, here, ranks, sc);
@@ -990,8 +1063,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   // 速さ: 段階の速さに、おちついて（assist.speedCap、0 は上限なし）の上限をかける
   const capSpeed = (sp, cap) => (cap > 0 ? Math.min(sp, cap) : sp);
-  const speedAt = (ranks, cfg, cap) => capSpeed(cfg.speed[ranks.speed || 0], cap || 0);
-  const speedOf = (s, cfg) => capSpeed(cfg.speed[s.ranks.speed], s.assist.speedCap);
+  // 走る速さの段階: 取った はやさ と、さいしょの はやさ（ranks.speedMin）の大きいほう
+  const speedRank = (ranks) => Math.max(ranks.speed || 0, ranks.speedMin || 0);
+  const speedAt = (ranks, cfg, cap) => capSpeed(cfg.speed[speedRank(ranks)], cap || 0);
+  const speedOf = (s, cfg) => capSpeed(cfg.speed[speedRank(s.ranks)], s.assist.speedCap);
   const travel = (s, cfg, x) => (cfg.view.w - x) / speedOf(s, cfg); // 右端から x まで流れる時間
   // ジャンプの高さと空中の時間（よくばりでほっぺが重くなる）
   const jumpOf = (ranks, cfg) => { const j = (cfg.greedJump || [])[ranks.greed || 0]; return j ? { h: j.h, sec: j.sec } : { h: cfg.hamster.jumpH, sec: cfg.hamster.jumpSec }; };
@@ -1004,10 +1079,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const isThreat = (k) => k === 'trap' || k === 'block' || k === 'stal';
   const objW = (o, cfg) => o.w || (o.k === 'trap' ? cfg.obj.trap.w : o.k === 'block' ? cfg.obj.block.w : o.k === 'stal' ? cfg.obj.stal.w : cfg.obj.item.w);
 
-  // runOptions: { seed, lives, pretaken, assist, noSpawn, ranks, rare（③: 'pup' | 'mimic' | 'fly' | { kind, floor } で必ず起こす。null で起こさない）, rareFloor }
+  // runOptions: { seed, lives, pretaken, speedStart（さいしょの はやさ）, assist, noSpawn, ranks, rare（③: 'pup' | 'mimic' | 'fly' | { kind, floor } で必ず起こす。null で起こさない）, rareFloor }
   // assist（②の恒久強化の助け）: { warnPlus: 落石の影を何秒早く出すか, swapPlus: とおせんぼが何ドット早く入れ替わるか, preview: 窓に入る何秒前から右端に予告を出すか, jumpGrace: わなに対する当たり判定を何ドット小さくするか, xpMul: 経験値の係数（いせきの ちず）, rockMark: 落石の落ちる場所に ⊗ の印を出す,
   //   speedCap: 走る速さの上限（おちついて。0 は上限なし）, magnet: じしゃくの段階, lootBoost: 追いつきの p（3択におたからを入れる確率）,
-  //   rockGap: いしの すきま（石と地面の物の ずれに足す秒。石の型の前後の すきま） }
+  //   rockGap: いしの すきま（石と地面の物の ずれに足す秒。石の型の前後の すきま）, luck: こううん（型が丸ごと来ない確率） }
   function create(cfg, opt = {}) {
     const L = cfg.layout;
     const s = {
@@ -1022,17 +1097,22 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       h: { col: L.startCol, lane: L.startLane, x: L.colX[L.startCol], lp: L.startLane, mv: null, queued: null, z: 0, jt: -1, jbuf: 0 },
       objs: [], rocks: [],
       nextId: 1, nextSpawnT: 0.6, intro: [],
+      floorAt: 0,        // 今の階に着いた時刻（③レアイベントを始めるまでの猶予）
       rows: {},
       noSpawn: !!opt.noSpawn,
-      assist: Object.assign({ warnPlus: 0, swapPlus: 0, preview: 0, jumpGrace: 0, xpMul: 1, rockMark: false, speedCap: 0, magnet: 0, lootBoost: 0, rockGap: 0 }, opt.assist || {}),
+      assist: Object.assign({ warnPlus: 0, swapPlus: 0, preview: 0, jumpGrace: 0, xpMul: 1, rockMark: false, speedCap: 0, magnet: 0, lootBoost: 0, rockGap: 0, luck: 0 }, opt.assist || {}),
       loot: 0,           // 拾った宝の値打ちの合計（持ち帰る通貨。meta.value）
       seedRun: 0, seedT: -9,
-      rare: null,        // ③ランダムイベント（rare.js）
+      rare: null,        // ③ランダムイベント（rare.js）: 今の予定
+      luckR: { rng: (RNG.seedFrom(opt.seed == null ? 1 : opt.seed) ^ 0x6c75636b) | 0 }, // こううんの抽選の乱数（ランの乱数とは別の列）
+      ghosts: [],        // こううんで来なかった物（画面の演出の時刻を出すだけ。当たり判定も点もない）: { k, lanes, wx, w } / { k: 'rock', col, lanes, tWarn }
+      rareNext: [],      // あとの予定の並び（色の順）
       cleared: false,    // ④宝を手に入れたか（クリアの印）。エクストラで死んでも残る
       clearAt: null,     // クリアした時刻（s.t はエクストラの間も進むので）
       extra: null,       // ④脱出エクストラ: { on: 走っている間, n: 登る回数, left: 残りの登る回数, escaped, bonus }。入っていなければ null
     };
-    if (Game.rare) s.rare = Game.rare.fromOptions(opt, s.seed, cfg);
+    if (opt.speedStart > 0) s.ranks.speedMin = opt.speedStart; // さいしょの はやさ（取った はやさ とは別に、速さの段階の下限）
+    if (Game.rare) { const plans = Game.rare.fromOptions(opt, s.seed, cfg); s.rare = plans.shift() || null; s.rareNext = plans; }
     return s;
   }
 
@@ -1060,6 +1140,32 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         s.objs.push(o);
       }
     }
+    // こううんで来なかった障害: 演出の時刻だけを出す（物は作らない）
+    for (const it of inst.lucky || []) {
+      if (it.k === 'rock') {
+        const tImpact = s.t + lead + it.at + travel(s, cfg, L.colX[it.col]);
+        s.ghosts.push({ k: 'rock', col: it.col, lanes: it.lanes.slice(), tWarn: Math.max(s.t, tImpact - cfg.rockWarn[s.ranks.move] - s.assist.warnPlus) });
+      } else if (it.k === 'trap' || it.k === 'stal' || it.k === 'block') {
+        s.ghosts.push({ k: it.k, lanes: it.lanes ? it.lanes.slice() : [it.lane], wx: s.dist + W + (lead + it.at) * sp, w: it.w || 0 });
+      }
+    }
+  }
+
+  // こううんで来なかった物が消える時: 地面の物は窓に入る時（さきみがあれば、予告に一瞬出たあと）、石は影が出るはずだった時。出来事 luck を出すだけ
+  function updateGhosts(s, cfg, ev) {
+    if (!s.ghosts.length) return;
+    const W = cfg.view.w, pv = s.assist.preview, show = Math.min(cfg.luck.showMax, pv / 2), vx = W + Math.max(0, pv - show) * speedOf(s, cfg);
+    s.ghosts = s.ghosts.filter((g) => {
+      if (g.k === 'rock') {
+        if (s.t < g.tWarn) return true;
+        ev.push({ type: 'luck', t: s.t, k: 'rock', col: g.col, lanes: g.lanes, x: cfg.layout.colX[g.col] });
+        return false;
+      }
+      const sx = g.wx - s.dist, half = (g.w || cfg.obj.trap.w) / 2;
+      if (sx - half > vx) return true;
+      ev.push({ type: 'luck', t: s.t, k: g.k, lanes: g.lanes, x: Math.min(W, sx), pv: pv > 0 });
+      return false;
+    });
   }
 
   const threatPts = (s, cfg, rank, near) => Math.round(cfg.score.threatBase * (1 + cfg.score.threatStep * rank)) * (near ? cfg.score.nearMul : 1);
@@ -1150,7 +1256,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (s.lives > 0) {
       s.lives--;
       s.invuln = cfg.lifeInvuln;
-      s.objs = []; s.rocks = [];
+      s.objs = []; s.rocks = []; s.ghosts = [];
       if (Game.rare) Game.rare.cancel(s, ev);
       s.nextSpawnT = s.t + Math.max(0, cfg.lifeGrace - cfg.spawn.lead);
       ev.push({ type: 'hit', t: s.t, what, x: h.x, lane: h.lane, fatal: false }, { type: 'life_used', t: s.t, x: h.x, lane: h.lane, lives: s.lives });
@@ -1245,7 +1351,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // ---- レベルアップ ----
   // 物を消し、ハムスターを地面のマスに戻す（床が抜ける・よじ登る前）
   function settle(s, cfg, ev) {
-    s.objs = []; s.rocks = [];
+    s.objs = []; s.rocks = []; s.ghosts = [];
     if (Game.rare) Game.rare.cancel(s, ev);
     const h = s.h;
     h.z = 0; h.jt = -1; h.jbuf = 0; h.queued = null;
@@ -1283,7 +1389,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const n = ranksLeft(s, cfg) + 1;
     s.extra = { on: true, n, left: n, escaped: false, bonus: 0 };
     s.phase = 'run';
-    s.objs = []; s.rocks = [];
+    s.objs = []; s.rocks = []; s.ghosts = [];
     s.nextSpawnT = s.t + Math.max(0, cfg.landGrace - cfg.spawn.lead);
     s.xp = 0; s.xpNeed = cfg.extra.xpPer;
     return [{ type: 'extra_start', t: s.t, left: n, x: s.h.x, lane: s.h.lane }];
@@ -1315,6 +1421,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const extra = !!(s.extra && s.extra.on);
     s.offer = null;
     s.floor += extra ? -1 : 1; // エクストラでは上の階へ登る
+    s.floorAt = s.t;
     s.phase = 'run';
     s.nextSpawnT = s.t + Math.max(0, cfg.landGrace - cfg.spawn.lead); // 物は lead 秒前に作るので、そのぶん早めに
     s.intro.push(...Game.patterns.introducedBy(id, rank));
@@ -1334,24 +1441,25 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (s.invuln > 0) s.invuln = Math.max(0, s.invuln - dt);
     const sp = speedOf(s, cfg);
     s.dist += sp * dt;
-    s.distFrac += (cfg.speed[s.ranks.speed] * dt) / cfg.score.distPer; // 距離の点は上限の前の速さで数える（おちついてでもレベルアップのテンポは変えない）
+    s.distFrac += (cfg.speed[speedRank(s.ranks)] * dt) / cfg.score.distPer; // 距離の点は上限の前の速さで数える（おちついてでもレベルアップのテンポは変えない）
     if (s.distFrac >= 1) { const p = Math.floor(s.distFrac); s.distFrac -= p; addScore(s, cfg, p); }
     moveHamster(s, cfg, dt, ev);
     if (!s.noSpawn && s.t >= s.nextSpawnT) {
       const inst = Game.patterns.choose(s, cfg);
       place(s, inst, cfg);
-      const end = inst.items.reduce((m, x) => (x.filler ? m : Math.max(m, x.at)), 0); // 種の列は型の間を広げない
+      const end = inst.items.concat(inst.lucky || []).reduce((m, x) => (x.filler ? m : Math.max(m, x.at)), 0); // 種の列は型の間を広げない。こううんで来なかった物の分の間は残す
       s.nextSpawnT = s.t + end + inst.gap;
       ev.push({ type: 'spawn', t: s.t, id: inst.id });
     }
     updateObjs(s, cfg, ev);
     if (s.phase === 'run') updateRocks(s, cfg, ev);
+    if (s.phase === 'run') updateGhosts(s, cfg, ev);
     if (s.rare && Game.rare) Game.rare.update(s, cfg, ev);
     checkLevel(s, cfg, ev);
     return ev;
   }
 
-  Game.rules = { create, setCell, place, step, pick, startExtra, ranksLeft, speedOf, speedAt, travel, jumpOf, trapClearSec, longTrapW };
+  Game.rules = { create, setCell, place, step, pick, startExtra, ranksLeft, speedOf, speedAt, travel, jumpOf, trapClearSec, longTrapW, speedRank };
 })();
 </script>
 <script>
@@ -2049,6 +2157,16 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   // ---- 拾い物 ----
   // ひまわりのたね（殻をむいた粒。クリーム〜金で、罠の金属の灰色と見分ける）
+  // こううん: 来なかった物が消えたところに立つ、小さなクローバー（4 枚の葉）
+  S.clover = [
+    '.mm.mm.',
+    'mmnmmnm',
+    '.mnmnm.',
+    'mmmnmmm',
+    'mmnmnmm',
+    '.mm.mm.',
+    '...n...',
+  ];
   S.seed = [
     '..f..',
     '.fcf.',
@@ -2641,7 +2759,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       return set;
     });
     b.ham = b.hamG[0];
-    for (const k of ['shadow', 'shadowSmall', 'trap', 'rock', 'block', 'seed', 'gem', 'big', 'statue', 'crown', 'stalTip', 'stalStem', 'rockShadow', 'rockMark', 'pvTrap', 'pvStal', 'pvBlock', 'pvItem', 'tent', 'pile', 'arrowL', 'arrowR', 'finger', 'storyHam', 'storyGate']) b[k] = bake(S[k]);
+    for (const k of ['shadow', 'shadowSmall', 'trap', 'rock', 'block', 'seed', 'gem', 'big', 'statue', 'crown', 'stalTip', 'stalStem', 'rockShadow', 'rockMark', 'pvTrap', 'pvStal', 'pvBlock', 'pvItem', 'tent', 'pile', 'arrowL', 'arrowR', 'finger', 'storyHam', 'storyGate', 'clover']) b[k] = bake(S[k]);
     b.fire = S.fire.map((r) => bake(r));
     // ③実績とシークレット
     for (const k of ['medalS', 'pup', 'batHang']) b[k] = bake(S[k]);
@@ -2671,6 +2789,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const B = Game.bake;
 
   const INK = '#181425';
+  const LUCK_SEC = { puff: 0.7, drop: 0.75 }; // こううんの演出の長さ
   const hash = (i) => ((Math.imul(i + 11, 2654435761) ^ (i * 40503)) >>> 0) / 4294967296;
   const TIER = {
     S: { scale: 1, life: 0.55, stagger: 0.03, slant: 1 },
@@ -2679,7 +2798,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   };
 
   function create(cfg) {
-    let pops = [], pulls = [], shake = 0, shakeT = 0, seq = 0, mirror = false;
+    let pops = [], pulls = [], lucks = [], shake = 0, shakeT = 0, seq = 0, mirror = false; // lucks: こううんの ぽふっ・クローバー・砂粒 { kind, x, y, t, mirror }
     const charCache = {};
     const burstCache = {};
 
@@ -2761,13 +2880,27 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         case 'collapse': pop('ゴゴゴ', '#e4a672', 150, 16, 'L'); shake = cfg.fx.shakeMax; shakeT = 0.6; break;
         case 'escape': pop('だっしゅつ!', '#fee761', 96, 26, 'L'); break;
         case 'all_max': pop('ぜんぶ さいだい!', '#feae34', 96, 18, 'M'); break;
-        case 'levelup_pick': if (e.id === 'lane' && e.rank === 1) pop('ガラガラ', '#e4a672', 96, 88, 'M'); break;
+        case 'levelup_pick':
+          if (e.id === 'lane' && e.rank === 1) pop('ガラガラ', '#e4a672', 96, 88, 'M');
+          if (e.id === 'speed' && app && app.rules && e.rank <= (app.rules.ranks.speedMin || 0)) pop(cfg.meta.speedStart.samePop, '#8b9bb4', 96, 60, 'S'); // さいしょの はやさ の下では速くならない
+          break;
         case 'clear': pop('ジャーン', '#feae34', 96, 22, 'L'); break;
         case 'mimic_tell': pop('ガタガタ', '#feae34', x, y - 4, 'S'); break;
         case 'mimic_bite': pop('ガブッ', '#e43b44', x + 6, y - 8, 'M'); shake = 1; shakeT = 0.15; break;
         case 'mimic_give': pop('ポロッ', '#feae34', x, y - 6, 'M'); break;
         case 'fly_catch': pop('パクッ', '#fee761', x, R.laneY(e.lane) - (e.h || 0) - 20, 'M'); break;
         case 'bat': pop('パタパタ', '#c0cbdc', e.x, e.y + 12, 'S'); break;
+        case 'luck': {
+          // こううん: 地面の物は、さきみの予告の印（なければ窓の右端）で ぽふっ と消えてクローバー。石は影の代わりに天井から砂粒と、床にクローバー（音なし）
+          const V = cfg.view, sk = cfg.layout.skew;
+          // 石: 石の代わりに、天井にクローバーが出て消える（実機の感想: 砂粒だけでは気づかない）
+          if (e.k === 'rock') { for (const l of e.lanes) lucks.push({ kind: 'drop', x: e.x + R.laneDx(l), y: R.laneY(l) - 3, t: 0, mirror }); break; }
+          for (const l of e.lanes) {
+            const cx = e.pv ? V.w - 11 - 2 * sk + R.laneDx(l) + 4 : Math.min(V.w - 5, e.x + R.laneDx(l)), cy = e.pv ? R.laneY(l) - 6 : R.laneY(l) - 3;
+            lucks.push({ kind: 'puff', x: cx, y: cy, t: 0, mirror });
+          }
+          break;
+        }
         case 'camp_count_end': pop('ジャラッ', '#feae34', 60, 14, 'M'); break;
       }
     }
@@ -2777,11 +2910,31 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       pops = pops.filter((p) => p.t < p.T.life);
       for (const p of pulls) p.t += dt;
       pulls = pulls.filter((p) => p.t < cfg.fx.pullSec);
+      for (const p of lucks) p.t += dt;
+      lucks = lucks.filter((p) => p.t < LUCK_SEC[p.kind]);
       if (shakeT > 0) shakeT -= dt; else shake = 0;
       seq++;
     }
 
     function draw(g) {
+      const A = B.all();
+      for (const p of lucks) {
+        const fx = (x) => Math.round(p.mirror ? cfg.view.w - x : x);
+        if (p.kind === 'puff') {
+          // ぽふっ: 小さな煙の粒が 6 つ、外へ広がって薄くなる。そのあとクローバーが少し浮いて、点滅して消える
+          const u = Math.min(1, p.t / 0.3);
+          if (u < 1) {
+            g.globalAlpha = 1 - u; g.fillStyle = '#c0cbdc';
+            for (let i = 0; i < 6; i++) { const a = (i / 6) * 2 * Math.PI + 0.3; g.fillRect(fx(p.x + Math.cos(a) * (1 + 4 * u)), Math.round(p.y + Math.sin(a) * (1 + 3 * u)), 1, 1); }
+            g.globalAlpha = 1;
+          }
+          const c = p.t - 0.1;
+          if (c > 0 && !(c > 0.45 && Math.floor(c * 20) % 2 === 0)) g.drawImage(A.clover, fx(p.x) - 3, Math.round(p.y - 4 - 5 * Math.min(1, c / 0.5)));
+        } else {
+          // 天井のクローバー: 石が落ちてくるはずだった天井の辺りに出て、そのまま点滅して消える（落ちない。実機の感想: 落ちてくると反射でよけたくなる）
+          if (!(p.t > 0.45 && Math.floor(p.t * 20) % 2 === 0)) g.drawImage(A.clover, fx(p.x) - 3, Math.round(p.y - 50));
+        }
+      }
       for (const p of pulls) {
         const u = p.t / cfg.fx.pullSec, k = u * u; // 速くなりながら吸い込まれる
         let x = Math.round(p.x0 + (p.x1 - p.x0) * k - p.img.width / 2), y = Math.round(p.y0 + (p.y1 - p.y0) * k);
@@ -2869,7 +3022,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       }
     }
 
-    return { on, update, draw, shakeOffset, collapseTick, drawCollapse, reset() { pops = []; shake = 0; } };
+    return { on, update, draw, shakeOffset, collapseTick, drawCollapse, reset() { pops = []; lucks = []; shake = 0; } };
   }
 
   Game.fx = { create };
@@ -3483,7 +3636,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     return s.rocks.some((r) => s.t >= r.tWarn && Math.abs(cfg.layout.colX[r.col] - h.x) < half && r.lanes.some((l) => Math.abs(h.lp - l) < 0.5));
   }
 
-  // さきみ: まだ窓の外にある物を、右端の、そのレーンの位置に小さな印で知らせる（窓に入ると消える）。種は出さない
+  // さきみ: まだ窓の外にある物を、右端の、そのレーンの位置に小さな印で知らせる（窓に入ると消える）。種は出さない。こううんで来なかった物は一瞬だけ
   const PV_RANK = { block: 4, stal: 3, trap: 2 };
   function drawPreview(g, s, A, lane, vis) {
     const cfg = Game.config, V = cfg.view, far = V.w + 8 + s.assist.preview * Game.rules.speedOf(s, cfg);
@@ -3491,6 +3644,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     for (const { o } of vis) {
       if (o.k === 'seed' || o.done) continue;
       const sx = o.wx - s.dist, half = (o.w || cfg.obj.item.w) / 2;
+      if (sx - half <= V.w || sx > far) continue;
+      if (!best || (PV_RANK[o.k] || 1) > (PV_RANK[best.k] || 1)) best = o;
+    }
+    // こううんで来なかった物も、消えるまでの一瞬だけ予告に出る（rules の updateGhosts が消す）
+    for (const o of s.ghosts || []) {
+      if (o.k === 'rock' || !o.lanes.includes(lane)) continue;
+      const sx = o.wx - s.dist, half = (o.w || cfg.obj.trap.w) / 2;
       if (sx - half <= V.w || sx > far) continue;
       if (!best || (PV_RANK[o.k] || 1) > (PV_RANK[best.k] || 1)) best = o;
     }
@@ -3685,6 +3845,36 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     g.restore();
   }
 
+  // レアイベントの紹介の見本: 床の上を走るハムスターと、イベントの絵（まいご: 隣のレーン / たね: 前のマスの上で浮く / まもの: 後ろから跳びかかり、ハムスターが跳んでよける）
+  function drawRareDemo(g, app, A, b, kind, t) {
+    g.fillStyle = INK; g.fillRect(b.x - 1, b.y - 1, b.w + 2, b.h + 2);
+    g.fillStyle = '#262b44'; g.fillRect(b.x, b.y, b.w, b.h);
+    g.save(); g.beginPath(); g.rect(b.x, b.y, b.w, b.h); g.clip(); g.translate(b.x, b.y);
+    const th = A.themes[kind === 'pup' ? 0 : kind === 'fly' ? 1 : 2];
+    for (let r = 0; r < 3; r++) for (let x = -16; x < b.w + 16; x += 16) g.drawImage(th.floor, x + (2 - r) * 2 - Math.floor(app.time * 30) % 16, 16 + r * 8);
+    const gy = (lane) => 22 + lane * 8, skew = (lane) => (2 - lane) * 2, X = [14, 34, 54];
+    const cyc = t % 2.4, leap = kind === 'mimic' && cyc >= 1.2 && cyc < 1.6, u = (cyc - 1.2) / 0.4;
+    let z = 0;
+    if (kind === 'mimic' && cyc >= 1.1 && cyc < 1.7) { const k = (cyc - 1.1) / 0.6; z = 4 * 12 * k * (1 - k); }
+    if (kind === 'fly' && cyc >= 1.2 && cyc < 1.8) { const k = (cyc - 1.2) / 0.6; z = 4 * 12 * k * (1 - k); }
+    const hx = (kind === 'fly' ? X[1] + (cyc > 0.6 ? 20 * Math.min(1, (cyc - 0.6) / 0.3) : 0) : X[1]) + skew(1), hy = gy(1);
+    if (kind === 'pup') { const px = X[2] + skew(0), py = gy(0) + Math.round(Math.sin(t * 6)); g.drawImage(A.shadowSmall, px - 5, gy(0) - 1); g.drawImage(A.pup, px - Math.floor(A.pup.width / 2), py - A.pup.height - 1); }
+    if (kind === 'mimic') {
+      const mx = X[0] + skew(1) - 4 + (leap ? 24 * u : 0), mz = leap ? 4 * 5 * u * (1 - u) : 0;
+      g.drawImage(A.shadow, Math.round(mx - 6), hy - 1);
+      g.drawImage(A.mimic[leap || Math.floor(t * 14) % 7 === 0 ? 1 : 0], Math.round(mx - 7), Math.round(hy - A.mimic[0].height - mz));
+    }
+    g.drawImage(z > 2 ? A.shadowSmall : A.shadow, Math.round(hx - (z > 2 ? 5 : 6)), hy - 1);
+    const f = z > 0 ? A.ham.jumpUp : A.ham.run[Math.floor(app.time * 10) % 6];
+    g.drawImage(f.n, Math.round(hx - 8), Math.round(hy - 16 - z));
+    if (kind === 'fly') {
+      const img = A.flySeed[Math.floor(app.time * 10) % 2], fx = X[2] + skew(1), top = Math.round(hy - 14 - img.height + Math.sin(t * 4));
+      if (!(cyc >= 1.4 && cyc < 2.4)) { g.drawImage(A.shadowSmall, fx - 5, hy - 1); g.drawImage(img, fx - 5, top); }
+      else if (cyc < 1.7) g.drawImage(A.sparkle[Math.floor(app.time * 8) % 2], fx - 3, top - 2);
+    }
+    g.restore();
+  }
+
   function drawHowto(g, app, A) {
     const cfg = Game.config, H = cfg.howto, L = R.howtoLayout(), b = L.box, cur = howtoScene(app);
     // 一覧（今の場面の行は金色）。背景が騒がしいので、暗い板を敷く
@@ -3712,7 +3902,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     g.fillStyle = '#262b44'; g.fillRect(p.x, p.y, p.w, p.h);
     centerText(g, d.title, p.y + 4, GOLD, INK);
     const b = { x: p.x + 6, y: p.y + 16, w: 70, h: 50 };
-    drawDemo(g, app, A, b, d.scene, tip.t % cfg.ui.howtoSec);
+    if (d.rare) drawRareDemo(g, app, A, b, d.rare, tip.t); else drawDemo(g, app, A, b, d.scene, tip.t % cfg.ui.howtoSec);
     d.lines.forEach((l, i) => B.text(g, l, b.x + b.w + 8, b.y + 3 + i * 12, d.sub.includes(i) ? '#8b9bb4' : WHITE, INK));
     if (tip.t >= T.closeSec) {
       const w = B.textW(T.next), x = p.x + p.w - 14 - w, y = p.y + p.h - 12;
@@ -3941,6 +4131,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     B.text(g, sc, V.w - 3 - B.textW(sc), 3, WHITE, INK);
     const lx = Math.max(30, B.textW(label) + 8);
     for (let i = 0; i < s.lives; i++) g.drawImage(A.seed, lx + i * 7, 3);
+    if (app.maxDiff) g.drawImage(A.crown, V.w - 3 - B.textW(sc) - 15, 3); // 最大難易度の印（ランの始めに決まる）
     if (app.achFlash > 0 && Math.floor(app.achFlash * 6) % 2 === 0) g.drawImage(A.medalS, lx + 2 + s.lives * 7, 2); // 実績を取った（名前はあとで）
     const prev = E ? s.xpNeed - cfg.extra.xpPer : s.level === 0 ? 0 : s.xpNeed - cfg.xpBase * Math.pow(cfg.xpGrowth, s.level);
     const k = Math.max(0, Math.min(1, (s.xp - prev) / (s.xpNeed - prev)));
@@ -3987,17 +4178,20 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const cs = R.cards(s.offer.length);
     const ready = app.chooseT >= cfg.ui.chooseLock;
     centerText(g, 'ひとつ えらんでね', 19, WHITE, INK);
+    const smin = s.ranks.speedMin || 0;
     cs.forEach((c, i) => {
       const id = s.offer[i], rank = s.ranks[id] + 1;
       const info = Game.levelup.card(cfg, id, rank);
+      // さいしょの はやさ の段階までの はやさ は、選んでも速くならない（灰色。説明を差し替え、段階の印は下限まで空色）
+      const same = id === 'speed' && rank <= smin;
       g.fillStyle = INK; g.fillRect(c.x - 1, c.y - 1, c.w + 2, c.h + 2);
-      g.fillStyle = ready ? '#3a4466' : '#262b44'; g.fillRect(c.x, c.y, c.w, c.h);
+      g.fillStyle = ready && !same ? '#3a4466' : '#262b44'; g.fillRect(c.x, c.y, c.w, c.h);
       g.fillStyle = '#5a6988'; g.fillRect(c.x, c.y, c.w, 1);
-      B.text(g, info.name, c.x + 3, c.y + 4, GOLD, INK);
+      B.text(g, info.name, c.x + 3, c.y + 4, same ? '#8b9bb4' : GOLD, INK);
       // 段階の印
       const max = cfg.upgrades.find((u) => u.id === id).max;
-      for (let r = 0; r < max; r++) { g.fillStyle = r < rank ? GOLD : '#262b44'; g.fillRect(c.x + 3 + r * 5, c.y + 14, 4, 3); }
-      B.wrap(info.desc, 9).slice(0, 5).forEach((line, j) => B.text(g, line, c.x + 3, c.y + 22 + j * 9, WHITE));
+      for (let r = 0; r < max; r++) { g.fillStyle = same ? (r < smin ? (r < rank ? '#0099db' : '#124e89') : '#3a4466') : r < rank ? GOLD : '#262b44'; g.fillRect(c.x + 3 + r * 5, c.y + 14, 4, 3); }
+      B.wrap(same ? cfg.meta.speedStart.same : info.desc, 9).slice(0, 5).forEach((line, j) => B.text(g, line, c.x + 3, c.y + 22 + j * 9, same ? '#8b9bb4' : WHITE));
       B.text(g, String(i + 1), c.x + c.w - 8, c.y + c.h - 9, '#8b9bb4');
     });
   }
@@ -4034,7 +4228,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   const fmtMul = (m) => 'x' + (Math.floor(m * 100 + 1e-6) / 100).toFixed(2);
-  const unlockText = (ids) => ids.map((id) => Game.config.meta.unlocks.find((u) => u.id === id).name).join('と ') + 'が つかえるように なった!';
+  const unlockText = (ids) => ids.map((id) => Game.meta.unlockName(id, Game.config)).join('と ') + 'が つかえるように なった!';
 
   // ---- キャンプ ----
   // 位置（窓の中のドット）: 上の帯、◀ しゅっぱつ ▶、カード（3択と同じ位置）、カードの下半分の − ＋
@@ -4048,13 +4242,21 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // ページ: 恒久強化・アンロックのカード（3枚ずつ）のあとに、実績のページ（ACH.perPage 個ずつ）
   const ACH = { cols: 7, rows: 2, w: 24, h: 18, gap: 2, y: 31 };
   ACH.perPage = ACH.cols * ACH.rows;
-  R.campPerkPages = () => Math.ceil(Game.meta.order(Game.config).length / CAMP.perPage);
+  // 恒久強化のページのあとに、アンロック（まえうしろ・レーン・さいしょの はやさ）のページ。アンロックは新しいページから
+  const perkPages = () => Math.ceil(Game.meta.perkIds(Game.config).length / CAMP.perPage);
+  R.campPerkPages = () => perkPages() + Math.ceil(Game.meta.unlockIds(Game.config).length / CAMP.perPage);
+  R.isUnlockPage = (page) => page >= perkPages() && page < R.campPerkPages();
   R.achPages = () => Math.ceil(Game.config.achieve.list.length / ACH.perPage);
   // あそびかた: いちばん最後のページ（1ページ目から ◀ で開く）
   R.boardPage = () => R.campPerkPages() + R.achPages(); // きろく（実績のあと）
   R.howtoPage = () => R.boardPage() + 1;
   R.campPages = () => R.howtoPage() + 1;
-  R.campIds = (page) => (page < R.campPerkPages() ? Game.meta.order(Game.config).slice(page * CAMP.perPage, page * CAMP.perPage + CAMP.perPage) : []);
+  R.campIds = (page) => {
+    const P = CAMP.perPage;
+    if (page < perkPages()) return Game.meta.perkIds(Game.config).slice(page * P, (page + 1) * P);
+    if (page < R.campPerkPages()) { const k = page - perkPages(); return Game.meta.unlockIds(Game.config).slice(k * P, (k + 1) * P); }
+    return [];
+  };
   R.achIds = (page) => { const k = page - R.campPerkPages(); return k < 0 ? [] : Game.config.achieve.list.slice(k * ACH.perPage, (k + 1) * ACH.perPage).map((a) => a.id); };
   R.achPageOf = (id) => R.campPerkPages() + Math.floor(Game.config.achieve.list.findIndex((a) => a.id === id) / ACH.perPage);
   R.achLayout = function (n) {
@@ -4124,8 +4326,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     else {
       const n = R.campPages(), x0 = Math.floor(V.w / 2 - (n * 6 - 2) / 2);
       for (let p = 0; p < n; p++) { g.fillStyle = p === cp.page ? GOLD : '#3a4466'; g.fillRect(x0 + p * 6, 101, 4, 3); }
+      // 最大難易度の印（右下）: 何も振らず、まえうしろ・レーンを入れているとき。宝の量・さいしょの はやさ・連敗は関係ない
+      // （ページの印と重ならないよう、王冠＋「さいだい」。ランの上の帯と同じ王冠）
+      if (M.isMaxDifficulty(save, cfg)) { const t = 'さいだい', tx = V.w - 3 - B.textW(t); B.text(g, t, tx, 99, GOLD, INK); g.drawImage(A.crown, tx - 14, 99); }
+      // アンロックのページは、左下に見出し（けはい の代わり）
+      if (R.isUnlockPage(cp.page)) B.text(g, 'アンロック', 3, 99, '#2ce8f5', INK);
       // 追いつき（おたからの けはい）: 連敗があれば左下に、出やすさを 3 つの丸で（p を 0.3 ごとに丸める）。上の帯の倍率は罰を含めた値
-      const kp = M.boost(save, cfg);
+      const kp = R.isUnlockPage(cp.page) ? 0 : M.boost(save, cfg);
       if (kp > 0) {
         const dots = Math.max(1, Math.min(3, Math.round(kp / 0.3))), kx = 4 + B.textW('けはい') + 3;
         B.text(g, 'けはい', 3, 99, '#feae34', INK);
@@ -4181,6 +4388,21 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       lines(info.desc, WHITE);
       bigSign(g, c.minus, '-', info.canRefund);
       bigSign(g, c.plus, '+', info.canBuy);
+    } else if (info.kind === 'speed') {
+      // さいしょの はやさ: 右上がりの速度メーター（選んだ段階まで金色）と段階、倍率の増え分。−＋ の代わりに ◀ ▶
+      const S = Game.config.meta.speedStart;
+      for (let r = 0; r < info.max; r++) { const h = 2 + r; g.fillStyle = info.unlocked && r < info.level ? GOLD : '#262b44'; g.fillRect(c.x + 3 + r * 5, c.y + 17 - h, 4, h); }
+      if (info.unlocked) {
+        const lv = info.level + '/' + info.max;
+        B.text(g, lv, c.x + c.w - 3 - B.textW(lv), c.y + 11, info.level ? GOLD : '#8b9bb4');
+        B.text(g, 'ばいりつ+' + (S.mul * info.level).toFixed(2), c.x + 3, c.y + 19, info.level ? GOLD : '#8b9bb4');
+        B.wrap(info.desc, 9).slice(0, 2).forEach((line, j) => B.text(g, line, c.x + 3, c.y + 27 + j * 8, WHITE));
+        button(g, c.minus, A.arrowL, info.level > 0);
+        button(g, c.plus, A.arrowR, info.level < info.max);
+      } else {
+        lines(S.locked, '#8b9bb4');
+        button(g, { x: c.x, y: c.y + 43, w: c.w, h: c.h - 43 }, 'まだ', false);
+      }
     } else {
       B.text(g, 'ばいりつ+' + Game.config.meta.mul.unlock.toFixed(2), c.x + 3, c.y + 11, info.on ? GOLD : '#8b9bb4');
       if (!info.unlocked) {
@@ -4232,7 +4454,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     try { if (typeof raw === 'string') d = JSON.parse(raw); } catch (e) { return freshTips(cfg); }
     const t = freshTips(cfg);
     if (!d || d.v !== cfg.tips.version || !d.seen || typeof d.seen !== 'object') return t;
-    for (const id of cfg.tips.order) if (d.seen[id] === true) t.seen[id] = true;
+    for (const id of cfg.tips.order.concat(cfg.tips.rare)) if (d.seen[id] === true) t.seen[id] = true;
     return t;
   }
   const loadTips = (cfg = Game.config) => parseTips(read(cfg.tips.key), cfg);
@@ -4300,10 +4522,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.fx.reset();
     if (T.nearClear) nearClear();
     // アンロックで最初から持っていて、まだ見ていないヒント（?pretaken= で上書きしたテストのランでは出さない）
-    if (!q.get('pretaken')) showTips(cfg.tips.order.filter((id) => app.rules.ranks[id] >= 1));
+    // レアイベントの紹介も、それが始まる階に着いたとき（ここでは B1F）に出す
+    showTips((q.get('pretaken') ? [] : cfg.tips.order.filter((id) => app.rules.ranks[id] >= 1)).concat(rareTip()));
   }
 
   // ---- はじめて取ったときの操作の紹介（ヒント）。設計書: docs/specs/2026-11-04-hoppe-dive-tips-design.md ----
+  // この階で始まるレアイベント（紹介用。始まるのは着いてから rare.startSec 秒あと）
+  const rareTip = () => { const k = Game.rare && app.rules ? Game.rare.upcoming(app.rules, cfg) : null; return k ? [k] : []; };
   // ids のうち、まだ見ていないものを順に出す。ボットが遊んでいるときは出さない
   function showTips(ids) {
     const queue = ids.filter((id) => !app.tips.seen[id]);
@@ -4399,7 +4624,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.camp.msg = null; app.camp.sel = null;
     app.camp.boardNew = res ? res.rank : 0;
     if (res && res.gain.unlocked.length) {
-      app.camp.msg = { text: res.gain.unlocked.map((id) => cfg.meta.unlocks.find((u) => u.id === id).name).join('と ') + 'が つかえる!', t: 4 };
+      app.camp.msg = { text: res.gain.unlocked.map((id) => Game.meta.unlockName(id, cfg)).join('と ') + 'が つかえる!', t: 4 };
       app.camp.page = Game.render.campPerkPages() - 1; // アンロックのページを開く
     } else if (res && res.rank === 1) {
       app.camp.msg = { text: 'しんきろく!', t: 4 };
@@ -4479,7 +4704,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   function campCard(id, plus) {
     const M = Game.meta, save = app.save;
     let ok;
-    if (cfg.meta.unlocks.some((u) => u.id === id)) ok = save.unlocked[id] && save.use[id] !== plus && M.toggleUnlock(save, id);
+    if (id === cfg.meta.speedStart.id) ok = M.setSpeedStart(save, save.speedStart + (plus ? 1 : -1), cfg); // さいしょの はやさ: ◀ ▶
+    else if (cfg.meta.unlocks.some((u) => u.id === id)) ok = save.unlocked[id] && save.use[id] !== plus && M.toggleUnlock(save, id);
     else ok = plus ? M.buy(save, id, cfg) : M.refund(save, id, cfg);
     app.audio.on({ type: ok ? (plus ? 'camp_plus' : 'camp_minus') : 'camp_deny' });
     if (ok) { persist(); campAch(); }
@@ -4548,7 +4774,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     dispatch(ev);
     // まえうしろ・レーンを はじめて取った（段階 0 → 1）
     const p = ev.find((e) => e.type === 'levelup_pick');
-    if (p && p.rank === 1 && cfg.tips.order.includes(p.id)) showTips([p.id]);
+    showTips((p && p.rank === 1 && cfg.tips.order.includes(p.id) ? [p.id] : []).concat(rareTip()));
   }
 
   // ---- 入力 ----
@@ -4695,11 +4921,12 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (q.get('bot')) start();
   }
 
-  // 確かめ用の HTML の設定（max: 恒久強化を全部最大＋アンロック2つ、unlocks: アンロック2つだけ、none: まっさら）
+  // 確かめ用の HTML の設定（max: 恒久強化を全部最大＋アンロック全部、unlocks: アンロックだけ、none: まっさら）。さいしょの はやさ は使える状態で段階 0（キャンプで選ぶ）
   function presetSave(kind) {
     const M = Game.meta, sv = M.fresh(cfg);
     if (kind === 'none') return sv;
     for (const u of cfg.meta.unlocks) { sv.unlocked[u.id] = true; sv.use[u.id] = true; }
+    sv.unlocked.speed = true;
     if (kind === 'max') { sv.treasure = M.total(cfg); for (const p of cfg.meta.perks) sv.alloc[p.id] = p.max; }
     return sv;
   }
