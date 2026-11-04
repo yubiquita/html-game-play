@@ -281,6 +281,17 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       cps: 30, fadeSec: 0.25,
     },
 
+    // はじめて取ったときの操作の紹介（ヒント）。設計書: docs/specs/2026-11-04-hoppe-dive-tips-design.md
+    // key: 見たかどうか（localStorage。ほかの保存とは別のフラグ）。closeSec: 出てから閉じられるまで。scene: あそびかたの見本の場面
+    // lines: 1 行 18 字まで。sub: 灰色にする行
+    tips: {
+      version: 1, key: 'hoppe-dive.tips', closeSec: 0.5,
+      order: ['move', 'lane'],
+      move: { title: 'まえうしろ を とった!', scene: 1, lines: ['よこに はらうと', 'まえ・うしろへ うごける', '← → でも うごける', 'いしの かげから にげよう'], sub: [2] },
+      lane: { title: 'レーン を とった!', scene: 2, lines: ['たてに はらうと', 'おく・てまえへ うごける', '↑ ↓ でも うごける', 'とおせんぼを よけよう'], sub: [2] },
+      next: 'タップで つづける',
+    },
+
     ui: { chooseLock: 0.5, fallSec: 0.6, landSec: 0.15, hitFreeze: 0.8, clearSec: 2.5, countdown: 3,
           extraIntroSec: 2.0, darkSec: 1.5, hintSec: 4, escapeSec: 3,
           howtoSec: 2.4 }, // あそびかたの見本の1場面の秒 // ④: 崩れ始めの演出 / 入れないときに暗くなるまで・ヒントを出したまま結果へ進むまで / 脱出成功の場面
@@ -3645,17 +3656,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // 今の場面（タップで選んだ場面から、howtoSec ごとに次へ）
   const howtoScene = (app) => { const h = app.camp.howto || { scene: 0, t0: 0 }, k = (app.time - h.t0) / Game.config.ui.howtoSec; return { scene: (h.scene + Math.floor(k)) % 3, t: (k % 1) * Game.config.ui.howtoSec }; };
 
-  function drawHowto(g, app, A) {
-    const cfg = Game.config, H = cfg.howto, L = R.howtoLayout(), b = L.box, cur = howtoScene(app);
-    // 一覧（今の場面の行は金色）。背景が騒がしいので、暗い板を敷く
-    const r0 = L.rows[0], rn = L.rows[L.rows.length - 1];
-    g.fillStyle = INK; g.fillRect(r0.x - 3, r0.y - 2, r0.w + 2, rn.y + rn.h - r0.y + 3);
-    g.fillStyle = '#262b44'; g.fillRect(r0.x - 2, r0.y - 1, r0.w, rn.y + rn.h - r0.y + 1);
-    H.rows.forEach((r, i) => {
-      const on = r.scene === cur.scene, rr = L.rows[i];
-      B.text(g, r.text, rr.x, rr.y, on ? (r.sub ? '#feae34' : GOLD) : r.sub ? '#8b9bb4' : WHITE, INK);
-    });
-    // 見本の枠
+  // 見本の枠（あそびかたのページと、はじめて取ったときのヒントで使う）。b: 枠、scene: 0 ジャンプ / 1 よこに はらう / 2 たてに はらう、t: 場面の頭からの秒
+  function drawDemo(g, app, A, b, scene, t) {
+    const cur = { scene, t };
     g.fillStyle = INK; g.fillRect(b.x - 1, b.y - 1, b.w + 2, b.h + 2);
     g.fillStyle = '#262b44'; g.fillRect(b.x, b.y, b.w, b.h);
     g.save(); g.beginPath(); g.rect(b.x, b.y, b.w, b.h); g.clip(); g.translate(b.x, b.y);
@@ -3680,10 +3683,42 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     g.drawImage(f.n, Math.round(hx - 8), Math.round(hy - 16 - z));
     drawFinger(g, A, Math.round(fx), Math.round(fy), pressed);
     g.restore();
+  }
+
+  function drawHowto(g, app, A) {
+    const cfg = Game.config, H = cfg.howto, L = R.howtoLayout(), b = L.box, cur = howtoScene(app);
+    // 一覧（今の場面の行は金色）。背景が騒がしいので、暗い板を敷く
+    const r0 = L.rows[0], rn = L.rows[L.rows.length - 1];
+    g.fillStyle = INK; g.fillRect(r0.x - 3, r0.y - 2, r0.w + 2, rn.y + rn.h - r0.y + 3);
+    g.fillStyle = '#262b44'; g.fillRect(r0.x - 2, r0.y - 1, r0.w, rn.y + rn.h - r0.y + 1);
+    H.rows.forEach((r, i) => {
+      const on = r.scene === cur.scene, rr = L.rows[i];
+      B.text(g, r.text, rr.x, rr.y, on ? (r.sub ? '#feae34' : GOLD) : r.sub ? '#8b9bb4' : WHITE, INK);
+    });
+    drawDemo(g, app, A, b, cur.scene, cur.t);
     // 場面の名前（前後・レーンは、ランで取ってから使える）
     const name = H.scenes[cur.scene];
     B.text(g, name, b.x + Math.floor((b.w - B.textW(name)) / 2), b.y + 49, WHITE, INK);
     if (cur.scene > 0) B.text(g, H.after, b.x + Math.floor((b.w - B.textW(H.after)) / 2), b.y + 57, '#8b9bb4', INK);
+  }
+
+  // ---- はじめて取ったときの操作の紹介（ヒント）。設計書: docs/specs/2026-11-04-hoppe-dive-tips-design.md ----
+  // ランの画面を暗くして、板の上に 見出し・見本・文。閉じられるようになったら「タップで つづける」と、点滅する ▶
+  function drawTip(g, app, A) {
+    const cfg = Game.config, V = cfg.view, T = cfg.tips, tip = app.tip, d = T[tip.queue[0]];
+    g.globalAlpha = 0.7; g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h); g.globalAlpha = 1;
+    const p = { x: 6, y: 18, w: V.w - 12, h: 82 };
+    g.fillStyle = INK; g.fillRect(p.x - 1, p.y - 1, p.w + 2, p.h + 2);
+    g.fillStyle = '#262b44'; g.fillRect(p.x, p.y, p.w, p.h);
+    centerText(g, d.title, p.y + 4, GOLD, INK);
+    const b = { x: p.x + 6, y: p.y + 16, w: 70, h: 50 };
+    drawDemo(g, app, A, b, d.scene, tip.t % cfg.ui.howtoSec);
+    d.lines.forEach((l, i) => B.text(g, l, b.x + b.w + 8, b.y + 3 + i * 12, d.sub.includes(i) ? '#8b9bb4' : WHITE, INK));
+    if (tip.t >= T.closeSec) {
+      const w = B.textW(T.next), x = p.x + p.w - 14 - w, y = p.y + p.h - 12;
+      B.text(g, T.next, x, y, '#8b9bb4', INK);
+      if (Math.floor(app.time * 2) % 2 === 0) g.drawImage(A.arrowR, x + w + 3, y);
+    }
   }
 
   // ---- オープニング（おはなし）。設計書: docs/specs/2026-11-04-hoppe-dive-opening-design.md ----
@@ -3923,6 +3958,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       }
     }
     if (app.mode === 'result') drawResult(g, app, s);
+    if (app.mode === 'tip' && app.tip) drawTip(g, app, A);
     if (app.mode === 'countdown') {
       g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h);
       centerText(g, String(Math.ceil(app.countdown)), 44, WHITE, INK, 3);
@@ -4169,7 +4205,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 })();
 </script>
 <script>
-// 保存データの読み書き。②の恒久強化（hoppe-dive.meta、検め方は meta.parse）、③の実績（hoppe-dive.records、検め方は achieve.parse）、きろく（hoppe-dive.board、board.parse）。
+// 保存データの読み書き。②の恒久強化（hoppe-dive.meta、検め方は meta.parse）、③の実績（hoppe-dive.records、検め方は achieve.parse）、きろく（hoppe-dive.board、board.parse）、ヒントを見たか（hoppe-dive.tips、parseTips）。
 // 読めない・壊れている・版が違うときは最初の状態から始める。書けない（容量・プライベートモード）ときは黙って続ける
 (function () {
   const Game = (window.Game = window.Game || {});
@@ -4189,7 +4225,20 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const loadBoard = (cfg = Game.config) => Game.board.parse(read(cfg.board.key), cfg);
   const storeBoard = (board, cfg = Game.config) => write(cfg.board.key, board);
 
-  Game.save = { load, store, loadRecords, storeRecords, loadBoard, storeBoard };
+  // はじめて取ったときの操作の紹介（ヒント）を見たか。{ v, seen: { move: true, lane: true } }（見たものだけ）
+  const freshTips = (cfg = Game.config) => ({ v: cfg.tips.version, seen: {} });
+  function parseTips(raw, cfg = Game.config) {
+    let d = null;
+    try { if (typeof raw === 'string') d = JSON.parse(raw); } catch (e) { return freshTips(cfg); }
+    const t = freshTips(cfg);
+    if (!d || d.v !== cfg.tips.version || !d.seen || typeof d.seen !== 'object') return t;
+    for (const id of cfg.tips.order) if (d.seen[id] === true) t.seen[id] = true;
+    return t;
+  }
+  const loadTips = (cfg = Game.config) => parseTips(read(cfg.tips.key), cfg);
+  const storeTips = (tips, cfg = Game.config) => write(cfg.tips.key, tips);
+
+  Game.save = { load, store, loadRecords, storeRecords, loadBoard, storeBoard, freshTips, parseTips, loadTips, storeTips };
 })();
 </script>
 <script>
@@ -4207,7 +4256,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const A = Game.achieve;
 
   const app = (Game.app = {
-    mode: 'title',          // title | story | camp | run | countdown | result
+    mode: 'title',          // title | story | camp | run | tip | countdown | result
+    tips: null,             // ヒントを見たか（save.parseTips）
+    tip: null,              // 今出しているヒント: { queue: ['move', 'lane'] の先頭を出している, t: 出してからの秒 }。ランは止まる
     story: null,            // おはなし: { page, t: その 1 枚を開いてからの秒, from: 'title' | 'camp' }
     save: null,             // ②の保存データ（meta.js）
     rec: null,              // ③の実績の記録（achieve.js）
@@ -4248,6 +4299,27 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.clearPath = null; app.escT = 0;
     app.fx.reset();
     if (T.nearClear) nearClear();
+    // アンロックで最初から持っていて、まだ見ていないヒント（?pretaken= で上書きしたテストのランでは出さない）
+    if (!q.get('pretaken')) showTips(cfg.tips.order.filter((id) => app.rules.ranks[id] >= 1));
+  }
+
+  // ---- はじめて取ったときの操作の紹介（ヒント）。設計書: docs/specs/2026-11-04-hoppe-dive-tips-design.md ----
+  // ids のうち、まだ見ていないものを順に出す。ボットが遊んでいるときは出さない
+  function showTips(ids) {
+    const queue = ids.filter((id) => !app.tips.seen[id]);
+    if (!queue.length || app.bot) return;
+    app.tip = { queue, t: 0 };
+    app.mode = 'tip';
+    app.audio.on({ type: 'camp_page' });
+  }
+  // 閉じる: 見たことを保存して次へ。全部閉じたら、3択のあとと同じくそのまま再開（ルールの時間は止まっていたので、着地の猶予は残っている）
+  function tipInput(e) {
+    if (!(e.type === 'tap' || e.type === 'key' || e.type === 'cmd' || e.type === 'esc') || app.tip.t < cfg.tips.closeSec) return;
+    app.tips.seen[app.tip.queue.shift()] = true;
+    if (!T.noStore) Game.save.storeTips(app.tips, cfg);
+    if (app.tip.queue.length) { app.tip.t = 0; app.audio.on({ type: 'camp_page' }); return; }
+    app.tip = null;
+    app.mode = 'run';
   }
 
   // 確かめ用: 宝の間の直前にする（3択を offer[0] で 15 回取り、あと少しで 16 回目のレベルアップ）
@@ -4472,7 +4544,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   function pick(i) {
     const s = app.rules;
     if (!s || s.phase !== 'choose' || app.chooseT < cfg.ui.chooseLock || i < 0 || i >= s.offer.length) return;
-    dispatch(Game.rules.pick(s, i, cfg));
+    const ev = Game.rules.pick(s, i, cfg);
+    dispatch(ev);
+    // まえうしろ・レーンを はじめて取った（段階 0 → 1）
+    const p = ev.find((e) => e.type === 'levelup_pick');
+    if (p && p.rank === 1 && cfg.tips.order.includes(p.id)) showTips([p.id]);
   }
 
   // ---- 入力 ----
@@ -4482,6 +4558,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const s = app.rules;
     if (app.mode === 'title') { if (e.type === 'tap' || e.type === 'key') { if (isFresh()) startStory('title'); else enterCamp(); } return; }
     if (app.mode === 'story') return storyInput(e);
+    if (app.mode === 'tip') return tipInput(e);
     if (app.mode === 'camp') return campInput(e);
     if (app.mode === 'result') { if ((e.type === 'tap' || e.type === 'key') && app.resultT > 0.8) enterCamp(); return; }
     if (!s) return;
@@ -4523,6 +4600,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (app.paused) return;
     if (app.mode === 'title') { app.titleDist += 40 * dt; return; }
     if (app.mode === 'story') { app.story.t += dt; return; }
+    if (app.mode === 'tip') { app.tip.t += dt; return; }
     if (app.mode === 'camp') return updateCamp(dt);
     if (app.mode === 'countdown') { app.countdown -= dt; if (app.countdown <= 0) app.mode = 'run'; return; }
     if (app.mode === 'result') { app.resultT += dt; return; }
@@ -4597,6 +4675,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.save = T.preset ? presetSave(T.preset) : Game.save.load(cfg);
     app.rec = T.noStore ? A.fresh(cfg) : Game.save.loadRecords(cfg);
     app.board = T.noStore ? Game.board.fresh(cfg) : Game.save.loadBoard(cfg);
+    app.tips = T.noStore ? Game.save.freshTips(cfg) : Game.save.loadTips(cfg);
     const canvas = document.getElementById('c');
     Game.render.init(canvas);
     setIcons();
@@ -4631,7 +4710,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     start() { start(); },
     nearClear() { nearClear(); },
     camp() { enterCamp(); },
-    reload() { app.save = Game.save.load(cfg); app.rec = Game.save.loadRecords(cfg); app.board = Game.save.loadBoard(cfg); },
+    reload() { app.save = Game.save.load(cfg); app.rec = Game.save.loadRecords(cfg); app.board = Game.save.loadBoard(cfg); app.tips = Game.save.loadTips(cfg); },
     input: onInput,
     setHidden,
   };
