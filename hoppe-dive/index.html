@@ -9,7 +9,7 @@
 <style>
 html, body { margin: 0; height: 100%; background: #181425; overflow: hidden; }
 body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
-canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelated; }
+canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelated; } /* 大きさは render.js が 1 ドット＝k 画素に合わせて書き換える */
 </style>
 </head>
 <body>
@@ -108,6 +108,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     fair: {
       reaction: 0.2,             // 型が窓に入ってから動き始めてよいまで（秒）
       decide: 3,                 // 何刻みごとに手を選ぶか
+      warmMs: 3,                 // 次に出る型の公平さを前もって調べるのに、1 フレームで使ってよい時間（ミリ秒。patterns.warm）
     },
 
     // ボット
@@ -905,53 +906,101 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     return a;
   }
 
-  // 始めの位置ひとつについて、深さ優先で道を探す（見つかればすぐ終わる）
-  function searchFrom(cfg, ranks, threatInst, col, lane, budget, cap = 0) {
+  // 始めの位置ひとつについて、深さ優先で道を探す（見つかればすぐ終わる）。
+  // 途中で止めて続きから進められるように、再帰ではなく自分で積む（runSearch が時間切れで止まり、また呼ぶと続きから）。
+  // 調べる順と数え方は、再帰で書いたときと同じ（答えも同じ）
+  function searchJob(cfg, ranks, threatInst, col, lane, budget, cap = 0) {
     const RU = Game.rules;
     const s0 = RU.create(cfg, { seed: 1, noSpawn: true, ranks, assist: { speedCap: cap } });
     RU.setCell(s0, col, lane);
     RU.place(s0, threatInst, cfg);
-    const t0 = s0.t, D = cfg.fair.decide, ctl = controlsOf(ranks);
-    const seen = new Set();
-    let nodes = 0;
-    const key = (s) => {
-      const h = s.h;
-      return Math.round(s.t * 60) + ':' + h.col + h.lane + ':' + (h.mv ? h.mv.k + h.mv.to : '-') + ':' + h.jt.toFixed(2) + ':' + (h.queued || '');
-    };
-    function dfs(s) {
-      if (++nodes > budget) return false;
-      if (!s.objs.length && !s.rocks.length) return true;
-      const acts = s.t - t0 < cfg.spawn.lead + cfg.fair.reaction ? [null] : actionsFor(s, ctl);
-      for (const a of acts) {
-        const ns = structuredClone(s);
-        let dead = false;
-        for (let f = 0; f < D; f++) {
-          RU.step(ns, f === 0 && a ? [a] : [], cfg);
-          if (ns.phase === 'over') { dead = true; break; }
-        }
-        if (dead) continue;
-        const k = key(ns);
-        if (seen.has(k)) continue;
-        seen.add(k);
-        if (dfs(ns)) return true;
+    return { cfg, ctl: controlsOf(ranks), t0: s0.t, budget, nodes: 0, seen: new Set(), stack: [], start: s0, result: null };
+  }
+  // ルールの状態（ただのデータ: 物・配列・数・文字・真偽・null）の写し。structuredClone と同じ中身になるが、ずっと速い
+  // （探索の時間の 7 割が structuredClone だった）
+  function copyPlain(v) {
+    if (v === null || typeof v !== 'object') return v;
+    if (Array.isArray(v)) { const a = v.slice(); for (let i = 0; i < a.length; i++) { const x = a[i]; if (x !== null && typeof x === 'object') a[i] = copyPlain(x); } return a; }
+    const o = { ...v }; // まず浅く写して（速い）、中の物・配列だけ写し直す
+    for (const k in o) { const x = o[k]; if (x !== null && typeof x === 'object') o[k] = copyPlain(x); }
+    return o;
+  }
+  const nodeKey = (s) => {
+    const h = s.h;
+    return Math.round(s.t * 60) + ':' + h.col + h.lane + ':' + (h.mv ? h.mv.k + h.mv.to : '-') + ':' + h.jt.toFixed(2) + ':' + (h.queued || '');
+  };
+  // 1つの局面に入る: 調べる数の上限を超えた（false）・物を全部抜けた（true）・続きを積んだ（null）
+  function enter(j, s) {
+    if (++j.nodes > j.budget) return false;
+    if (!s.objs.length && !s.rocks.length) return true;
+    const cfg = j.cfg;
+    j.stack.push({ s, acts: s.t - j.t0 < cfg.spawn.lead + cfg.fair.reaction ? [null] : actionsFor(s, j.ctl), i: 0 });
+    return null;
+  }
+  // timeUp: 時間切れか（null なら終わるまで）。終わったら true（答えは j.result）、時間切れで止めたら false
+  function runSearch(j, timeUp) {
+    const RU = Game.rules, cfg = j.cfg, D = cfg.fair.decide;
+    if (j.start) { const r = enter(j, j.start); j.start = null; if (r != null) j.result = r; }
+    let n = 0;
+    while (j.result == null) {
+      if (timeUp && (++n & 7) === 0 && timeUp()) return false;
+      const top = j.stack[j.stack.length - 1];
+      if (!top) { j.result = false; break; }
+      if (top.i >= top.acts.length) { j.stack.pop(); continue; }
+      const a = top.acts[top.i++];
+      const ns = top.i < top.acts.length ? copyPlain(top.s) : top.s; // 最後の手なら、この局面はもう使わないので写さずに進める
+      let dead = false;
+      for (let f = 0; f < D; f++) {
+        RU.step(ns, f === 0 && a ? [a] : [], cfg);
+        if (ns.phase === 'over') { dead = true; break; }
       }
-      return false;
+      if (dead) continue;
+      const k = nodeKey(ns);
+      if (j.seen.has(k)) continue;
+      j.seen.add(k);
+      // 上限を超えたら、このあと何を調べても false（再帰のときも、残りの手は全部すぐ false で返っていた）
+      const r = enter(j, ns);
+      if (r != null) j.result = r;
     }
-    return dfs(s0);
+    j.stack = []; j.seen = null;
+    return true;
   }
 
-  // 型（具体化したもの）が、今の段階で公平か。全部の始めの位置から抜けられること
-  function fair(cfg, ranks, inst, cap = 0) {
+  // 型（具体化したもの）が、今の段階で公平か。全部の始めの位置から抜けられること。
+  // 答えは型の中身と段階だけで決まるので、覚えておく（fairCache）。調べかけのもの（warmStep が少しずつ進める）は pending
+  const pending = new Map();
+  let warming = false;          // warmStep の中で choose を試している間。覚えていない公平さに当たったら NEED を投げて止める
+  const NEED = { need: null };
+  function fairJob(cfg, ranks, inst, cap) {
     const threats = { id: inst.id, items: inst.items.filter(isThreat) };
-    if (!threats.items.length) return true;
+    if (!threats.items.length) return null;
     const ctl = controlsOf(ranks);
     const k = JSON.stringify([threats.items, Game.rules.speedAt(ranks, cfg, cap), ranks.move || 0, ranks.lane || 0, ranks.greed || 0]);
-    if (fairCache.has(k)) return fairCache.get(k);
-    const cols = ctl.move ? [0, 1, 2] : [1], lanes = ctl.lane ? [0, 1, 2] : [1];
-    let ok = true;
-    for (const c of cols) for (const l of lanes) if (ok && !searchFrom(cfg, ranks, threats, c, l, 4000, cap)) ok = false;
-    fairCache.set(k, ok);
-    return ok;
+    if (fairCache.has(k)) return { k, done: true };
+    if (pending.has(k)) return pending.get(k);
+    const starts = [];
+    for (const c of ctl.move ? [0, 1, 2] : [1]) for (const l of ctl.lane ? [0, 1, 2] : [1]) starts.push([c, l]);
+    return { k, cfg, ranks, threats, cap, starts, i: 0, cur: null, ok: true };
+  }
+  // 1つの始めの位置で抜けられなければ、残りは調べない。終わったら覚えて true、時間切れなら false
+  function runFair(job, timeUp) {
+    while (job.ok && job.i < job.starts.length) {
+      if (!job.cur) { const [c, l] = job.starts[job.i]; job.cur = searchJob(job.cfg, job.ranks, job.threats, c, l, 4000, job.cap); }
+      if (!runSearch(job.cur, timeUp)) return false;
+      if (!job.cur.result) job.ok = false;
+      job.cur = null; job.i++;
+    }
+    fairCache.set(job.k, job.ok);
+    pending.delete(job.k);
+    return true;
+  }
+  function fair(cfg, ranks, inst, cap = 0) {
+    const job = fairJob(cfg, ranks, inst, cap);
+    if (!job) return true;
+    if (job.done) return fairCache.get(job.k);
+    if (warming) { pending.set(job.k, job); NEED.need = job; throw NEED; }
+    runFair(job, null);
+    return job.ok;
   }
 
   const maxThreats = (state, cfg) => Math.min(3, 1 + Math.floor(Game.levelup.taken(state) / cfg.spawn.maxThreatsEvery));
@@ -997,7 +1046,39 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     return LIST.filter((p) => p.requires[id] === rank).map((p) => p.id);
   }
 
-  Game.patterns = { LIST, SHAPES, shapesFor, meets, resolve, fair, choose, introducedBy, maxThreats, fairCache, addLoot, addSeeds, safeJump };
+  // ---- 先に調べておく（処理落ちを防ぐ） ----
+  // 公平さを型を出す瞬間に調べると、覚えていない型では 1 刻みが長くなって画面が止まる。そこで、画面の側の空いた時間に
+  // 次の choose を状態の写しで試して、要る公平さを少しずつ調べておく。次の choose が使う乱数・段階・紹介の並びは今の状態と同じ
+  // （刻みを進めても乱数は使わない）なので、違うのはハムスターのいる場所だけ。行ける場所を全部、今いる場所に近い順に試す。
+  // 3択の間は、選べる強化それぞれを選んだあとの状態で試す。答えは変わらない（覚えておく表が先に埋まるだけ）
+  function warm(state, cfg) {
+    const bases = [];
+    if (state.phase === 'choose' && state.offer) {
+      for (let i = 0; i < state.offer.length; i++) { const b = structuredClone(state); Game.rules.pick(b, i, cfg); bases.push(b); }
+    } else if (state.phase === 'run') bases.push(structuredClone(state));
+    const tasks = [];
+    for (const b of bases) {
+      const ctl = controlsOf(b.ranks), h = b.h;
+      for (const c of ctl.move ? [0, 1, 2] : [h.col]) for (const l of ctl.lane ? [0, 1, 2] : [h.lane]) tasks.push({ b, c, l, d: Math.abs(c - h.col) + Math.abs(l - h.lane) });
+    }
+    tasks.sort((x, y) => x.d - y.d); // 同じ近さなら、元の並び（sort は安定）
+    pending.clear(); // 前の調べかけは捨てる（もう使わない）
+    return { tasks, i: 0, job: null };
+  }
+  // timeUp: 時間切れか。全部済んだら true
+  function warmStep(w, cfg, timeUp) {
+    while (w.i < w.tasks.length) {
+      if (w.job) { if (!runFair(w.job, timeUp)) return false; w.job = null; }
+      if (timeUp()) return false;
+      const t = w.tasks[w.i], s = structuredClone(t.b);
+      s.h.col = t.c; s.h.lane = t.l;
+      warming = true;
+      try { choose(s, cfg); w.i++; } catch (e) { if (e !== NEED) throw e; w.job = NEED.need; } finally { warming = false; NEED.need = null; }
+    }
+    return true;
+  }
+
+  Game.patterns = { LIST, SHAPES, shapesFor, meets, resolve, fair, choose, introducedBy, maxThreats, fairCache, addLoot, addSeeds, safeJump, warm, warmStep };
 })();
 </script>
 <script>
@@ -3315,28 +3396,34 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 </script>
 <script>
 // 描画。画面全体を「ドット」単位の小さな Canvas に描き、整数倍 k で実際の画素へ拡大する。
+// 拡大は CSS（image-rendering: pixelated）に任せる: Canvas の画素はドットの数だけにして、表示の大きさを k 倍にする
+// （画面の画素の細かさで毎フレーム拡大して描き写すと、dpr 3 のスマホでは 300 万画素になって重かった）。
 // 遊ぶ窓（192×108）はその中の整数の位置に置く。状態は読むだけ
 (function () {
   const Game = (window.Game = window.Game || {});
   const B = Game.bake;
 
   const R = {
-    canvas: null, g: null, low: null, lg: null,
+    canvas: null, g: null,
     k: 1, Lw: 0, Lh: 0, fx: 0, fy: 0, cssK: 1, portrait: true,
 
     init(canvas) {
       R.canvas = canvas;
       R.g = canvas.getContext('2d');
-      R.low = B.mk(8, 8);
-      R.lg = R.low.getContext('2d');
       const resize = () => {
         const V = Game.config.view;
         const dpr = window.devicePixelRatio || 1;
         const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
-        canvas.width = w; canvas.height = h;
         R.k = Math.max(1, Math.floor(Math.min(w / V.w, h / V.h)));
         R.Lw = Math.ceil(w / R.k); R.Lh = Math.ceil(h / R.k);
-        R.low.width = R.Lw; R.low.height = R.Lh;
+        // 表示の大きさ: 1 ドットがちょうど k 画素（画面より少しはみ出す。はみ出しは body の overflow: hidden で切れる）。
+        // 端数の dpr（2.75 など）では、表示の大きさが 1/64 CSS px に丸められて 1 行だけ k-1 画素になることがあるので、
+        // Canvas を右と下へ（画面の外に）数ドット足して、丸めの要らない大きさにする。描くのは見える範囲（Lw×Lh）だけ
+        const fit = (n) => { for (let p = 0; p < 64; p++) { const v = ((n + p) * R.k * 64) / dpr; if (Math.abs(v - Math.round(v)) < 1e-6) return n + p; } return n; };
+        const cw = fit(R.Lw), ch = fit(R.Lh);
+        canvas.width = cw; canvas.height = ch;
+        canvas.style.width = (cw * R.k) / dpr + 'px';
+        canvas.style.height = (ch * R.k) / dpr + 'px';
         R.portrait = h > w;
         R.fx = Math.floor((R.Lw - V.w) / 2);
         R.fy = R.portrait ? Math.max(0, Math.floor(R.Lh * 0.4 - V.h / 2)) : Math.floor((R.Lh - V.h) / 2);
@@ -3352,7 +3439,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     toCss(x, y) { return { x: (x + R.fx + 0.5) * R.cssK, y: (y + R.fy + 0.5) * R.cssK }; },
 
     draw(app) {
-      const g = R.lg, cfg = Game.config, V = cfg.view, A = B.all();
+      const g = R.g, cfg = Game.config, V = cfg.view, A = B.all();
       const camp = app.mode === 'camp', story = app.mode === 'story';
       const s = camp || story ? null : app.rules;
       const theme = A.themes[themeOf(s)];
@@ -3383,8 +3470,6 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       g.translate(R.fx, R.fy);
       if (camp) drawCamp(g, app, A); else if (story) drawStoryText(g, app, A); else drawUi(g, app, s, A, theme);
       g.restore();
-      R.g.imageSmoothingEnabled = false;
-      R.g.drawImage(R.low, 0, 0, R.Lw * R.k, R.Lh * R.k);
     },
 
     // 3択のカードの位置（窓の中のドット）
@@ -4493,6 +4578,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     countdown: 0, chooseT: 0, hitT: 0, landT: 0, resultT: 0, clearT: 0, titleDist: 0,
     clearPath: null, escT: 0, // ④宝の間のあと: 'extra'（崩れ始める → エクストラ）| 'denied'（暗転とヒント → 結果）、脱出成功の場面の秒
     cmds: [], lastEvents: [],
+    warm: null, warmKey: null, warmDone: false, // 次に出る型の公平さを前もって調べる（warmTick）
     fx: null, audio: null,
   });
 
@@ -4817,12 +4903,25 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     return Math.min(3, Math.floor((s.floor - 1) / 4));
   }
 
+  // 次に出る型の公平さを、空いた時間に少しずつ調べておく（patterns.warm。型を出す瞬間に調べると画面が止まる）。
+  // ルールの答えは変わらない。乱数・段階・場面が変わったら（型を出した・3択が出た・選んだ）調べ直す。テストの手動の刻みではしない
+  function warmTick() {
+    const s = app.rules;
+    if (!s || app.manual || app.mode === 'result' || !(s.phase === 'run' || s.phase === 'choose')) return;
+    const k = s.rng + ':' + s.phase + ':' + s.level;
+    if (k !== app.warmKey) { app.warmKey = k; app.warm = Game.patterns.warm(s, cfg); app.warmDone = false; }
+    if (app.warmDone) return;
+    const end = performance.now() + cfg.fair.warmMs;
+    app.warmDone = Game.patterns.warmStep(app.warm, cfg, () => performance.now() >= end);
+  }
+
   function update(dt) {
     app.time += dt;
     app.fx.update(dt);
     app.audio.music(musicKey());
     app.audio.tick();
     if (app.paused) return;
+    warmTick();
     if (app.mode === 'title') { app.titleDist += 40 * dt; return; }
     if (app.mode === 'story') { app.story.t += dt; return; }
     if (app.mode === 'tip') { app.tip.t += dt; return; }
