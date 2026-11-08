@@ -53,13 +53,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
     // 強化（ランの中）。段階 0 が最初の状態
     upgrades: [
-      { id: 'speed', name: 'はやさ', max: 5, desc: 'もっと はやく はしる' },
-      { id: 'move', name: 'まえうしろ', max: 3, desc: ['', 'まえうしろに うごける。いしが おちてくる', 'いしが 2こ おちてくる', 'いしが はやく おちてくる'] },
-      { id: 'lane', name: 'レーン', max: 3, desc: ['', 'おくと てまえに うごける。とおせんぼが でる', 'とおせんぼが ふえる', 'とおせんぼが いれかわる'] },
+      { id: 'speed', max: 5 },
+      { id: 'move', max: 3 },
+      { id: 'lane', max: 3 },
       // needs: その段階を3択に出す条件（ほかの強化の段階の下限）
-      { id: 'trap', name: 'わな', max: 5, desc: ['', 'ながい わなが でる', 'つららいしが でる。とぶと あたる', 'わなが ふえる', 'わなが もっと ふえる', 'ななめや でこぼこの わなが でる'], needs: { 5: { lane: 1 } } },
-      { id: 'loot', name: 'おたから', max: 4, desc: ['', 'ほうせきが でる。わなも ふえる', 'おおきな たからが でる。わなも ふえる', 'とおせんぼの そばに たからが ならぶ', 'おうごんの ぞうが でる。わなも ふえる'], needs: { 3: { lane: 1 } } },
-      { id: 'greed', name: 'よくばり', max: 2, desc: 'レベルアップが はやくなる。ほっぺが おもくて ジャンプが ひくくなる' },
+      { id: 'trap', max: 5, needs: { 5: { lane: 1 } } },
+      { id: 'loot', max: 4, needs: { 3: { lane: 1 } } },
+      { id: 'greed', max: 2 },
     ],
     speed: [60, 80, 105, 140, 180, 220],   // speed の段階ごとの速さ（ドット/秒）
     rockWarn: [1.0, 0.85, 0.7, 0.5],       // move の段階ごとの、影が出てから落ちるまで（秒）
@@ -133,19 +133,19 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       key: 'hoppe-dive.meta',    // localStorage のキー
       // 恒久強化（難易度を下げる）。段階 n の値段 = price × n。desc[n] は段階 n の効果
       perks: [
-        { id: 'lives', name: 'のこりの いのち', max: 5, price: 240, desc: ['', 'しんでも 1かい つづく', 'しんでも 2かい つづく', 'しんでも 3かい つづく', 'しんでも 4かい つづく', 'しんでも 5かい つづく'] },
-        { id: 'rockWarn', name: 'らくせきの よこく', max: 4, price: 160, desc: ['', 'かげが すこし はやく でる', 'かげが もっと はやく でる', 'おちる ばしょに あかい しるし', 'かげが とても はやく でる'] },
-        { id: 'preview', name: 'さきみ', max: 2, price: 160, desc: ['', 'くるものが すこし まえに みえる', 'くるものが もっと まえに みえる'] },
-        { id: 'swap', name: 'とおせんぼ よこく', max: 3, price: 120, desc: ['', 'はやめに いれかわる', 'もっと はやめに いれかわる', 'とても はやめに いれかわる'] },
-        { id: 'jump', name: 'ジャンプの ゆとり', max: 5, price: 200, desc: ['', 'わなに すこし あたりにくい', 'わなに もっと あたりにくい', 'わなに とても あたりにくい', 'わなに ずっと あたりにくい', 'わなに ほとんど あたらない'] },
-        { id: 'map', name: 'いせきの ちず', max: 2, price: 200, desc: ['', 'レベルアップが すこし はやい', 'レベルアップが もっと はやい'] },
+        { id: 'lives', max: 5, price: 240 },
+        { id: 'rockWarn', max: 4, price: 160 },
+        { id: 'preview', max: 2, price: 160 },
+        { id: 'swap', max: 3, price: 120 },
+        { id: 'jump', max: 5, price: 200 },
+        { id: 'map', max: 2, price: 200 },
         // 設計書 perks2: おちついて（速さの上限）・じしゃく・たからぶくろ
-        { id: 'calm', name: 'おちついて', max: 3, price: 240, desc: ['', 'いちばん はやい ときが すこし おそい', 'いちばん はやい ときが もっと おそい', 'いちばん はやい ときが とても おそい'] },
-        { id: 'magnet', name: 'じしゃく', max: 2, price: 200, desc: ['', 'たからを ひろいやすい', 'となりの レーンの たからも すいよせる'] },
-        { id: 'bag', name: 'たからぶくろ', max: 3, price: 160, desc: ['', 'もちかえる たから x1.25', 'もちかえる たから x1.5', 'もちかえる たから x2'] },
+        { id: 'calm', max: 3, price: 240 },
+        { id: 'magnet', max: 2, price: 200 },
+        { id: 'bag', max: 3, price: 160 },
         // 実機の感想（落石とわなが重なると迷う）: いしの すきま。らくせきわなの ずれを伸ばし、石の型の前後にも すきまを足す
-        { id: 'rockGap', name: 'いしの すきま', max: 2, price: 280, desc: ['', 'いしと わなの あいだが すこし あく', 'いしと わなの あいだが もっと あく'] },
-        { id: 'luck', name: 'こううん', max: 3, price: 240, desc: ['', 'わなや いしが たまに こない', 'わなや いしが ときどき こない', 'わなや いしが よく こない'] }, // 設計書: docs/specs/2026-11-04-hoppe-dive-rare-luck-design.md B
+        { id: 'rockGap', max: 2, price: 280 },
+        { id: 'luck', max: 3, price: 240 }, // 設計書: docs/specs/2026-11-04-hoppe-dive-rare-luck-design.md B
       ],
       // 段階ごとの効果（runOptions へ変換するときに使う）
       effect: {
@@ -166,13 +166,12 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       catchup: { step: 0.15, cap: 0.9, k: 0.5 },
       // アンロック: ランの中で段階 3 にすると使えるようになり、入れると最初から段階 1
       unlocks: [
-        { id: 'move', name: 'まえうしろ', desc: 'さいしょから うごける' },
-        { id: 'lane', name: 'レーン', desc: 'さいしょから うごける' },
+        { id: 'move' },
+        { id: 'lane' },
       ],
       // さいしょの はやさ（はやさの アンロック）: ランで はやさを最大にすると使えるようになる。キャンプで 0〜最大の段階を選び、ランの始めからその速さで走る。
       // 倍率は 1 段階 mul。設計書: docs/specs/2026-11-04-hoppe-dive-speed-unlock-design.md
-      speedStart: { id: 'speedStart', name: 'さいしょの はやさ', desc: 'さいしょから はやく はしる', locked: 'ランで はやさを さいだいに すると つかえる', mul: 0.1,
-                    same: 'もう この はやさ。えらんでも かわらない', samePop: 'そのまま' }, // same: 3択の はやさ の灰色のカードの説明。samePop: 選んだときの文字
+      speedStart: { id: 'speedStart', mul: 0.1 }, // 文（名前・説明・灰色のカードの説明 same・選んだときの文字 samePop）は text.js の speedStart
       value: { seed: 1, gem: 3, big: 10, statue: 30 }, // 持ち帰る宝の値打ち
       clearBonus: 100,           // クリアしたときに足す宝
       mul: { unspent: 1.0, unlock: 0.25 }, // 倍率 = 1 + unspent × min(振っていない宝, T − 振った宝) / T + unlock × 入れたアンロックの数 + speedStart.mul × さいしょの はやさ
@@ -184,45 +183,45 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       key: 'hoppe-dive.records', // localStorage のキー
       // kind: メダルの色（first 機能の導線 / floor 階・クリア / score 点 / run 1回のランの記録 / max 強化の最大 / secret シークレット / platinum 全部）
       list: [
-        { id: 'firstMove', kind: 'first', name: 'はじめての まえうしろ', desc: 'ランで まえうしろを とる' },
-        { id: 'firstLane', kind: 'first', name: 'はじめての レーン', desc: 'ランで レーンを とる' },
-        { id: 'firstSeed', kind: 'first', pick: 'seed', name: 'はじめての たね', desc: 'ひまわりの たねを ひろう' },
-        { id: 'firstGem', kind: 'first', pick: 'gem', name: 'はじめての ほうせき', desc: 'ほうせきを ひろう' },
-        { id: 'firstBig', kind: 'first', pick: 'big', name: 'はじめての おおきな たから', desc: 'おおきな たからを ひろう' },
-        { id: 'firstStatue', kind: 'first', pick: 'statue', name: 'はじめての おうごんの ぞう', desc: 'おうごんの ぞうを ひろう' },
-        { id: 'firstHome', kind: 'first', name: 'はじめての もちかえり', desc: 'たからを もちかえる' },
-        { id: 'firstPerk', kind: 'first', name: 'はじめての きょうか', desc: 'キャンプで きょうかを かう' },
-        { id: 'firstUnlock', kind: 'first', name: 'はじめての アンロック', desc: 'キャンプで アンロックを いれる' },
-        { id: 'floor5', kind: 'floor', name: 'こけの かいそう', desc: 'B5F に つく' },
-        { id: 'floor9', kind: 'floor', name: 'あかい いわの かいそう', desc: 'B9F に つく' },
-        { id: 'floor13', kind: 'floor', name: 'おうごんの かいそう', desc: 'B13F に つく' },
-        { id: 'clear', kind: 'floor', name: 'たからの ま', desc: 'クリアする' },
-        { id: 'noHit', kind: 'floor', name: 'むきず', desc: 'いちども あたらずに クリアする' },
-        { id: 'maxDiff', kind: 'floor', name: 'さいだいの むずかしさ', desc: 'きょうかを ふらず まえうしろと レーンを いれて クリアする' },
-        { id: 'fast', kind: 'floor', name: 'はやぬけ', desc: '6ぷん いないに クリアする' },
-        { id: 'escape', kind: 'floor', name: 'だっしゅつ', desc: 'くずれる いせきから だっしゅつする' },
-        { id: 'escapeMax', kind: 'floor', name: 'さいだいの むずかしさで だっしゅつ', desc: 'きょうかを ふらず まえうしろと レーンを いれて だっしゅつする' },
-        { id: 'score1', kind: 'score', name: 'いちまんてん', desc: 'さいごの てんが 10000 いじょう' },
-        { id: 'score2', kind: 'score', name: 'さんまんてん', desc: 'さいごの てんが 30000 いじょう' },
-        { id: 'score3', kind: 'score', name: 'ごまんてん', desc: 'さいごの てんが 50000 いじょう' },
-        { id: 'statue', kind: 'run', name: 'おうごんの ぞう あつめ', desc: '1かいで おうごんの ぞうを 3こ とる' },
-        { id: 'rows', kind: 'run', name: 'ならんだ ほうせき', desc: '1かいで たからの れつを 3かい ぜんぶ とる' },
-        { id: 'rich', kind: 'run', name: 'おおもうけ', desc: '1かいで たからを 800 ひろう' },
-        { id: 'near', kind: 'run', name: 'ぎりぎりの たつじん', desc: '1かいで ぎりぎりを 50かい' },
-        { id: 'seeds', kind: 'run', name: 'たねの れんぞく', desc: 'たねを 15こ つづけて とる' },
-        { id: 'maxSpeed', kind: 'max', up: 'speed', name: 'はやさの さいだい', desc: 'ランで はやさを さいだいに する' },
-        { id: 'maxMove', kind: 'max', up: 'move', name: 'まえうしろの さいだい', desc: 'ランで まえうしろを さいだいに する' },
-        { id: 'maxLane', kind: 'max', up: 'lane', name: 'レーンの さいだい', desc: 'ランで レーンを さいだいに する' },
-        { id: 'maxTrap', kind: 'max', up: 'trap', name: 'わなの さいだい', desc: 'ランで わなを さいだいに する' },
-        { id: 'maxLoot', kind: 'max', up: 'loot', name: 'おたからの さいだい', desc: 'ランで おたからを さいだいに する' },
-        { id: 'maxGreed', kind: 'max', up: 'greed', name: 'よくばりの さいだい', desc: 'ランで よくばりを さいだいに する' },
-        { id: 'allMax', kind: 'max', name: 'ぜんぶ さいだい', desc: '1かいの ランで きょうかを ぜんぶ さいだいに する' },
-        { id: 'perkAll', kind: 'max', name: 'じゅんび ばんたん', desc: 'キャンプの きょうかを ぜんぶ さいだいに する' },
-        { id: 'pup', kind: 'secret', name: 'まいごの こハムスター', desc: 'まいごの こハムスターを たすける', hint: 'すなの かいで だれかが まいごに なっている…' },
-        { id: 'fly', kind: 'secret', name: 'そらとぶ たね', desc: 'そらとぶ たねを つかまえる', hint: 'こけの かいで たねが そらを とんでいる…' },
-        { id: 'mimic', kind: 'secret', name: 'たからばこの まもの', desc: 'たからばこの まものから 3かい にげきる', hint: 'あかい かいで たからばこが ついてくる…' },
-        { id: 'bat', kind: 'secret', name: 'てんじょうの コウモリ', desc: 'コウモリを おこす', hint: 'てんじょうに なにか いる…' },
-        { id: 'platinum', kind: 'platinum', name: 'でんせつの たんけんか', desc: 'ほかの じっせきを ぜんぶ とる' }, // 全部の実績（いわゆるプラチナトロフィー）
+        { id: 'firstMove', kind: 'first' },
+        { id: 'firstLane', kind: 'first' },
+        { id: 'firstSeed', kind: 'first', pick: 'seed' },
+        { id: 'firstGem', kind: 'first', pick: 'gem' },
+        { id: 'firstBig', kind: 'first', pick: 'big' },
+        { id: 'firstStatue', kind: 'first', pick: 'statue' },
+        { id: 'firstHome', kind: 'first' },
+        { id: 'firstPerk', kind: 'first' },
+        { id: 'firstUnlock', kind: 'first' },
+        { id: 'floor5', kind: 'floor' },
+        { id: 'floor9', kind: 'floor' },
+        { id: 'floor13', kind: 'floor' },
+        { id: 'clear', kind: 'floor' },
+        { id: 'noHit', kind: 'floor' },
+        { id: 'maxDiff', kind: 'floor' },
+        { id: 'fast', kind: 'floor' },
+        { id: 'escape', kind: 'floor' },
+        { id: 'escapeMax', kind: 'floor' },
+        { id: 'score1', kind: 'score' },
+        { id: 'score2', kind: 'score' },
+        { id: 'score3', kind: 'score' },
+        { id: 'statue', kind: 'run' },
+        { id: 'rows', kind: 'run' },
+        { id: 'rich', kind: 'run' },
+        { id: 'near', kind: 'run' },
+        { id: 'seeds', kind: 'run' },
+        { id: 'maxSpeed', kind: 'max', up: 'speed' },
+        { id: 'maxMove', kind: 'max', up: 'move' },
+        { id: 'maxLane', kind: 'max', up: 'lane' },
+        { id: 'maxTrap', kind: 'max', up: 'trap' },
+        { id: 'maxLoot', kind: 'max', up: 'loot' },
+        { id: 'maxGreed', kind: 'max', up: 'greed' },
+        { id: 'allMax', kind: 'max' },
+        { id: 'perkAll', kind: 'max' },
+        { id: 'pup', kind: 'secret' },
+        { id: 'fly', kind: 'secret' },
+        { id: 'mimic', kind: 'secret' },
+        { id: 'bat', kind: 'secret' },
+        { id: 'platinum', kind: 'platinum' }, // 全部の実績（いわゆるプラチナトロフィー）
       ],
       th: { fastSec: 360, score: [10000, 30000, 50000], statue: 3, rows: 3, rich: 800, near: 50, seeds: 15 }, // sim.mjs --ach の分布で決めた（設計書③ 8節）
       // ランダムイベント（シークレット）: 階の色ごとに 1 つ。イベントごとに chance で別に引く。stage: 出る色（0 茶 B1〜4F / 1 緑 / 2 赤。stageFloors 階ごと）。
@@ -245,34 +244,16 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     extra: {
       xpPer: 3000,               // エクストラで1階よじ登るのに要る経験値（固定。sim で 1階 20〜25 秒に合わせる）
       bonus: 5000,               // 脱出できたら足す点（経験値にはしない）
-      treasure: 150,             // 脱出できたら足す宝（meta.applyRun）
-      text: {
-        go: 'いせきが くずれる! にげろ!',
-        hint: 'もっと じゆうに うごけたら…', // 入れないとき。答えは言わず、下に 9マス（真ん中だけ光る）を添えて示す
-        left: 'だっしゅつ あと ',
-        ok: 'だっしゅつ せいこう',
-        ng: 'だっしゅつ しっぱい',
-      },
+      treasure: 150,             // 脱出できたら足す宝（meta.applyRun）。文は text.js の extra（hint: 入れないとき。答えは言わず、下に 9マス（真ん中だけ光る）を添えて示す）
     },
 
     // きろく（端末の中のリーダーボード）。設計書: docs/specs/2026-11-03-hoppe-dive-board-design.md
     board: { version: 1, key: 'hoppe-dive.board', size: 8 },
 
     // 操作説明（キャンプの あそびかた のページとタイトル）。設計書: docs/specs/2026-11-03-hoppe-dive-howto-design.md
-    // rows の scene: 見本の場面（0 ジャンプ / 1 よこに はらう / 2 たてに はらう）。sub: 灰色の添え書き
+    // rows の scene: 見本の場面（0 ジャンプ / 1 よこに はらう / 2 たてに はらう）。sub: 灰色の添え書き。文は text.js の howto（rows[i] がこの行。after: 場面 1・2 の添え書き）
     howto: {
-      rows: [
-        { text: 'ゆびを はなすと ジャンプ', scene: 0 },
-        { text: ' おしたままでは とばない', scene: 0, sub: true },
-        { text: 'よこに はらう: まえうしろ', scene: 1 },
-        { text: 'たてに はらう: おく・てまえ', scene: 2 },
-        { text: 'カードは タップで えらぶ' },
-        { text: 'うえ 3ぶんの1 では とばない' },
-        { text: 'キー: ←→↑↓ スペース 123', sub: true },
-      ],
-      scenes: ['はなすと ジャンプ', 'よこに はらう', 'たてに はらう'],
-      after: 'とったら つかえる', // 場面 1・2 の添え書き
-      title: ['ゆびを はなすと ジャンプ', 'くわしくは キャンプの あそびかた'],
+      rows: [{ scene: 0 }, { scene: 0, sub: true }, { scene: 1 }, { scene: 2 }, {}, {}, { sub: true }],
     },
 
     // 演出・音
@@ -280,14 +261,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     audio: { enabled: true, volume: 0.5, bgmVolume: 0.6, seedResetSec: 1.0 },
     input: { swipePx: 24, controlFrom: 1 / 3 },
     // オープニング（おはなし。4 枚の紙芝居）。設計書: docs/specs/2026-11-04-hoppe-dive-opening-design.md
-    // pages: 1 枚ごとの文（2 行、1 行 30 字まで）。cps: 1 秒に出す字の数。fadeSec: めくったときに明るくなるまで
+    // 文は text.js の story（1 枚 2 行、1 行は textBox.story に収める）。cps: 1 秒に出す字の数。fadeSec: めくったときに明るくなるまで
     story: {
-      pages: [
-        ['ハムスターの たんけんかが', 'ふるい いせきを みつけた'],
-        ['ちか 16かいの いちばん そこに', 'たからの へやが あるらしい'],
-        ['ふかく もぐるほど', 'わなが ふえて きびしくなる'],
-        ['もちかえった たからで', 'じゅんびを ととのえて いどもう!'],
-      ],
       cps: 30, fadeSec: 0.25,
     },
 
@@ -296,19 +271,31 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
     // はじめて取ったときの操作の紹介（ヒント）。設計書: docs/specs/2026-11-04-hoppe-dive-tips-design.md
     // key: 見たかどうか（localStorage。ほかの保存とは別のフラグ）。closeSec: 出てから閉じられるまで。scene: あそびかたの見本の場面
-    // lines: 1 行 18 字まで。sub: 灰色にする行
+    // 文（title・lines・next）は text.js の tips（1 行は textBox.tipLine に収める）。sub: 灰色にする行
     tips: {
       version: 1, key: 'hoppe-dive.tips', closeSec: 0.5,
       order: ['move', 'lane'],
-      move: { title: 'まえうしろ を とった!', scene: 1, lines: ['よこに はらうと', 'まえ・うしろへ うごける', '← → でも うごける', 'いしの かげから にげよう'], sub: [2] },
-      lane: { title: 'レーン を とった!', scene: 2, lines: ['たてに はらうと', 'おく・てまえへ うごける', '↑ ↓ でも うごける', 'とおせんぼを よけよう'], sub: [2] },
+      move: { scene: 1, sub: [2] },
+      lane: { scene: 2, sub: [2] },
       // レアイベント: はじめて起きたとき（rare_start）に出す。rare: 見本に出すイベント
       rare: ['pup', 'fly', 'mimic'],
-      pup: { title: 'まいごの こハムスター!', rare: 'pup', lines: ['ちがう レーンで', 'まいごに なっている', 'おなじ マスへ いって', 'たすけよう'], sub: [] },
-      fly: { title: 'そらとぶ たね!', rare: 'fly', lines: ['マスを とびまわる', 'おなじ マスで', 'ジャンプして', 'つかまえよう'], sub: [] },
-      mimic: { title: 'たからばこの まもの!', rare: 'mimic', lines: ['うしろから とびかかる', 'ジャンプで よけよう', '3かい よけると', 'たからを おとす'], sub: [] },
-      next: 'タップで つづける',
+      pup: { rare: 'pup', sub: [] },
+      fly: { rare: 'fly', sub: [] },
+      mimic: { rare: 'mimic', sub: [] },
     },
+
+    // 文が入る枠（ドット）。w: 1 行の幅、lines: 行の数、y: 1 行目の置き場所（枠の上から）、lh: 行の間、nameY: 名前の置き場所。
+    // en: 英語のときに上書きする数（g j p q y が下へ 1 行出るので、行の間を広げたり上へ詰めたりする）。
+    // render.js と tests/text.test.mjs が同じ数字を見る。設計書: docs/specs/2026-11-07-hoppe-dive-i18n-design.md
+    textBox: {
+      card: { w: 53, lines: 5, y: 22, lh: 9 },
+      perkCard: { w: 53, lines: 3, y: 19, lh: 8, en: { y: 18 } },
+      speedCard: { w: 53, lines: 2, y: 27, lh: 8, en: { y: 26 } },
+      achDesc: { w: 173, lines: 2, y: 12, lh: 7, nameY: 3, en: { y: 10, lh: 8, nameY: 2 } },
+      story: { w: 179, lines: 2 },
+      tipLine: { w: 96, lines: 4 },
+    },
+    lang: { key: 'hoppe-dive.lang' }, // 選んだ言語（ja / en）。ほかの保存とは別のキー
 
     ui: { chooseLock: 0.5, fallSec: 0.6, landSec: 0.15, hitFreeze: 0.8, clearSec: 2.5, countdown: 3,
           extraIntroSec: 2.0, darkSec: 1.5, hintSec: 4, escapeSec: 3,
@@ -457,25 +444,23 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     return s;
   }
 
-  // カードの文字: 恒久強化は次の段階の効果（最大なら今の効果）
+  // カードの中身（文は描く側が text.js から引く）。恒久強化の descRank: 説明に出す段階＝次の段階の効果（最大なら今の効果）
   function card(id, save, cfg) {
     const M = C(cfg), p = perk(id, cfg);
     if (p) {
       const r = save.alloc[id] || 0, max = r >= p.max;
-      return { kind: 'perk', id, name: p.name, rank: r, max: p.max, desc: p.desc[max ? r : r + 1], price: max ? 0 : cost(id, r + 1, cfg), full: max, canBuy: canBuy(save, id, cfg), canRefund: r > 0 };
+      return { kind: 'perk', id, rank: r, max: p.max, descRank: max ? r : r + 1, price: max ? 0 : cost(id, r + 1, cfg), full: max, canBuy: canBuy(save, id, cfg), canRefund: r > 0 };
     }
-    if (id === M.speedStart.id) return { kind: 'speed', id, name: M.speedStart.name, desc: M.speedStart.desc, unlocked: !!save.unlocked.speed, level: speedStartOf(save), max: speedMax(cfg) };
+    if (id === M.speedStart.id) return { kind: 'speed', id, unlocked: !!save.unlocked.speed, level: speedStartOf(save), max: speedMax(cfg) };
     const u = M.unlocks.find((x) => x.id === id);
-    return { kind: 'unlock', id, name: u.name, desc: u.desc, unlocked: !!save.unlocked[id], on: !!save.use[id] };
+    return { kind: 'unlock', id: u.id, unlocked: !!save.unlocked[id], on: !!save.use[id] };
   }
   // キャンプに並べるカード: 恒久強化と、アンロック（まえうしろ・レーン・さいしょの はやさ）。アンロックは新しいページから
   const perkIds = (cfg) => C(cfg).perks.map((p) => p.id);
   const unlockIds = (cfg) => C(cfg).unlocks.map((u) => u.id).concat(C(cfg).speedStart.id);
   const order = (cfg) => perkIds(cfg).concat(unlockIds(cfg));
-  // 新しく使えるようになったアンロックの名前
-  const unlockName = (id, cfg) => (id === C(cfg).speedStart.id ? C(cfg).speedStart.name : C(cfg).unlocks.find((u) => u.id === id).name);
 
-  Game.meta = { fresh, cost, costTo, total, spent, unspent, boost, baseMultiplier, multiplier, finalScore, canBuy, buy, refund, toggleUnlock, runOptions, applyRun, canEnterExtra, isMaxDifficulty, maxMultiplier, parse, card, order, perkIds, unlockIds, unlockName, setSpeedStart, speedStartOf };
+  Game.meta = { fresh, cost, costTo, total, spent, unspent, boost, baseMultiplier, multiplier, finalScore, canBuy, buy, refund, toggleUnlock, runOptions, applyRun, canEnterExtra, isMaxDifficulty, maxMultiplier, parse, card, order, perkIds, unlockIds, setSpeedStart, speedStartOf };
 })();
 </script>
 <script>
@@ -1125,13 +1110,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   const taken = (state) => Object.values(state.ranks).reduce((a, b) => a + b, 0);
 
-  // カードの文字
-  function card(cfg, id, rank) {
-    const u = cfg.upgrades.find((x) => x.id === id);
-    return { id, name: u.name, rank, desc: Array.isArray(u.desc) ? u.desc[rank] : u.desc };
-  }
-
-  Game.levelup = { initRanks, available, offer, apply, taken, card };
+  Game.levelup = { initRanks, available, offer, apply, taken };
 })();
 </script>
 <script>
@@ -1958,6 +1937,37 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   def('Y', '#...# #...# .#.#. ..#.. ..#.. ..#.. ..#..');
   def('Z', '##### ....# ...#. ..#.. .#... #.... #####');
 
+  // 英小文字（英語の文）。幅は字ごとに変わる（行の長さ＝字の幅、送り＝幅＋1）。x の高さは 2〜6 行。
+  // g j p q y は 8 行（本体 4 行＋下 2 行で、7 行目＝並びの下の線より 1 行下へ出る。数字の 9 と見分けるため）。
+  // 下へ出る分は、英語のときの文の置き場所（config.textBox の en）で空ける。x は記号の x（幅 5、倍率の x1.25）を使う
+  def('a', '.... .... .##. ...# .### #..# .###');
+  def('b', '#... #... ###. #..# #..# #..# ###.');
+  def('c', '.... .... .### #... #... #... .###');
+  def('d', '...# ...# .### #..# #..# #..# .###');
+  def('e', '.... .... .##. #..# #### #... .###');
+  def('f', '.## #.. ### #.. #.. #.. #..');
+  def('g', '.... .... .### #..# #..# .### ...# ###.');
+  def('h', '#... #... ###. #..# #..# #..# #..#');
+  def('i', '# . # # # # #');
+  def('j', '..# ... ..# ..# ..# ..# ..# ##.');
+  def('k', '#... #... #..# #.#. ##.. #.#. #..#');
+  def('l', '#. #. #. #. #. #. .#');
+  def('m', '..... ..... ##.#. #.#.# #.#.# #.#.# #.#.#');
+  def('n', '.... .... ###. #..# #..# #..# #..#');
+  def('o', '.... .... .##. #..# #..# #..# .##.');
+  def('p', '.... .... ###. #..# #..# ###. #... #...');
+  def('q', '.... .... .### #..# #..# .### ...# ...#');
+  def('r', '.... .... #.## ##.. #... #... #...');
+  def('s', '.... .... .### #... .##. ...# ###.');
+  def('t', '.#. .#. ### .#. .#. .#. ..#');
+  def('u', '.... .... #..# #..# #..# #..# .###');
+  def('v', '..... ..... #...# #...# #...# .#.#. ..#..');
+  def('w', '..... ..... #...# #...# #.#.# #.#.# .#.#.');
+  def('y', '.... .... #..# #..# #..# .### ...# ###.');
+  def('z', '.... .... #### ..#. .#.. #... ####');
+  def("'", '# # . . . . .');
+  def(',', '.. .. .. .. .# .# #.');
+
   // 記号
   def(' ', '..... ..... ..... ..... ..... ..... .....');
   def('!', '..#.. ..#.. ..#.. ..#.. ..#.. ..... ..#..');
@@ -2095,6 +2105,259 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const HANDAKU = { ぱ: 'は', ぴ: 'ひ', ぷ: 'ふ', ぺ: 'へ', ぽ: 'ほ', パ: 'ハ', ピ: 'ヒ', プ: 'フ', ペ: 'ヘ', ポ: 'ホ' };
 
   Game.font = { glyphs: G, DAKU, HANDAKU, w: 5, h: 7, adv: 6 };
+})();
+</script>
+<script>
+// 画面に出す文（言語ごと）。ja と en は同じ形にする（tests/text.test.mjs で確かめる）。設計書: docs/specs/2026-11-07-hoppe-dive-i18n-design.md
+// 鍵は config.js の id。{n} などの穴は Game.lang.t で埋める。共通のもの（B5F・SEED・数字・x1.25・←→↑↓・HOPPE DIVE）はここに入れない
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  const ja = {
+    upgrades: {
+      speed: { name: 'はやさ', desc: 'もっと はやく はしる' },
+      move: { name: 'まえうしろ', desc: ['', 'まえうしろに うごける。いしが おちてくる', 'いしが 2こ おちてくる', 'いしが はやく おちてくる'] },
+      lane: { name: 'レーン', desc: ['', 'おくと てまえに うごける。 とおせんぼが でる', 'とおせんぼが ふえる', 'とおせんぼが いれかわる'] },
+      trap: { name: 'わな', desc: ['', 'ながい わなが でる', 'つららいしが でる。とぶと あたる', 'わなが ふえる', 'わなが もっと ふえる', 'ななめや でこぼこの わなが でる'] },
+      loot: { name: 'おたから', desc: ['', 'ほうせきが でる。わなも ふえる', 'おおきな たからが でる。わなも ふえる', 'とおせんぼの そばに たからが ならぶ', 'おうごんの ぞうが でる。わなも ふえる'] },
+      greed: { name: 'よくばり', desc: 'レベルアップが はやくなる。 ほっぺが おもくて ジャンプが ひくくなる' },
+    },
+    perks: {
+      lives: { name: 'のこりの いのち', desc: ['', 'しんでも 1かい つづく', 'しんでも 2かい つづく', 'しんでも 3かい つづく', 'しんでも 4かい つづく', 'しんでも 5かい つづく'] },
+      rockWarn: { name: 'らくせきの よこく', desc: ['', 'かげが すこし はやく でる', 'かげが もっと はやく でる', 'おちる ばしょに あかい しるし', 'かげが とても はやく でる'] },
+      preview: { name: 'さきみ', desc: ['', 'くるものが すこし まえに みえる', 'くるものが もっと まえに みえる'] },
+      swap: { name: 'とおせんぼ よこく', desc: ['', 'はやめに いれかわる', 'もっと はやめに いれかわる', 'とても はやめに いれかわる'] },
+      jump: { name: 'ジャンプの ゆとり', desc: ['', 'わなに すこし あたりにくい', 'わなに もっと あたりにくい', 'わなに とても あたりにくい', 'わなに ずっと あたりにくい', 'わなに ほとんど あたらない'] },
+      map: { name: 'いせきの ちず', desc: ['', 'レベルアップが すこし はやい', 'レベルアップが もっと はやい'] },
+      calm: { name: 'おちついて', desc: ['', 'いちばん はやい ときが すこし おそい', 'いちばん はやい ときが もっと おそい', 'いちばん はやい ときが とても おそい'] },
+      magnet: { name: 'じしゃく', desc: ['', 'たからを ひろいやすい', 'となりの レーンの たからも すいよせる'] },
+      bag: { name: 'たからぶくろ', desc: ['', 'もちかえる たから x1.25', 'もちかえる たから x1.5', 'もちかえる たから x2'] },
+      rockGap: { name: 'いしの すきま', desc: ['', 'いしと わなの あいだが すこし あく', 'いしと わなの あいだが もっと あく'] },
+      luck: { name: 'こううん', desc: ['', 'わなや いしが たまに こない', 'わなや いしが ときどき こない', 'わなや いしが よく こない'] },
+    },
+    unlocks: {
+      move: { name: 'まえうしろ', desc: 'さいしょから うごける' },
+      lane: { name: 'レーン', desc: 'さいしょから うごける' },
+    },
+    speedStart: { name: 'さいしょの はやさ', desc: 'さいしょから はやく はしる', locked: 'ランで はやさを さいだいに すると つかえる', same: 'もう この はやさ。えらんでも かわらない', samePop: 'そのまま' },
+    ach: {
+      firstMove: { name: 'はじめての まえうしろ', desc: 'ランで まえうしろを とる' },
+      firstLane: { name: 'はじめての レーン', desc: 'ランで レーンを とる' },
+      firstSeed: { name: 'はじめての たね', desc: 'ひまわりの たねを ひろう' },
+      firstGem: { name: 'はじめての ほうせき', desc: 'ほうせきを ひろう' },
+      firstBig: { name: 'はじめての おおきな たから', desc: 'おおきな たからを ひろう' },
+      firstStatue: { name: 'はじめての おうごんの ぞう', desc: 'おうごんの ぞうを ひろう' },
+      firstHome: { name: 'はじめての もちかえり', desc: 'たからを もちかえる' },
+      firstPerk: { name: 'はじめての きょうか', desc: 'キャンプで きょうかを かう' },
+      firstUnlock: { name: 'はじめての アンロック', desc: 'キャンプで アンロックを いれる' },
+      floor5: { name: 'こけの かいそう', desc: 'B5F に つく' },
+      floor9: { name: 'あかい いわの かいそう', desc: 'B9F に つく' },
+      floor13: { name: 'おうごんの かいそう', desc: 'B13F に つく' },
+      clear: { name: 'たからの ま', desc: 'クリアする' },
+      noHit: { name: 'むきず', desc: 'いちども あたらずに クリアする' },
+      maxDiff: { name: 'さいだいの むずかしさ', desc: 'きょうかを ふらず まえうしろと レーンを いれて クリアする' },
+      fast: { name: 'はやぬけ', desc: '6ぷん いないに クリアする' },
+      escape: { name: 'だっしゅつ', desc: 'くずれる いせきから だっしゅつする' },
+      escapeMax: { name: 'さいだいの むずかしさで だっしゅつ', desc: 'きょうかを ふらず まえうしろと レーンを いれて だっしゅつする' },
+      score1: { name: 'いちまんてん', desc: 'さいごの てんが 10000 いじょう' },
+      score2: { name: 'さんまんてん', desc: 'さいごの てんが 30000 いじょう' },
+      score3: { name: 'ごまんてん', desc: 'さいごの てんが 50000 いじょう' },
+      statue: { name: 'おうごんの ぞう あつめ', desc: '1かいで おうごんの ぞうを 3こ とる' },
+      rows: { name: 'ならんだ ほうせき', desc: '1かいで たからの れつを 3かい ぜんぶ とる' },
+      rich: { name: 'おおもうけ', desc: '1かいで たからを 800 ひろう' },
+      near: { name: 'ぎりぎりの たつじん', desc: '1かいで ぎりぎりを 50かい' },
+      seeds: { name: 'たねの れんぞく', desc: 'たねを 15こ つづけて とる' },
+      maxSpeed: { name: 'はやさの さいだい', desc: 'ランで はやさを さいだいに する' },
+      maxMove: { name: 'まえうしろの さいだい', desc: 'ランで まえうしろを さいだいに する' },
+      maxLane: { name: 'レーンの さいだい', desc: 'ランで レーンを さいだいに する' },
+      maxTrap: { name: 'わなの さいだい', desc: 'ランで わなを さいだいに する' },
+      maxLoot: { name: 'おたからの さいだい', desc: 'ランで おたからを さいだいに する' },
+      maxGreed: { name: 'よくばりの さいだい', desc: 'ランで よくばりを さいだいに する' },
+      allMax: { name: 'ぜんぶ さいだい', desc: '1かいの ランで きょうかを ぜんぶ さいだいに する' },
+      perkAll: { name: 'じゅんび ばんたん', desc: 'キャンプの きょうかを ぜんぶ さいだいに する' },
+      pup: { name: 'まいごの こハムスター', desc: 'まいごの こハムスターを たすける', hint: 'すなの かいで だれかが まいごに なっている…' },
+      fly: { name: 'そらとぶ たね', desc: 'そらとぶ たねを つかまえる', hint: 'こけの かいで たねが そらを とんでいる…' },
+      mimic: { name: 'たからばこの まもの', desc: 'たからばこの まものから 3かい にげきる', hint: 'あかい かいで たからばこが ついてくる…' },
+      bat: { name: 'てんじょうの コウモリ', desc: 'コウモリを おこす', hint: 'てんじょうに なにか いる…' },
+      platinum: { name: 'でんせつの たんけんか', desc: 'ほかの じっせきを ぜんぶ とる' },
+    },
+    howto: { rows: ['ゆびを はなすと ジャンプ', ' おしたままでは とばない', 'よこに はらう: まえうしろ', 'たてに はらう: おく・てまえ', 'カードは タップで えらぶ', 'うえ 3ぶんの1 では とばない', 'キー: ←→↑↓ スペース 123'], scenes: ['はなすと ジャンプ', 'よこに はらう', 'たてに はらう'], after: 'とったら つかえる', title: ['ゆびを はなすと ジャンプ', 'くわしくは キャンプの あそびかた'] },
+    story: [
+      ['ハムスターの たんけんかが', 'ふるい いせきを みつけた'],
+      ['ちか 16かいの いちばん そこに', 'たからの へやが あるらしい'],
+      ['ふかく もぐるほど', 'わなが ふえて きびしくなる'],
+      ['もちかえった たからで', 'じゅんびを ととのえて いどもう!'],
+    ],
+    tips: {
+      move: { title: 'まえうしろ を とった!', lines: ['よこに はらうと', 'まえ・うしろへ うごける', '← → でも うごける', 'いしの かげから にげよう'] },
+      lane: { title: 'レーン を とった!', lines: ['たてに はらうと', 'おく・てまえへ うごける', '↑ ↓ でも うごける', 'とおせんぼを よけよう'] },
+      pup: { title: 'まいごの こハムスター!', lines: ['ちがう レーンで', 'まいごに なっている', 'おなじ マスへ いって', 'たすけよう'] },
+      fly: { title: 'そらとぶ たね!', lines: ['マスを とびまわる', 'おなじ マスで', 'ジャンプして', 'つかまえよう'] },
+      mimic: { title: 'たからばこの まもの!', lines: ['うしろから とびかかる', 'ジャンプで よけよう', '3かい よけると', 'たからを おとす'] },
+      next: 'タップで つづける',
+    },
+    extra: { go: 'いせきが くずれる! にげろ!', hint: 'もっと じゆうに うごけたら…', left: 'だっしゅつ あと {n}', ok: 'だっしゅつ せいこう', ng: 'だっしゅつ しっぱい' },
+    ui: {
+      tapToStart: 'タップで スタート', tapToCamp: 'タップで キャンプへ', pause: 'ポーズ', skip: 'とばす', story: 'おはなし', go: 'しゅっぱつ',
+      chooseOne: 'ひとつ えらんでね', clear: 'クリア!', gameOver: 'ゲームオーバー',
+      score: 'てん {n}', final: '= さいごの てん {n}', rank: '{n}い', newRecord: 'しんきろく!', kehaiMinus: 'けはい -{n}%',
+      bonusTime: '(はやさボーナス +{t} こみ)', bonusEscape: '(はやさ +{t} だっしゅつ +{b} こみ)', gain: 'もちかえった たから +{n}', achPlus: 'じっせき +{n}',
+      unspent: '(のこり {n})', mul: 'ばいりつ {m}', mulPlus: 'ばいりつ+{m}', max: 'さいだい', unlockPage: 'アンロック', kehai: 'けはい',
+      notYet: 'まだ', on: 'いれる', off: 'きる', unlockLocked: 'ランで さいだいに すると つかえる',
+      achCount: 'じっせき {n} / {m}', achHelp: 'メダルを タップで せつめい', got: 'とった!',
+      boardEmpty: 'まだ きろくが ない', boardEscaped: 'だっしゅつ', boardCleared: 'クリア', mapTreasure: 'たから',
+    },
+    msg: { ach: 'じっせき: {name}', achMore: 'じっせき: {name} ほか {n}', unlocked: '{list}が つかえる!', unlockedLong: '{list}が つかえるように なった!', and: 'と ' },
+    // 擬音・掛け声（fx.js）
+    fx: {
+      near: 'ギリッ', dodge: 'スイッ', gem: 'キラッ', big: 'ザクッ', pup: 'ありがと!', statue: 'ピカーッ', row: 'ぜんぶ!', rock: 'ゴッ', swap: 'ズズッ',
+      hit: 'ドカッ', life: 'ポンッ', climb: 'よじよじ', rumble: 'ゴゴゴ', crumble: 'ガラッ', heave: 'よいしょ', thud: 'ドスン', escape: 'だっしゅつ!',
+      allMax: 'ぜんぶ さいだい!', open: 'ガラガラ', fanfare: 'ジャーン', mimicTell: 'ガタガタ', bite: 'ガブッ', drop: 'ポロッ', catch: 'パクッ', bat: 'パタパタ', coins: 'ジャラッ',
+    },
+  };
+
+  // 英語（下書き。訳の相談で直す）
+  const en = {
+    upgrades: {
+      speed: { name: 'Speed', desc: 'Run even faster' },
+      move: { name: 'Step', desc: ['', 'Move back and forth. Rocks fall', 'Two rocks fall', 'Rocks fall faster'] },
+      lane: { name: 'Lanes', desc: ['', 'Move in and out. Walls appear', 'More walls', 'Walls switch lanes'] },
+      trap: { name: 'Traps', desc: ['', 'Long traps appear', 'Stalactites appear. They hit if you jump', 'More traps', 'Even more traps', 'Slanted and bumpy traps appear'] },
+      loot: { name: 'Loot', desc: ['', 'Gems appear. More traps too', 'Big treasure appears. More traps too', 'Treasure lines up by the walls', 'Golden statues appear. More traps too'] },
+      greed: { name: 'Greed', desc: 'Level up faster. Chubby cheeks: low jumps' },
+    },
+    perks: {
+      lives: { name: 'Extra Life', desc: ['', '1 extra life', '2 extra lives', '3 extra lives', '4 extra lives', '5 extra lives'] },
+      rockWarn: { name: 'Rock Alert', desc: ['', 'Shadows show a bit sooner', 'Shadows show sooner', 'Red marks where rocks land', 'Shadows show much sooner'] },
+      preview: { name: 'Foresight', desc: ['', 'See what comes a bit sooner', 'See what comes much sooner'] },
+      swap: { name: 'Wall Alert', desc: ['', 'Walls switch a bit early', 'Walls switch earlier', 'Walls switch much earlier'] },
+      jump: { name: 'Safe Jumps', desc: ['', 'Traps hit a bit less', 'Traps hit less', 'Traps hit much less', 'Traps hit very little', 'Traps almost never hit'] },
+      map: { name: 'Ruins Map', desc: ['', 'Level up a bit faster', 'Level up faster'] },
+      calm: { name: 'Steady', desc: ['', 'Top speed is a bit lower', 'Top speed is lower', 'Top speed is much lower'] },
+      magnet: { name: 'Magnet', desc: ['', 'Grab treasure more easily', 'Pulls in next-lane treasure'] },
+      bag: { name: 'Loot Bag', desc: ['', 'Bring home treasure x1.25', 'Bring home treasure x1.5', 'Bring home treasure x2'] },
+      rockGap: { name: 'Rock Gap', desc: ['', 'Rocks and traps a bit apart', 'Rocks and traps far apart'] },
+      luck: { name: 'Luck', desc: ['', 'A few traps and rocks skip', 'Some traps and rocks skip', 'Many traps and rocks skip'] },
+    },
+    unlocks: {
+      move: { name: 'Step', desc: 'Move from the start' },
+      lane: { name: 'Lanes', desc: 'Move from the start' },
+    },
+    speedStart: { name: 'Start Speed', desc: 'Start out running fast', locked: 'Max Speed in a run to unlock', same: 'Already this fast. No change', samePop: 'SAME' },
+    ach: {
+      firstMove: { name: 'First Step', desc: 'Get Step in a run' },
+      firstLane: { name: 'First Lanes', desc: 'Get Lanes in a run' },
+      firstSeed: { name: 'First Seed', desc: 'Pick up a sunflower seed' },
+      firstGem: { name: 'First Gem', desc: 'Pick up a gem' },
+      firstBig: { name: 'First Big Treasure', desc: 'Pick up a big treasure' },
+      firstStatue: { name: 'First Golden Statue', desc: 'Pick up a golden statue' },
+      firstHome: { name: 'First Haul', desc: 'Bring treasure home' },
+      firstPerk: { name: 'First Upgrade', desc: 'Buy an upgrade at camp' },
+      firstUnlock: { name: 'First Unlock', desc: 'Turn on an unlock at camp' },
+      floor5: { name: 'Mossy Depths', desc: 'Reach B5F' },
+      floor9: { name: 'Red Rock Depths', desc: 'Reach B9F' },
+      floor13: { name: 'Golden Depths', desc: 'Reach B13F' },
+      clear: { name: 'Treasure Room', desc: 'Clear the game' },
+      noHit: { name: 'Unscathed', desc: 'Clear without getting hit' },
+      maxDiff: { name: 'Max Difficulty', desc: 'Clear with no upgrades bought, and Step and Lanes on' },
+      fast: { name: 'Speedrun', desc: 'Clear in under 6 minutes' },
+      escape: { name: 'Escape', desc: 'Escape the crumbling ruins' },
+      escapeMax: { name: 'Max Difficulty Escape', desc: 'Escape with no upgrades bought, and Step and Lanes on' },
+      score1: { name: '10000 Points', desc: 'Final score of 10000 or more' },
+      score2: { name: '30000 Points', desc: 'Final score of 30000 or more' },
+      score3: { name: '50000 Points', desc: 'Final score of 50000 or more' },
+      statue: { name: 'Statue Collector', desc: 'Get 3 golden statues in one run' },
+      rows: { name: 'Gem Rows', desc: 'Grab a whole treasure row 3 times in one run' },
+      rich: { name: 'Big Haul', desc: 'Pick up 800 treasure in one run' },
+      near: { name: 'Graze Master', desc: '50 grazes in one run' },
+      seeds: { name: 'Seed Streak', desc: 'Grab 15 seeds in a row' },
+      maxSpeed: { name: 'Max Speed', desc: 'Max out Speed in a run' },
+      maxMove: { name: 'Max Step', desc: 'Max out Step in a run' },
+      maxLane: { name: 'Max Lanes', desc: 'Max out Lanes in a run' },
+      maxTrap: { name: 'Max Traps', desc: 'Max out Traps in a run' },
+      maxLoot: { name: 'Max Loot', desc: 'Max out Loot in a run' },
+      maxGreed: { name: 'Max Greed', desc: 'Max out Greed in a run' },
+      allMax: { name: 'All Maxed', desc: 'Max out every upgrade in one run' },
+      perkAll: { name: 'Fully Prepared', desc: 'Max out every camp upgrade' },
+      pup: { name: 'Lost Pup', desc: 'Rescue the lost baby hamster', hint: 'Someone is lost on the sandy floors...' },
+      fly: { name: 'Flying Seed', desc: 'Catch the flying seed', hint: 'A seed is flying on the mossy floors...' },
+      mimic: { name: 'Chest Monster', desc: 'Escape the chest monster 3 times', hint: 'A treasure chest follows you on the red floors...' },
+      bat: { name: 'Ceiling Bat', desc: 'Wake up a bat', hint: 'Something is on the ceiling...' },
+      platinum: { name: 'Legendary Explorer', desc: 'Get every other medal' },
+    },
+    howto: { rows: ['Let go to jump', ' Holding won\'t jump', 'Swipe sideways: Step', 'Swipe up/down: Lanes', 'Tap a card to pick it', 'No jumps in the top 1/3', 'Keys: ←→↑↓ Space 123'], scenes: ['Let go: jump', 'Swipe sideways', 'Swipe up/down'], after: 'Once you get it', title: ['Let go to jump', 'See how to play at camp'] },
+    story: [
+      ['A hamster explorer', 'found some old ruins'],
+      ['They say a treasure room lies', '16 floors down, at the very bottom'],
+      ['The deeper you dive,', 'the more traps, and the harder'],
+      ['Bring treasure home, get ready,', 'and dive in again!'],
+    ],
+    tips: {
+      move: { title: 'You got Step!', lines: ['Swipe sideways', 'to move back/forth', '← → work too', 'Dodge rock shadows'] },
+      lane: { title: 'You got Lanes!', lines: ['Swipe up or down', 'to change lanes', '↑ ↓ work too', 'Dodge the walls'] },
+      pup: { title: 'A lost baby hamster!', lines: ['It is lost', 'in another lane', 'Go to its square', 'to rescue it'] },
+      fly: { title: 'A flying seed!', lines: ['It flies around', 'the squares', 'Jump on its square', 'to catch it'] },
+      mimic: { title: 'A chest monster!', lines: ['It leaps from behind', 'Jump to dodge it', 'Dodge it 3 times', 'and it drops loot'] },
+      next: 'Tap to continue',
+    },
+    extra: { go: 'Cave-in! Run!', hint: 'If only I could move more freely...', left: 'Exit: {n} left', ok: 'Escaped!', ng: 'Escape failed' },
+    ui: {
+      tapToStart: 'Tap to start', tapToCamp: 'Tap for camp', pause: 'Paused', skip: 'Skip', story: 'Story', go: 'Go!',
+      chooseOne: 'Pick one!', clear: 'CLEAR!', gameOver: 'GAME OVER',
+      score: 'Score {n}', final: '= Final {n}', rank: 'Rank {n}', newRecord: 'New record!', kehaiMinus: 'Sense -{n}%',
+      bonusTime: '(speed bonus +{t} included)', bonusEscape: '(speed +{t} escape +{b} included)', gain: 'Treasure home +{n}', achPlus: 'Medals +{n}',
+      unspent: '({n} left)', mul: 'Mult {m}', mulPlus: 'Mult+{m}', max: 'MAX', unlockPage: 'Unlocks', kehai: 'Sense',
+      notYet: 'Not yet', on: 'On', off: 'Off', unlockLocked: 'Max it out in a run to unlock',
+      achCount: 'Medals {n} / {m}', achHelp: 'Tap a medal for details', got: 'Got it!',
+      boardEmpty: 'No records yet', boardEscaped: 'Escaped', boardCleared: 'Clear', mapTreasure: 'Treasure',
+    },
+    msg: { ach: 'Medal: {name}', achMore: 'Medal: {name} +{n}', unlocked: '{list} unlocked!', unlockedLong: '{list} now unlocked!', and: ' and ' },
+    fx: {
+      near: 'GRAZE!', dodge: 'WHOOSH', gem: 'BLING', big: 'CLINK', pup: 'THANKS!', statue: 'SHINE!', row: 'ALL!', rock: 'BONK', swap: 'GRIND',
+      hit: 'WHAM!', life: 'POP!', climb: 'CLIMB', rumble: 'RUMBLE', crumble: 'CRACK', heave: 'HUP!', thud: 'THUD', escape: 'ESCAPED!',
+      allMax: 'ALL MAXED!', open: 'CLATTER', fanfare: 'TA-DA!', mimicTell: 'RATTLE', bite: 'CHOMP!', drop: 'PLOP', catch: 'GULP', bat: 'FLAP', coins: 'JINGLE',
+    },
+  };
+
+  Game.text = { ja, en };
+})();
+</script>
+<script>
+// 言語: 今の言語と、文の表（text.js）を引く t。設計書: docs/specs/2026-11-07-hoppe-dive-i18n-design.md
+// 読み込んだだけでは navigator / location / localStorage に触らない（node のテストで読めるように）。init は main.js が呼ぶ
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const LANGS = ['ja', 'en'];
+
+  const L = {
+    LANGS,
+    cur: 'ja',
+    // 決める順番: URL の ?lang= → 端末に保存した言語 → 端末の言語（先頭が ja… なら日本語、それ以外は英語）
+    pick(query, saved, navLangs) {
+      if (LANGS.includes(query)) return query;
+      if (LANGS.includes(saved)) return saved;
+      const first = (navLangs || [])[0] || '';
+      return /^ja\b/i.test(first) ? 'ja' : 'en';
+    },
+    init(query, saved, navLangs) { L.set(L.pick(query, saved, navLangs)); return L.cur; },
+    set(lang) {
+      L.cur = LANGS.includes(lang) ? lang : 'ja';
+      if (typeof document !== 'undefined') document.documentElement.lang = L.cur;
+    },
+    other: () => (L.cur === 'ja' ? 'en' : 'ja'),
+    // 'a.b.c' の道をたどる。vars があれば {x} を埋める（文字列のとき）。ないときは '?'
+    t(path, vars, lang = L.cur) {
+      let v = Game.text[lang];
+      for (const k of path.split('.')) { if (v == null) break; v = v[k]; }
+      if (v == null) return '?';
+      if (vars && typeof v === 'string') v = v.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? String(vars[k]) : m));
+      return v;
+    },
+    // ['A', 'B'] → 'Aと B'（en: 'A and B'）
+    list: (items, lang = L.cur) => items.join(L.t('msg.and', null, lang)),
+  };
+
+  Game.lang = L;
 })();
 </script>
 <script>
@@ -2787,33 +3050,45 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const k = ch + color;
     if (glyphCache[k]) return glyphCache[k];
     const rows = glyphRows(ch) || glyphRows('?');
-    const c = mk(6, 7), g = c.getContext('2d');
+    const c = mk(6, rows.length), g = c.getContext('2d'); // g j p q y は 8 行（下へ 1 行出る）
     g.fillStyle = color;
-    for (let y = 0; y < 7; y++) for (let x = 0; x < rows[y].length; x++) if (rows[y][x] === '#') g.fillRect(x, y, 1, 1);
+    for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[y].length; x++) if (rows[y][x] === '#') g.fillRect(x, y, 1, 1);
     return (glyphCache[k] = c);
   }
 
-  const textW = (str) => [...str].length * F.adv - 1;
+  // 送り幅: 字の幅＋1（幅 5 の字と、濁点を重ねた幅 6 の字は 6）。空白は日本語 6・英語 4（分かち書きの間は今のまま）
+  const SPACE = { ja: F.adv, en: 4 };
+  function advOf(ch) {
+    if (ch === ' ') return SPACE[(Game.lang && Game.lang.cur) || 'ja'] || F.adv;
+    const rows = glyphRows(ch) || glyphRows('?');
+    return Math.min(rows[0].length, F.w) + 1;
+  }
+  // 字ごとの x（先頭からのずれ）
+  function layout(str) {
+    let x = 0;
+    return [...str].map((ch) => { const at = x; x += advOf(ch); return { ch, at }; });
+  }
+  const textW = (str) => [...str].reduce((w, ch) => w + advOf(ch), 0) - 1;
 
   // 1行の文字。outline を渡すと1ドットの縁取り（擬音・見出し用）
   function text(g, str, x, y, color, outline) {
     x = Math.round(x); y = Math.round(y);
-    const chars = [...str];
+    const chars = layout(str);
     if (outline) {
       for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-        chars.forEach((ch, i) => g.drawImage(glyph(ch, outline), x + i * F.adv + ox, y + oy));
+        chars.forEach((c) => g.drawImage(glyph(c.ch, outline), x + c.at + ox, y + oy));
       }
     }
-    chars.forEach((ch, i) => g.drawImage(glyph(ch, color), x + i * F.adv, y));
+    chars.forEach((c) => g.drawImage(glyph(c.ch, color), x + c.at, y));
   }
 
-  // 幅に収まるように、空白で折り返す
-  function wrap(str, maxChars) {
+  // 幅（ドット）に収まるように、空白で折り返す。1 語が幅より長いときは、その語だけで 1 行
+  function wrap(str, maxPx) {
     const words = str.split(' '), lines = [];
     let cur = '';
     for (const w of words) {
       const next = cur ? cur + ' ' + w : w;
-      if ([...next].length > maxChars && cur) { lines.push(cur); cur = w; } else cur = next;
+      if (textW(next) > maxPx && cur) { lines.push(cur); cur = w; } else cur = next;
     }
     if (cur) lines.push(cur);
     return lines;
@@ -2856,7 +3131,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     return (baked = b);
   }
 
-  Game.bake = { bake, hamRows, HAM, HW, all, text, textW, wrap, glyph, glyphRows, hasGlyph, mk };
+  Game.bake = { bake, hamRows, HAM, HW, all, text, textW, advOf, wrap, glyph, glyphRows, hasGlyph, mk };
 })();
 </script>
 <script>
@@ -2867,6 +3142,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 (function () {
   const Game = (window.Game = window.Game || {});
   const B = Game.bake;
+  const lt = (path) => Game.lang.t(path); // 擬音の文（text.js の fx）
 
   const INK = '#181425';
   const LUCK_SEC = { puff: 0.7, drop: 0.75 }; // こううんの演出の長さ
@@ -2928,48 +3204,48 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       const y = e.lane != null ? R.laneY(e.lane) - 22 : 40;
       const x = e.x != null ? e.x + (e.lane != null ? R.laneDx(e.lane) : 0) : 96;
       switch (e.type) {
-        case 'near_miss': pop('ギリッ', '#fee761', x + 10, y - 6, 'S'); break;
+        case 'near_miss': pop(lt('fx.near'), '#fee761', x + 10, y - 6, 'S'); break;
         case 'pickup':
           // じしゃく 2: 隣のレーンの宝が、ハムスターへ吸い寄せられる（絵だけ。拾ったのは重なった瞬間）
           if (e.pulled && app && app.rules) {
             const h = app.rules.h, img = Game.bake.all()[e.k];
             if (img) pulls.push({ img, x0: x, y0: R.laneY(e.lane) - (e.h || 0) - img.height - 1, x1: h.x + R.laneDx(h.lp), y1: R.laneY(h.lp) - 10 - img.height, t: 0, mirror });
-            pop('スイッ', '#c0cbdc', x, R.laneY(e.lane) - (e.h || 0) - 26, 'S'); // 吸い寄せる宝の絵にかぶらないよう上に
+            pop(lt('fx.dodge'), '#c0cbdc', x, R.laneY(e.lane) - (e.h || 0) - 26, 'S'); // 吸い寄せる宝の絵にかぶらないよう上に
           }
-          if (e.k === 'gem') pop('キラッ', '#2ce8f5', x, R.laneY(e.lane) - (e.h || 0) - 16, 'S');
-          else if (e.k === 'big') pop('ザクッ', '#feae34', x, R.laneY(e.lane) - (e.h || 0) - 18, 'M');
-          else if (e.k === 'pup') pop('ありがと!', '#f6757a', x, R.laneY(e.lane) - 22, 'M');
-          else if (e.k === 'statue') pop('ピカーッ', '#fee761', x, R.laneY(e.lane) - (e.h || 0) - 18, 'M');
+          if (e.k === 'gem') pop(lt('fx.gem'), '#2ce8f5', x, R.laneY(e.lane) - (e.h || 0) - 16, 'S');
+          else if (e.k === 'big') pop(lt('fx.big'), '#feae34', x, R.laneY(e.lane) - (e.h || 0) - 18, 'M');
+          else if (e.k === 'pup') pop(lt('fx.pup'), '#f6757a', x, R.laneY(e.lane) - 22, 'M');
+          else if (e.k === 'statue') pop(lt('fx.statue'), '#fee761', x, R.laneY(e.lane) - (e.h || 0) - 18, 'M');
           break;
-        case 'row_bonus': pop('ぜんぶ!', '#feae34', x + 10, y - 10, 'M'); break;
+        case 'row_bonus': pop(lt('fx.row'), '#feae34', x + 10, y - 10, 'M'); break;
         case 'rock_land': {
-          pop('ゴッ', '#c0cbdc', e.x, R.laneY(Math.max(...e.lanes)) - 18, 'M');
+          pop(lt('fx.rock'), '#c0cbdc', e.x, R.laneY(Math.max(...e.lanes)) - 18, 'M');
           shake = Math.max(shake, 1); shakeT = 0.12;
           break;
         }
-        case 'block_swap': pop('ズズッ', '#e4a672', e.x, 46, 'S'); break;
-        case 'hit': pop('ドカッ', '#e43b44', x + 10, y - 6, 'L'); shake = cfg.fx.shakeMax; shakeT = 0.3; break;
-        case 'life_used': pop('ポンッ', '#f6757a', x + 6, y - 14, 'M'); break;
+        case 'block_swap': pop(lt('fx.swap'), '#e4a672', e.x, 46, 'S'); break;
+        case 'hit': pop(lt('fx.hit'), '#e43b44', x + 10, y - 6, 'L'); shake = cfg.fx.shakeMax; shakeT = 0.3; break;
+        case 'life_used': pop(lt('fx.life'), '#f6757a', x + 6, y - 14, 'M'); break;
         case 'levelup_start':
-          if (e.extra) { pop('よじよじ', '#ffffff', 96, 30, 'M'); break; }
-          pop(e.final ? 'ゴゴゴ' : 'ガラッ', '#ffffff', 96, 50, 'L'); shake = cfg.fx.shakeMax; shakeT = 0.25; break;
+          if (e.extra) { pop(lt('fx.climb'), '#ffffff', 96, 30, 'M'); break; }
+          pop(e.final ? lt('fx.rumble') : lt('fx.crumble'), '#ffffff', 96, 50, 'L'); shake = cfg.fx.shakeMax; shakeT = 0.25; break;
         case 'levelup_land':
-          if (e.extra) { pop('よいしょ', '#ffffff', x + 4, y, 'M'); shake = 1; shakeT = 0.1; break; }
-          pop('ドスン', '#ffffff', x + 4, y, 'M'); shake = cfg.fx.shakeMax; shakeT = 0.15; break;
+          if (e.extra) { pop(lt('fx.heave'), '#ffffff', x + 4, y, 'M'); shake = 1; shakeT = 0.1; break; }
+          pop(lt('fx.thud'), '#ffffff', x + 4, y, 'M'); shake = cfg.fx.shakeMax; shakeT = 0.15; break;
         // ④脱出エクストラ
-        case 'collapse': pop('ゴゴゴ', '#e4a672', 150, 16, 'L'); shake = cfg.fx.shakeMax; shakeT = 0.6; break;
-        case 'escape': pop('だっしゅつ!', '#fee761', 96, 26, 'L'); break;
-        case 'all_max': pop('ぜんぶ さいだい!', '#feae34', 96, 18, 'M'); break;
+        case 'collapse': pop(lt('fx.rumble'), '#e4a672', 150, 16, 'L'); shake = cfg.fx.shakeMax; shakeT = 0.6; break;
+        case 'escape': pop(lt('fx.escape'), '#fee761', 96, 26, 'L'); break;
+        case 'all_max': pop(lt('fx.allMax'), '#feae34', 96, 18, 'M'); break;
         case 'levelup_pick':
-          if (e.id === 'lane' && e.rank === 1) pop('ガラガラ', '#e4a672', 96, 88, 'M');
-          if (e.id === 'speed' && app && app.rules && e.rank <= (app.rules.ranks.speedMin || 0)) pop(cfg.meta.speedStart.samePop, '#8b9bb4', 96, 60, 'S'); // さいしょの はやさ の下では速くならない
+          if (e.id === 'lane' && e.rank === 1) pop(lt('fx.open'), '#e4a672', 96, 88, 'M');
+          if (e.id === 'speed' && app && app.rules && e.rank <= (app.rules.ranks.speedMin || 0)) pop(lt('speedStart.samePop'), '#8b9bb4', 96, 60, 'S'); // さいしょの はやさ の下では速くならない
           break;
-        case 'clear': pop('ジャーン', '#feae34', 96, 22, 'L'); break;
-        case 'mimic_tell': pop('ガタガタ', '#feae34', x, y - 4, 'S'); break;
-        case 'mimic_bite': pop('ガブッ', '#e43b44', x + 6, y - 8, 'M'); shake = 1; shakeT = 0.15; break;
-        case 'mimic_give': pop('ポロッ', '#feae34', x, y - 6, 'M'); break;
-        case 'fly_catch': pop('パクッ', '#fee761', x, R.laneY(e.lane) - (e.h || 0) - 20, 'M'); break;
-        case 'bat': pop('パタパタ', '#c0cbdc', e.x, e.y + 12, 'S'); break;
+        case 'clear': pop(lt('fx.fanfare'), '#feae34', 96, 22, 'L'); break;
+        case 'mimic_tell': pop(lt('fx.mimicTell'), '#feae34', x, y - 4, 'S'); break;
+        case 'mimic_bite': pop(lt('fx.bite'), '#e43b44', x + 6, y - 8, 'M'); shake = 1; shakeT = 0.15; break;
+        case 'mimic_give': pop(lt('fx.drop'), '#feae34', x, y - 6, 'M'); break;
+        case 'fly_catch': pop(lt('fx.catch'), '#fee761', x, R.laneY(e.lane) - (e.h || 0) - 20, 'M'); break;
+        case 'bat': pop(lt('fx.bat'), '#c0cbdc', e.x, e.y + 12, 'S'); break;
         case 'luck': {
           // こううん: 地面の物は、さきみの予告の印（なければ窓の右端）で ぽふっ と消えてクローバー。石は影の代わりに天井から砂粒と、床にクローバー（音なし）
           const V = cfg.view, sk = cfg.layout.skew;
@@ -2981,7 +3257,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
           }
           break;
         }
-        case 'camp_count_end': pop('ジャラッ', '#feae34', 60, 14, 'M'); break;
+        case 'camp_count_end': pop(lt('fx.coins'), '#feae34', 60, 14, 'M'); break;
       }
     }
 
@@ -3382,6 +3658,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       else if (e.key === '1' || e.key === '2' || e.key === '3') emit({ type: 'pick', i: +e.key - 1 });
       else if (e.key === ' ' || e.key === 'Enter') e.preventDefault();
       else if (e.key === 'Escape') emit({ type: 'esc' }); // おはなしを とばす
+      else if (e.key === 'l' || e.key === 'L') emit({ type: 'lang' }); // タイトルで言語を切り替える
     });
     addEventListener('keyup', (e) => {
       if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); emit({ type: 'key' }); }
@@ -3402,6 +3679,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 (function () {
   const Game = (window.Game = window.Game || {});
   const B = Game.bake;
+  // 文は text.js から引く（今の言語）。設計書: docs/specs/2026-11-07-hoppe-dive-i18n-design.md
+  const lt = (path, vars) => Game.lang.t(path, vars);
+  // 文の枠（config.textBox）。今の言語の上書き（en など）を重ねる
+  const tb = (k) => { const b = Game.config.textBox[k]; return Object.assign({}, b, b[Game.lang.cur]); };
+  const upDesc = (id, rank) => { const d = lt('upgrades.' + id + '.desc'); return Array.isArray(d) ? d[rank] : d; };
 
   const R = {
     canvas: null, g: null,
@@ -3478,6 +3760,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       return Array.from({ length: n }, (_, i) => ({ x: x0 + i * (w + gap), y: 30, w, h }));
     },
   };
+  R.textBox = tb;
 
   const themeIndex = (floor, cfg) => Math.min(3, Math.floor((floor - 1) / 4));
   // 階の色合い。④エクストラでは、登った割合で 黄金 → 赤い岩 → 苔 → 砂岩 と戻っていく（ahead: 1 なら次の階）
@@ -3854,7 +4137,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const cfg = Game.config, list = app.board ? app.board.list : [], x0 = 6, y0 = 31, w = 180;
     g.fillStyle = INK; g.fillRect(x0 - 1, y0 - 1, w + 2, 68);
     g.fillStyle = '#262b44'; g.fillRect(x0, y0, w, 66);
-    if (!list.length) { centerText(g, 'まだ きろくが ない', 58, '#8b9bb4'); return; }
+    if (!list.length) { centerText(g, lt('ui.boardEmpty'), 58, '#8b9bb4'); return; }
     list.forEach((e, i) => {
       const y = y0 + 1 + i * 8, now = app.camp.boardNew === i + 1;
       if (now && Math.floor(app.time * 3) % 2 === 0) { g.fillStyle = '#3a4466'; g.fillRect(x0, y - 1, w, 8); }
@@ -3863,7 +4146,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       const f = String(e.final);
       B.text(g, f, x0 + 50 - B.textW(f), y, c);
       B.text(g, fmtMul(e.mult), x0 + 58, y, '#8b9bb4');
-      B.text(g, e.escaped ? 'だっしゅつ' : e.cleared ? 'クリア' : 'B' + e.floor + 'F', x0 + 94, y, e.escaped ? GOLD : e.cleared ? WHITE : '#8b9bb4');
+      B.text(g, e.escaped ? lt('ui.boardEscaped') : e.cleared ? lt('ui.boardCleared') : 'B' + e.floor + 'F', x0 + 94, y, e.escaped ? GOLD : e.cleared ? WHITE : '#8b9bb4');
       const md = e.date.slice(5).replace('-', '/');
       B.text(g, md, x0 + w - 3 - B.textW(md), y, '#8b9bb4');
     });
@@ -3891,6 +4174,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     }
     g.drawImage(A.finger, Math.round(x - 4), Math.round(y - A.finger.height + 1));
   }
+
+  // タイトルの言語の切り替え（右下の JA EN）。box: タップの範囲、ja / en: 文字の位置
+  R.titleLayout = () => ({ lang: { x: 158, y: 93, w: 34, h: 15, ja: { x: 164, y: 99 }, en: { x: 179, y: 99 } } });
 
   // 位置（窓の中のドット）: 左に見本の枠、右に一覧（1行 8 ドット）
   R.howtoLayout = function () {
@@ -3960,37 +4246,39 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   function drawHowto(g, app, A) {
-    const cfg = Game.config, H = cfg.howto, L = R.howtoLayout(), b = L.box, cur = howtoScene(app);
+    const cfg = Game.config, H = cfg.howto, HT = lt('howto'), L = R.howtoLayout(), b = L.box, cur = howtoScene(app);
     // 一覧（今の場面の行は金色）。背景が騒がしいので、暗い板を敷く
     const r0 = L.rows[0], rn = L.rows[L.rows.length - 1];
     g.fillStyle = INK; g.fillRect(r0.x - 3, r0.y - 2, r0.w + 2, rn.y + rn.h - r0.y + 3);
     g.fillStyle = '#262b44'; g.fillRect(r0.x - 2, r0.y - 1, r0.w, rn.y + rn.h - r0.y + 1);
+    // 縁取りを全部の行に先に描いてから字を描く（行の間 8 なので、英語の g j p q y の下の 1 行が次の行の縁取りに消されないように）
+    H.rows.forEach((r, i) => B.text(g, HT.rows[i], L.rows[i].x, L.rows[i].y, INK, INK));
     H.rows.forEach((r, i) => {
       const on = r.scene === cur.scene, rr = L.rows[i];
-      B.text(g, r.text, rr.x, rr.y, on ? (r.sub ? '#feae34' : GOLD) : r.sub ? '#8b9bb4' : WHITE, INK);
+      B.text(g, HT.rows[i], rr.x, rr.y, on ? (r.sub ? '#feae34' : GOLD) : r.sub ? '#8b9bb4' : WHITE);
     });
     drawDemo(g, app, A, b, cur.scene, cur.t);
     // 場面の名前（前後・レーンは、ランで取ってから使える）
-    const name = H.scenes[cur.scene];
+    const name = HT.scenes[cur.scene];
     B.text(g, name, b.x + Math.floor((b.w - B.textW(name)) / 2), b.y + 49, WHITE, INK);
-    if (cur.scene > 0) B.text(g, H.after, b.x + Math.floor((b.w - B.textW(H.after)) / 2), b.y + 57, '#8b9bb4', INK);
+    if (cur.scene > 0) B.text(g, HT.after, b.x + Math.floor((b.w - B.textW(HT.after)) / 2), b.y + 57, '#8b9bb4', INK);
   }
 
   // ---- はじめて取ったときの操作の紹介（ヒント）。設計書: docs/specs/2026-11-04-hoppe-dive-tips-design.md ----
   // ランの画面を暗くして、板の上に 見出し・見本・文。閉じられるようになったら「タップで つづける」と、点滅する ▶
   function drawTip(g, app, A) {
-    const cfg = Game.config, V = cfg.view, T = cfg.tips, tip = app.tip, d = T[tip.queue[0]];
+    const cfg = Game.config, V = cfg.view, T = cfg.tips, tip = app.tip, d = T[tip.queue[0]], dt = lt('tips.' + tip.queue[0]), next = lt('tips.next');
     g.globalAlpha = 0.7; g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h); g.globalAlpha = 1;
     const p = { x: 6, y: 18, w: V.w - 12, h: 82 };
     g.fillStyle = INK; g.fillRect(p.x - 1, p.y - 1, p.w + 2, p.h + 2);
     g.fillStyle = '#262b44'; g.fillRect(p.x, p.y, p.w, p.h);
-    centerText(g, d.title, p.y + 4, GOLD, INK);
+    centerText(g, dt.title, p.y + 4, GOLD, INK);
     const b = { x: p.x + 6, y: p.y + 16, w: 70, h: 50 };
     if (d.rare) drawRareDemo(g, app, A, b, d.rare, tip.t); else drawDemo(g, app, A, b, d.scene, tip.t % cfg.ui.howtoSec);
-    d.lines.forEach((l, i) => B.text(g, l, b.x + b.w + 8, b.y + 3 + i * 12, d.sub.includes(i) ? '#8b9bb4' : WHITE, INK));
+    dt.lines.forEach((l, i) => B.text(g, l, b.x + b.w + 8, b.y + 3 + i * 12, d.sub.includes(i) ? '#8b9bb4' : WHITE, INK));
     if (tip.t >= T.closeSec) {
-      const w = B.textW(T.next), x = p.x + p.w - 14 - w, y = p.y + p.h - 12;
-      B.text(g, T.next, x, y, '#8b9bb4', INK);
+      const w = B.textW(next), x = p.x + p.w - 14 - w, y = p.y + p.h - 12;
+      B.text(g, next, x, y, '#8b9bb4', INK);
       if (Math.floor(app.time * 2) % 2 === 0) g.drawImage(A.arrowR, x + w + 3, y);
     }
   }
@@ -4014,13 +4302,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (f > 0) { g.globalAlpha = f; g.fillStyle = INK; g.fillRect(0, 0, V.w, STORY_H); g.globalAlpha = 1; }
     g.fillStyle = INK; g.fillRect(0, STORY_H, V.w, V.h - STORY_H);
     g.fillStyle = '#3a4466'; g.fillRect(0, STORY_H, V.w, 1);
-    const lines = S.pages[st.page];
+    const pages = lt('story'), lines = pages[st.page];
     let n = Math.floor(t * S.cps + 1e-6);
     const total = lines.reduce((m, l) => m + [...l].length, 0);
     lines.forEach((line, i) => { const ch = [...line]; B.text(g, ch.slice(0, Math.max(0, n)).join(''), 6, STORY_H + 5 + i * 11, WHITE); n -= ch.length; });
-    for (let i = 0; i < S.pages.length; i++) { g.fillStyle = i === st.page ? GOLD : '#3a4466'; g.fillRect(V.w - 40 + i * 6, V.h - 7, 4, 3); }
+    for (let i = 0; i < pages.length; i++) { g.fillStyle = i === st.page ? GOLD : '#3a4466'; g.fillRect(V.w - 40 + i * 6, V.h - 7, 4, 3); }
     if (t * S.cps >= total && Math.floor(app.time * 2) % 2 === 0) g.drawImage(A.arrowR, V.w - 14, STORY_H + 15);
-    button(g, R.storyLayout().skip, 'とばす', true);
+    button(g, R.storyLayout().skip, lt('ui.skip'), true);
   }
 
   // 1 枚目: 夕方の丘で、たんけんかが いせきの いりぐちを見上げる（新しく描いた一枚絵）
@@ -4122,7 +4410,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     // 階の名前
     B.text(g, 'B1F', x0 - 22, top - 1, WHITE, INK);
     B.text(g, 'B16F', x0 - 28, top + (n - 1) * step - 3, WHITE, INK);
-    B.text(g, 'たから', x1 + 6, ry - 1, GOLD, INK);
+    B.text(g, lt('ui.mapTreasure'), x1 + 6, ry - 1, GOLD, INK);
   }
 
   // 3 枚目: 通路を走る。下の階ほど色が変わり、わなが増え、石が落ちてくる（当たりはない。決まった動き）
@@ -4169,7 +4457,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (Math.floor(t * 3) % 3 === 0) g.drawImage(A.sparkle[Math.floor(t * 6) % 2], 132, y - A.pile.height - 3);
     // 浮かぶカード: 名前、段階の丸、＋（1.2 秒で押して、丸が 1 つ増える）
     const p = t % 3, got = p >= 1.2, press = p >= 1.2 && p < 1.35;
-    const perk = cfg.meta.perks[0], name = perk.name;
+    const perk = cfg.meta.perks[0], name = lt('perks.' + perk.id + '.name');
     const cw = Math.max(64, B.textW(name) + 24), cx = Math.floor((V.w - cw) / 2), cy = 8 + Math.round(Math.sin(t * 2) * 1);
     g.fillStyle = INK; g.fillRect(cx - 1, cy - 1, cw + 2, 24);
     g.fillStyle = '#3a4466'; g.fillRect(cx, cy, cw, 22);
@@ -4200,16 +4488,19 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const cfg = Game.config, V = cfg.view;
     if (app.mode === 'title') {
       centerText(g, 'HOPPE DIVE', 14, GOLD, INK, 2);
-      const T = cfg.howto.title;
+      const T = lt('howto.title');
       centerText(g, T[0], 38, WHITE, INK);
       centerText(g, T[1], 48, '#8b9bb4', INK);
-      if (Math.floor(app.time * 2) % 2 === 0) centerText(g, 'タップで スタート', 92, WHITE, INK);
+      if (Math.floor(app.time * 2) % 2 === 0) centerText(g, lt('ui.tapToStart'), 92, WHITE, INK);
+      const LB = R.titleLayout().lang, cur = Game.lang.cur;
+      B.text(g, 'JA', LB.ja.x, LB.ja.y, cur === 'ja' ? GOLD : '#8b9bb4', INK);
+      B.text(g, 'EN', LB.en.x, LB.en.y, cur === 'en' ? GOLD : '#8b9bb4', INK);
       return;
     }
     if (!s) return;
     // 上の帯: 階（④エクストラでは だっしゅつ あと N）、点、残機、経験値
-    const E = s.extra, XT = cfg.extra.text;
-    const label = E ? XT.left + Math.max(0, E.left) : 'B' + s.floor + 'F';
+    const E = s.extra, XT = lt('extra');
+    const label = E ? lt('extra.left', { n: Math.max(0, E.left) }) : 'B' + s.floor + 'F';
     B.text(g, label, 3, 3, E ? GOLD : WHITE, INK);
     const sc = String(s.score);
     B.text(g, sc, V.w - 3 - B.textW(sc), 3, WHITE, INK);
@@ -4238,7 +4529,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h);
       centerText(g, String(Math.ceil(app.countdown)), 44, WHITE, INK, 3);
     }
-    if (app.paused) { g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h); centerText(g, 'ポーズ', 50, WHITE, INK); }
+    if (app.paused) { g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h); centerText(g, lt('ui.pause'), 50, WHITE, INK); }
   }
 
   // ④入れないときのヒントに添える 9マス（床のマスと同じ傾きの小さな平行四辺形）。真ん中だけ光る = 今は1マスしか動けない
@@ -4261,11 +4552,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const cfg = Game.config;
     const cs = R.cards(s.offer.length);
     const ready = app.chooseT >= cfg.ui.chooseLock;
-    centerText(g, 'ひとつ えらんでね', 19, WHITE, INK);
+    centerText(g, lt('ui.chooseOne'), 19, WHITE, INK);
     const smin = s.ranks.speedMin || 0;
     cs.forEach((c, i) => {
       const id = s.offer[i], rank = s.ranks[id] + 1;
-      const info = Game.levelup.card(cfg, id, rank);
+      const info = { name: lt('upgrades.' + id + '.name'), desc: upDesc(id, rank) };
       // さいしょの はやさ の段階までの はやさ は、選んでも速くならない（灰色。説明を差し替え、段階の印は下限まで空色）
       const same = id === 'speed' && rank <= smin;
       g.fillStyle = INK; g.fillRect(c.x - 1, c.y - 1, c.w + 2, c.h + 2);
@@ -4275,7 +4566,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       // 段階の印
       const max = cfg.upgrades.find((u) => u.id === id).max;
       for (let r = 0; r < max; r++) { g.fillStyle = same ? (r < smin ? (r < rank ? '#0099db' : '#124e89') : '#3a4466') : r < rank ? GOLD : '#262b44'; g.fillRect(c.x + 3 + r * 5, c.y + 14, 4, 3); }
-      B.wrap(same ? cfg.meta.speedStart.same : info.desc, 9).slice(0, 5).forEach((line, j) => B.text(g, line, c.x + 3, c.y + 22 + j * 9, same ? '#8b9bb4' : WHITE));
+      const CB = tb('card');
+      B.wrap(same ? lt('speedStart.same') : info.desc, CB.w).slice(0, CB.lines).forEach((line, j) => B.text(g, line, c.x + 3, c.y + CB.y + j * CB.lh, same ? '#8b9bb4' : WHITE));
       B.text(g, String(i + 1), c.x + c.w - 8, c.y + c.h - 9, '#8b9bb4');
     });
   }
@@ -4283,36 +4575,38 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   function drawResult(g, app, s) {
     const V = Game.config.view, res = app.result;
     g.fillStyle = 'rgba(24,20,37,0.85)'; g.fillRect(0, 0, V.w, V.h);
-    const clear = s.cleared, E = s.extra, XT = Game.config.extra.text;
-    centerText(g, clear ? 'クリア!' : 'ゲームオーバー', 14, clear ? GOLD : WHITE, INK, 2);
+    const clear = s.cleared, E = s.extra, XT = lt('extra');
+    centerText(g, clear ? lt('ui.clear') : lt('ui.gameOver'), 14, clear ? GOLD : WHITE, INK, 2);
     let y = 36;
     // ④エクストラ: だっしゅつ せいこう / だっしゅつ しっぱい (B○F)
     if (E) { centerText(g, E.escaped ? XT.ok : XT.ng + ' (B' + s.floor + 'F)', 33, E.escaped ? '#63c74d' : '#f6757a', INK); y = 43; }
     if (res) {
       // 追いつきの罰があれば、倍率の横に「けはい -N%」（倍率は罰を含めた値）
-      centerText(g, 'てん ' + s.score + '  ' + fmtMul(res.mult) + (res.boost > 0 ? '  けはい -' + Math.round(Game.config.meta.catchup.k * res.boost * 100) + '%' : ''), y, WHITE, INK); y += 10;
+      centerText(g, lt('ui.score', { n: s.score }) + '  ' + fmtMul(res.mult) + (res.boost > 0 ? '  ' + lt('ui.kehaiMinus', { n: Math.round(Game.config.meta.catchup.k * res.boost * 100) }) : ''), y, WHITE, INK); y += 10;
       // きろくの順位: 1 位は しんきろく!（赤、点滅）、2〜8 位は N い
-      const fl = '= さいごの てん ' + res.final, rk = res.rank === 1 ? 'しんきろく!' : res.rank ? res.rank + 'い' : '';
+      const fl = lt('ui.final', { n: res.final }), rk = res.rank === 1 ? lt('ui.newRecord') : res.rank ? lt('ui.rank', { n: res.rank }) : '';
       const tw = B.textW(fl) + (rk ? 6 + B.textW(rk) : 0), fx0 = Math.floor((V.w - tw) / 2);
       B.text(g, fl, fx0, y, GOLD, INK);
       if (rk && (res.rank > 1 || Math.floor(app.time * 3) % 3 !== 2)) B.text(g, rk, fx0 + B.textW(fl) + 6, y, res.rank === 1 ? '#e43b44' : WHITE, INK);
       y += 10;
-    } else { centerText(g, 'てん ' + s.score, y, WHITE, INK); y += 10; }
-    if (clear) { centerText(g, E && E.escaped ? '(はやさ +' + s.timeBonus + ' だっしゅつ +' + E.bonus + ' こみ)' : '(はやさボーナス +' + s.timeBonus + ' こみ)', y, '#8b9bb4', INK); y += 10; }
-    if (res) { centerText(g, 'もちかえった たから +' + res.gain.gain, y + 2, '#2ce8f5', INK); y += 12; }
+    } else { centerText(g, lt('ui.score', { n: s.score }), y, WHITE, INK); y += 10; }
+    if (clear) { centerText(g, E && E.escaped ? lt('ui.bonusEscape', { t: s.timeBonus, b: E.bonus }) : lt('ui.bonusTime', { t: s.timeBonus }), y, '#8b9bb4', INK); y += 10; }
+    if (res) { centerText(g, lt('ui.gain', { n: res.gain.gain }), y + 2, '#2ce8f5', INK); y += 12; }
     centerText(g, (E ? '' : 'B' + s.floor + 'F  ') + fmtTime(s.t), y, WHITE, INK); y += 10;
     if (res && res.gain.unlocked.length) centerText(g, unlockText(res.gain.unlocked), y, GOLD, INK);
     B.text(g, 'SEED ' + s.seed, 3, 3, '#5a6988'); // 左上（9けたの SEED が下の「タップで キャンプへ」に重ならないように）
     if (res && res.ach && res.ach.length) {
-      const t = 'じっせき +' + res.ach.length;
-      g.drawImage(Game.bake.all().medalS, V.w - 13 - B.textW(t), V.h - 11);
-      B.text(g, t, V.w - 3 - B.textW(t), V.h - 10, GOLD, INK);
+      const at = lt('ui.achPlus', { n: res.ach.length });
+      g.drawImage(Game.bake.all().medalS, V.w - 13 - B.textW(at), V.h - 11);
+      B.text(g, at, V.w - 3 - B.textW(at), V.h - 10, GOLD, INK);
     }
-    if (app.resultT > 0.8 && Math.floor(app.time * 2) % 2 === 0) centerText(g, 'タップで キャンプへ', 97, WHITE, INK);
+    if (app.resultT > 0.8 && Math.floor(app.time * 2) % 2 === 0) centerText(g, lt('ui.tapToCamp'), 97, WHITE, INK);
   }
 
   const fmtMul = (m) => 'x' + (Math.floor(m * 100 + 1e-6) / 100).toFixed(2);
-  const unlockText = (ids) => ids.map((id) => Game.meta.unlockName(id, Game.config)).join('と ') + 'が つかえるように なった!';
+  // 新しく使えるようになったアンロックの名前
+  R.unlockName = (id) => (id === Game.config.meta.speedStart.id ? lt('speedStart.name') : lt('unlocks.' + id + '.name'));
+  const unlockText = (ids) => lt('msg.unlockedLong', { list: Game.lang.list(ids.map(R.unlockName)) });
 
   // ---- キャンプ ----
   // 位置（窓の中のドット）: 上の帯、◀ しゅっぱつ ▶、カード（3択と同じ位置）、カードの下半分の − ＋
@@ -4390,20 +4684,20 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const view = Object.assign({}, save, { treasure: shown });
     g.drawImage(A.gem, 3, 3);
     B.text(g, String(shown), 12, 3, GOLD, INK);
-    B.text(g, '(のこり ' + M.unspent(view, cfg) + ')', 14 + B.textW(String(shown)) + 3, 3, WHITE, INK);
-    const mul = fmtMul(M.multiplier(view, cfg)), mx = V.w - 3 - B.textW('ばいりつ ' + mul);
-    B.text(g, 'ばいりつ ' + mul, mx, 3, GOLD, INK);
+    B.text(g, lt('ui.unspent', { n: M.unspent(view, cfg) }), 14 + B.textW(String(shown)) + 3, 3, WHITE, INK);
+    const mul = lt('ui.mul', { m: fmtMul(M.multiplier(view, cfg)) }), mx = V.w - 3 - B.textW(mul);
+    B.text(g, mul, mx, 3, GOLD, INK);
 
     // ◀ しゅっぱつ ▶
     const ids = R.campIds(cp.page), L = R.campLayout(ids.length);
     button(g, L.prev, A.arrowL, true);
     button(g, L.next, A.arrowR, true);
-    button(g, L.go, 'しゅっぱつ', true, GOLD);
+    button(g, L.go, lt('ui.go'), true, GOLD);
     // カード、または実績のページ
     ids.forEach((id, i) => drawCampCard(g, app, A, L.cards[i], M.card(id, view, cfg)));
     const achIds = R.achIds(cp.page);
     if (achIds.length) drawAchPage(g, app, A, achIds);
-    if (cp.page === R.howtoPage()) { drawHowto(g, app, A); button(g, R.storyLayout().replay, 'おはなし', true, GOLD); }
+    if (cp.page === R.howtoPage()) { drawHowto(g, app, A); button(g, R.storyLayout().replay, lt('ui.story'), true, GOLD); }
     if (cp.page === R.boardPage()) drawBoard(g, app);
     // 下: ページの印、または新しく使えるようになったアンロック
     if (cp.msg && cp.msg.t > 0) centerText(g, cp.msg.text, 99, GOLD, INK);
@@ -4412,18 +4706,18 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       for (let p = 0; p < n; p++) { g.fillStyle = p === cp.page ? GOLD : '#3a4466'; g.fillRect(x0 + p * 6, 101, 4, 3); }
       // 最大難易度の印（右下）: 何も振らず、まえうしろ・レーンを入れているとき。宝の量・さいしょの はやさ・連敗は関係ない
       // （ページの印と重ならないよう、王冠＋「さいだい」。ランの上の帯と同じ王冠）
-      if (M.isMaxDifficulty(save, cfg)) { const t = 'さいだい', tx = V.w - 3 - B.textW(t); B.text(g, t, tx, 99, GOLD, INK); g.drawImage(A.crown, tx - 14, 99); }
+      if (M.isMaxDifficulty(save, cfg)) { const mt = lt('ui.max'), tx = V.w - 3 - B.textW(mt); B.text(g, mt, tx, 99, GOLD, INK); g.drawImage(A.crown, tx - 14, 99); }
       // アンロックのページは、左下に見出し（けはい の代わり）
-      if (R.isUnlockPage(cp.page)) B.text(g, 'アンロック', 3, 99, '#2ce8f5', INK);
+      if (R.isUnlockPage(cp.page)) B.text(g, lt('ui.unlockPage'), 3, 99, '#2ce8f5', INK);
       // 追いつき（おたからの けはい）: 連敗があれば左下に、出やすさを 3 つの丸で（p を 0.3 ごとに丸める）。上の帯の倍率は罰を含めた値
       const kp = R.isUnlockPage(cp.page) ? 0 : M.boost(save, cfg);
       if (kp > 0) {
-        const dots = Math.max(1, Math.min(3, Math.round(kp / 0.3))), kx = 4 + B.textW('けはい') + 3;
-        B.text(g, 'けはい', 3, 99, '#feae34', INK);
+        const dots = Math.max(1, Math.min(3, Math.round(kp / 0.3))), kx = 4 + B.textW(lt('ui.kehai')) + 3;
+        B.text(g, lt('ui.kehai'), 3, 99, '#feae34', INK);
         for (let i = 0; i < 3; i++) { g.fillStyle = INK; g.fillRect(kx + i * 5 - 1, 100, 5, 5); g.fillStyle = i < dots ? '#feae34' : '#3a4466'; g.fillRect(kx + i * 5, 101, 3, 3); }
       }
     }
-    if (app.paused) { g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h); centerText(g, 'ポーズ', 50, WHITE, INK); }
+    if (app.paused) { g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h); centerText(g, lt('ui.pause'), 50, WHITE, INK); }
   }
 
   // 実績のページ: メダルを並べ、選んだものの名前と条件（シークレットのまだのものはヒント）を下の枠に出す
@@ -4444,32 +4738,42 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     g.fillStyle = '#262b44'; g.fillRect(P.x, P.y, P.w, P.h);
     const id = app.camp.sel;
     if (!id) {
-      B.text(g, 'じっせき ' + Game.achieve.count(rec) + ' / ' + cfg.achieve.list.length, P.x + 3, P.y + 3, GOLD);
-      B.text(g, 'メダルを タップで せつめい', P.x + 3, P.y + 14, '#8b9bb4');
+      B.text(g, lt('ui.achCount', { n: Game.achieve.count(rec), m: cfg.achieve.list.length }), P.x + 3, P.y + 3, GOLD);
+      B.text(g, lt('ui.achHelp'), P.x + 3, P.y + 14, '#8b9bb4');
       return;
     }
     const a = Game.achieve.info(id, cfg), got = !!rec.got[id], hidden = !got && a.kind === 'secret';
-    B.text(g, hidden ? '???' : a.name, P.x + 3, P.y + 3, got ? GOLD : WHITE);
-    if (got) B.text(g, 'とった!', P.x + P.w - 3 - B.textW('とった!'), P.y + 3, '#63c74d');
-    B.wrap(hidden ? a.hint : a.desc, 29).slice(0, 2).forEach((line, j) => B.text(g, line, P.x + 3, P.y + 12 + j * 7, hidden ? '#8b9bb4' : WHITE));
+    const at = lt('ach.' + id);
+    const AB = tb('achDesc');
+    B.text(g, hidden ? '???' : at.name, P.x + 3, P.y + AB.nameY, got ? GOLD : WHITE);
+    if (got) B.text(g, lt('ui.got'), P.x + P.w - 3 - B.textW(lt('ui.got')), P.y + AB.nameY, '#63c74d');
+    B.wrap(hidden ? at.hint : at.desc, AB.w).slice(0, AB.lines).forEach((line, j) => B.text(g, line, P.x + 3, P.y + AB.y + j * AB.lh, hidden ? '#8b9bb4' : WHITE));
+  }
+
+  // キャンプのカードの文（名前と説明）
+  function campText(info) {
+    if (info.kind === 'perk') return { name: lt('perks.' + info.id + '.name'), desc: lt('perks.' + info.id + '.desc')[info.descRank] };
+    if (info.kind === 'speed') return { name: lt('speedStart.name'), desc: lt('speedStart.desc') };
+    return { name: lt('unlocks.' + info.id + '.name'), desc: lt('unlocks.' + info.id + '.desc') };
   }
 
   function drawCampCard(g, app, A, c, info) {
+    const PB = tb('perkCard'), SB = tb('speedCard'), txt = campText(info);
     g.fillStyle = INK; g.fillRect(c.x - 1, c.y - 1, c.w + 2, c.h + 2);
     g.fillStyle = '#3a4466'; g.fillRect(c.x, c.y, c.w, c.h);
     g.fillStyle = '#5a6988'; g.fillRect(c.x, c.y, c.w, 1);
-    B.text(g, info.name, c.x + 3, c.y + 2, GOLD, INK);
-    const lines = (str, color) => B.wrap(str, 9).slice(0, 3).forEach((line, j) => B.text(g, line, c.x + 3, c.y + 19 + j * 8, color));
+    B.text(g, txt.name, c.x + 3, c.y + 2, GOLD, INK);
+    const lines = (str, color) => B.wrap(str, PB.w).slice(0, PB.lines).forEach((line, j) => B.text(g, line, c.x + 3, c.y + PB.y + j * PB.lh, color));
     if (info.kind === 'perk') {
       const dx = info.max > 4 ? 5 : 6; // 段階 5 の丸は詰めて「さいだい」と重ねない
       for (let r = 0; r < info.max; r++) { g.fillStyle = r < info.rank ? GOLD : '#262b44'; g.fillRect(c.x + 3 + r * dx, c.y + 12, 4, 4); }
-      if (info.full) B.text(g, 'さいだい', c.x + c.w - 3 - B.textW('さいだい'), c.y + 11, GOLD);
+      if (info.full) B.text(g, lt('ui.max'), c.x + c.w - 3 - B.textW(lt('ui.max')), c.y + 11, GOLD);
       else {
         const p = String(info.price);
         B.text(g, p, c.x + c.w - 3 - B.textW(p), c.y + 11, info.canBuy ? WHITE : '#e43b44');
         g.drawImage(A.gem, c.x + c.w - 13 - B.textW(p), c.y + 11);
       }
-      lines(info.desc, WHITE);
+      lines(txt.desc, WHITE);
       bigSign(g, c.minus, '-', info.canRefund);
       bigSign(g, c.plus, '+', info.canBuy);
     } else if (info.kind === 'speed') {
@@ -4479,23 +4783,23 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       if (info.unlocked) {
         const lv = info.level + '/' + info.max;
         B.text(g, lv, c.x + c.w - 3 - B.textW(lv), c.y + 11, info.level ? GOLD : '#8b9bb4');
-        B.text(g, 'ばいりつ+' + (S.mul * info.level).toFixed(2), c.x + 3, c.y + 19, info.level ? GOLD : '#8b9bb4');
-        B.wrap(info.desc, 9).slice(0, 2).forEach((line, j) => B.text(g, line, c.x + 3, c.y + 27 + j * 8, WHITE));
+        B.text(g, lt('ui.mulPlus', { m: (S.mul * info.level).toFixed(2) }), c.x + 3, c.y + 19, info.level ? GOLD : '#8b9bb4');
+        B.wrap(txt.desc, SB.w).slice(0, SB.lines).forEach((line, j) => B.text(g, line, c.x + 3, c.y + SB.y + j * SB.lh, WHITE));
         button(g, c.minus, A.arrowL, info.level > 0);
         button(g, c.plus, A.arrowR, info.level < info.max);
       } else {
-        lines(S.locked, '#8b9bb4');
-        button(g, { x: c.x, y: c.y + 43, w: c.w, h: c.h - 43 }, 'まだ', false);
+        lines(lt('speedStart.locked'), '#8b9bb4');
+        button(g, { x: c.x, y: c.y + 43, w: c.w, h: c.h - 43 }, lt('ui.notYet'), false);
       }
     } else {
-      B.text(g, 'ばいりつ+' + Game.config.meta.mul.unlock.toFixed(2), c.x + 3, c.y + 11, info.on ? GOLD : '#8b9bb4');
+      B.text(g, lt('ui.mulPlus', { m: Game.config.meta.mul.unlock.toFixed(2) }), c.x + 3, c.y + 11, info.on ? GOLD : '#8b9bb4');
       if (!info.unlocked) {
-        lines('ランで さいだいに すると つかえる', '#8b9bb4');
-        button(g, { x: c.x, y: c.y + 43, w: c.w, h: c.h - 43 }, 'まだ', false);
+        lines(lt('ui.unlockLocked'), '#8b9bb4');
+        button(g, { x: c.x, y: c.y + 43, w: c.w, h: c.h - 43 }, lt('ui.notYet'), false);
       } else {
-        lines(info.desc, WHITE);
-        button(g, c.minus, 'きる', !info.on ? false : true);
-        button(g, c.plus, 'いれる', !info.on, GOLD);
+        lines(txt.desc, WHITE);
+        button(g, c.minus, lt('ui.off'), !info.on ? false : true);
+        button(g, c.plus, lt('ui.on'), !info.on, GOLD);
         // 今の状態に印
         const cur = info.on ? c.plus : c.minus;
         g.fillStyle = info.on ? GOLD : WHITE; g.fillRect(cur.x + 2, cur.y + cur.h - 3, cur.w - 4, 1);
@@ -4511,7 +4815,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 })();
 </script>
 <script>
-// 保存データの読み書き。②の恒久強化（hoppe-dive.meta、検め方は meta.parse）、③の実績（hoppe-dive.records、検め方は achieve.parse）、きろく（hoppe-dive.board、board.parse）、ヒントを見たか（hoppe-dive.tips、parseTips）。
+// 保存データの読み書き。②の恒久強化（hoppe-dive.meta、検め方は meta.parse）、③の実績（hoppe-dive.records、検め方は achieve.parse）、きろく（hoppe-dive.board、board.parse）、ヒントを見たか（hoppe-dive.tips、parseTips）、言語（hoppe-dive.lang、parseLang）。
 // 読めない・壊れている・版が違うときは最初の状態から始める。書けない（容量・プライベートモード）ときは黙って続ける
 (function () {
   const Game = (window.Game = window.Game || {});
@@ -4544,7 +4848,16 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const loadTips = (cfg = Game.config) => parseTips(read(cfg.tips.key), cfg);
   const storeTips = (tips, cfg = Game.config) => write(cfg.tips.key, tips);
 
-  Game.save = { load, store, loadRecords, storeRecords, loadBoard, storeBoard, freshTips, parseTips, loadTips, storeTips };
+  // 選んだ言語（hoppe-dive.lang）。'ja' / 'en' のほかは「保存なし」（null）
+  function parseLang(raw) {
+    let d = null;
+    try { if (typeof raw === 'string') d = JSON.parse(raw); } catch (e) { return null; }
+    return d === 'ja' || d === 'en' ? d : null;
+  }
+  const loadLang = (cfg = Game.config) => parseLang(read(cfg.lang.key));
+  const storeLang = (lang, cfg = Game.config) => write(cfg.lang.key, lang);
+
+  Game.save = { load, store, loadRecords, storeRecords, loadBoard, storeBoard, freshTips, parseTips, loadTips, storeTips, parseLang, loadLang, storeLang };
 })();
 </script>
 <script>
@@ -4681,12 +4994,15 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   // キャンプで満たした実績（強化を買った・アンロックを入れた・全部最大）。下の知らせと音
+  // キャンプの知らせ: じっせき: 名前（2 つ以上なら ほか N）
+  const achMsg = (ids) => Game.lang.t(ids.length > 1 ? 'msg.achMore' : 'msg.ach', { name: Game.lang.t('ach.' + ids[0] + '.name'), n: ids.length - 1 });
+
   function campAch() {
     const ids = A.update(app.rec, { save: app.save }, cfg);
     if (!ids.length) return;
     persistRec();
     app.audio.on({ type: 'achieve' });
-    app.camp.msg = { text: 'じっせき: ' + A.info(ids[0], cfg).name + (ids.length > 1 ? ' ほか ' + (ids.length - 1) : ''), t: 4 };
+    app.camp.msg = { text: achMsg(ids), t: 4 };
   }
 
   // てんじょうの コウモリをタップした
@@ -4709,14 +5025,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.camp.msg = null; app.camp.sel = null;
     app.camp.boardNew = res ? res.rank : 0;
     if (res && res.gain.unlocked.length) {
-      app.camp.msg = { text: res.gain.unlocked.map((id) => Game.meta.unlockName(id, cfg)).join('と ') + 'が つかえる!', t: 4 };
+      app.camp.msg = { text: Game.lang.t('msg.unlocked', { list: Game.lang.list(res.gain.unlocked.map(Game.render.unlockName)) }), t: 4 };
       app.camp.page = Game.render.campPerkPages() - 1; // アンロックのページを開く
     } else if (res && res.rank === 1) {
-      app.camp.msg = { text: 'しんきろく!', t: 4 };
+      app.camp.msg = { text: Game.lang.t('ui.newRecord'), t: 4 };
       app.camp.page = Game.render.boardPage(); // きろくのページを開く
     } else if (res && res.ach.length) {
-      const n = res.ach.length;
-      app.camp.msg = { text: 'じっせき: ' + A.info(res.ach[0], cfg).name + (n > 1 ? ' ほか ' + (n - 1) : ''), t: 4 };
+      app.camp.msg = { text: achMsg(res.ach), t: 4 };
       app.camp.page = Game.render.achPageOf(res.ach[0]); // 実績のページを開く
     }
     // はじめての人（保存データがまっさら）には、あそびかたを開いて見せる
@@ -4736,12 +5051,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.fx.reset();
     app.audio.on({ type: 'camp_page' });
   }
-  const storyLen = (page) => cfg.story.pages[page].reduce((n, l) => n + [...l].length, 0);
+  const storyPages = () => Game.lang.t('story');
+  const storyLen = (page) => storyPages()[page].reduce((n, l) => n + [...l].length, 0);
   // めくる: 文の途中なら全部出す。出し終わっていれば次の 1 枚（4 枚目のあとは終わる）
   function storyNext() {
     const st = app.story, n = storyLen(st.page);
     if (st.t * cfg.story.cps < n) { st.t = n / cfg.story.cps; return; }
-    if (st.page + 1 >= cfg.story.pages.length) return endStory();
+    if (st.page + 1 >= storyPages().length) return endStory();
     st.page++; st.t = 0;
     app.audio.on({ type: 'camp_page' });
   }
@@ -4863,11 +5179,22 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   // ---- 入力 ----
+  const inRect = (p, r) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
+  function toggleLang() {
+    Game.lang.set(Game.lang.other());
+    if (!T.noStore) Game.save.storeLang(Game.lang.cur, cfg);
+    app.audio.on({ type: 'camp_page' });
+  }
   function onInput(e) {
     if (e.type === 'down') app.audio.unlock();
     if (app.paused || app.mode === 'countdown') return;
     const s = app.rules;
-    if (app.mode === 'title') { if (e.type === 'tap' || e.type === 'key') { if (isFresh()) startStory('title'); else enterCamp(); } return; }
+    if (app.mode === 'title') {
+      // 右下の JA EN（キーは L）: 言語を切り替えて端末に覚える。ゲームは始めない
+      if (e.type === 'lang' || (e.type === 'tap' && inRect(Game.render.toField(e.x, e.y), Game.render.titleLayout().lang))) return toggleLang();
+      if (e.type === 'tap' || e.type === 'key') { if (isFresh()) startStory('title'); else enterCamp(); }
+      return;
+    }
     if (app.mode === 'story') return storyInput(e);
     if (app.mode === 'tip') return tipInput(e);
     if (app.mode === 'camp') return campInput(e);
@@ -4996,6 +5323,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   // ---- 起動 ----
   function boot() {
+    // 言語: ?lang= → 端末に保存した言語 → 端末の言語
+    Game.lang.init(q.get('lang'), T.noStore ? null : Game.save.loadLang(cfg), navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language]);
     app.save = T.preset ? presetSave(T.preset) : Game.save.load(cfg);
     app.rec = T.noStore ? A.fresh(cfg) : Game.save.loadRecords(cfg);
     app.board = T.noStore ? Game.board.fresh(cfg) : Game.save.loadBoard(cfg);
