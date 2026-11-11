@@ -5335,6 +5335,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.fx = Game.fx.create(cfg);
     app.audio = Game.audio.create(cfg);
     Game.input.create(cfg, canvas, onInput);
+    // 音の再開。タッチでは指を離したときに初めて許されるので、離したときにも試す（置いたときだけだと、2 回目に触るまで鳴らない）
+    for (const ev of ['pointerup', 'touchend']) document.addEventListener(ev, () => app.audio.unlock(), true);
     document.addEventListener('visibilitychange', () => setHidden(document.hidden));
     let last = performance.now();
     const frame = (now) => {
