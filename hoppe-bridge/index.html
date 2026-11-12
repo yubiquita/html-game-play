@@ -1,0 +1,2445 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#181425">
+<title>HOPPE BRIDGE</title>
+<style>
+html, body { margin: 0; height: 100%; background: #181425; overflow: hidden; }
+body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
+canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelated; } /* 大きさは render.js が 1 ドット＝k 画素に合わせて書き換える */
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// 数字は全部ここ。設計書: docs/specs/2026-11-11-hoppe-bridge-design.md
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  Game.config = {
+    view: { w: 135, h: 240 },   // 遊ぶ窓（ドット）。縦持ち専用
+    unit: 120,                  // 板 1 枚の長さ（ドット）＝「1」。長さは 1/120 を単位にした整数
+    cuts: [2, 3, 4, 5, 6, 8, 10, 12], // 切れる数（どれも unit を割り切る）
+    maxGap: 110,                // 谷の長さの上限（11/12）
+    // lineGap: かさねて測るステージでは、谷の分母より粗い切り方の線が、谷の右の端からこれだけ（ドット）離れている谷だけを出す。
+    //   1/12（10）は 10 に切った線（12）と、5/12（50）は 5 に切った線（48）と 2 ドットしか違わず、粗いほうから試すと先にそろって見えるため。
+    //   出さないのは 1/12・5/12・7/12・11/12。細かい側が近いだけの 1/10・2/5・3/5・9/10 は出す
+    // ステージの数字を決め直す回数の上限。テスト: 確かめる種の数、一例の数字に逃げてよい割合、でたらめな解き方が落ちずに渡りきれる割合の上限（1-3 から）
+    gen: { lineGap: 3, tries: 60, testSeeds: 40, fallbackMax: 0.02, randomMax: 0.2 },
+    save: { progress: 'hoppe-bridge.progress', settings: 'hoppe-bridge.settings', tips: 'hoppe-bridge.tips', version: 1 },
+    tips: ['count', 'cut', 'carry', 'go'], // 手本（指の絵）: 切る数をなぞる・切る・運ぶ・わたる。一度できたら出さない
+    help: { falls: 3 },         // 同じ谷でこの回数落ちると「かさねて みる」が出る
+
+    // 置き場所（窓の中のドット）。render と input の当たりが同じものを使う
+    layout: {
+      gapX: 15,                 // 谷の左端（左に残った踏み板の幅）
+      deckY: 94, deckH: 9, deckFront: 3, // 橋の踏み板: 上の面の奥の端の y、上の面の高さ（奥行き）、手前の厚み。少し上から見下ろした形
+      footDy: 5,                // 探検家の足は、上の面のこれだけ手前（奥行きの真ん中）
+      signY: 52,                // 立て札の上の端（かさねて測れないとき、谷の真ん中の上に吊るす）
+      hoverY: 60,               // かざした板の上の面（かさねて測る）。探検家の前をあけるため、橋から離して点線でつなぐ
+      boardH: 8, boardFront: 3, // 手持ちの板・切れはしの高さ（上の面＋手前の厚み）と、そのうちの手前の厚み
+      trayY: 128,               // 手持ちの場所の上の端（ここより上で離すと橋へ運ぶ）
+      boardX: 7, boardY: 148,   // 手持ちの板（手元で切るとき）
+      countBelow: 24,           // 板の下これだけの範囲をなぞっても、切る数が変わる（指で線を隠さずに選べる）。かざしているときは橋の手前まで。探検家の前（わたる の引き始め）は除く
+      cutStep: 9,               // 板の上を横にこれだけなぞるごとに、切る数が 1 段変わる（左へ＝細かく）
+      pieces: { x: 7, y: 176, w: 120, rowH: 16 }, // 切れはしの置き場
+      btn: { retry: { x: 70, y: 2, w: 49, h: 11 }, menu: { x: 121, y: 2, w: 12, h: 11 }, help: { x: 30, y: 224, w: 75, h: 13 } },
+      mapY: 17,                 // 道の地図（残りの谷の小さな絵）
+      select: { x: 6, y: 44, w: 59, h: 44, gapX: 5, gapY: 6, cols: 2, sound: { x: 119, y: 2, w: 14, h: 13 } }, // ステージ選びの札の並び
+      dragLift: 14,             // つまんだ切れはしを、指よりこれだけ上に描く
+      slash: { reach: 20, min: 6, slop: 3 }, // 上から下へ板を横切るスワイプ: 板の上これだけの範囲から始められる／これだけ下へ動いて板の下へ抜けたら切る／縦か横かを決めるまでの遊び
+      ham: { w: 50, h: 20, pull: 9 }, // わたる の引き始めを受ける範囲（画面の左端から探検家の前まで。端のジェスチャーを避けて前から引ける）と、右へこれだけ引いたら わたる
+    },
+
+    // 背景: 空と山。y は橋の踏み板（deckY）から上へ／下へのドット
+    back: {
+      sky: '#3fa2e0', skyBands: 7, skyFade: 0.55,   // 空の上の色、帯の数、山ぎわでの白さ
+      clouds: [[8, 56, 26], [84, 68, 34], [150, 50, 22], [-60, 64, 30]], // [x, 橋から上へ, 幅]
+      // 遠い順。base: 稜線のいちばん低いところ（橋から下へ＋）、a1/p1/ph1・a2/p2/ph2: 山形の高さ・幅・ずれ、mist: ふもとのかすみ
+      ridges: [
+        { color: '#a9c8e6', edge: '#c4dcf0', base: -12, a1: 24, p1: 62, ph1: 9, a2: 7, p2: 23, ph2: 3, mist: 0.18 },
+        { color: '#7da2c8', edge: '#93b6d8', base: -2, a1: 17, p1: 44, ph1: 30, a2: 6, p2: 17, ph2: 5, mist: 0.22 },
+        { color: '#4f8a6b', edge: '#63a07c', base: 24, a1: 9, p1: 71, ph1: 40, a2: 3, p2: 13, ph2: 2 },
+      ],
+      shadeFrom: 16, shade: 0.4,                    // 谷の底の暗さ（橋のこれだけ下から、いちばん下でこの濃さ）
+    },
+
+    // 音。効果音は部品（k: tone / noise / click / knock / rasp / creak）の重ね。数字は dev/sounds.html で聞いて決める
+    audio: {
+      enabled: true, volume: 0.5,
+      keepAlive: { hz: 40, vol: 0.004 }, // 出力を休ませないための、聞こえない低い音（曲がまだないので、無音が続くと短い音の頭が欠ける）
+      // 音ごとの大きさの倍率。聞こえる大きさを測ってそろえたもの（小さいスピーカーで、0.1 秒の窓のいちばん大きいところ）。
+      // ねらい: 節目の音（がっしり・キュウ・クリアなど）＞ ふつうの音（のこぎり・コトン・ギシギシなど）＞ 何度も鳴る小さい音（カチ・もぐっ）
+      level: { click: 1.45, saw: 1.75, knock: 0.65, creak: 1.65, fit: 1.1, sturdy: 1.85, wonder: 1.95, miss: 0.95, trip: 2, kyu: 0.6, back: 0.65, munch: 1.85, pon: 1.7, clear: 1, deny: 3.2, gem: 1.1 },
+      sfx: {
+        // カチ（切る数が 1 段変わる。段が上がるほど高い）
+        click: [{ k: 'click', noiseHz: 3200, q: 1.2, noiseMs: 8, noiseVol: 0.6, toneHz: 1300, toneMs: 20, toneVol: 0.14, stepUp: 1.08 }],
+        // ザクッ（のこぎり）
+        saw: [{ k: 'rasp', ms: 765, strokes: 4, hz: 2100, hzTo: 800, q: 0.8, rough: 0.6, roughHz: 45, back: 0.6, vol: 0.14, alt: 0.7, gap: 0.25, buzzHz: 330, buzzVol: 0.04 }],
+        // コトン（切れはしを置く）・トン（踏む）。短い切れはしほど高い
+        knock: [{ k: 'knock', baseHz: 400, pitchPow: 0.45, r2: 2.76, r3: 5.4, dec: 0.09, vol: 0.4, noiseHz: 1800, noiseMs: 12, noiseVol: 0.3 }],
+        // ギシギシ（つなぎ目が多い橋）
+        creak: [{ k: 'creak', ms: 190, pulseHz: 30, pulseTo: 95, wobble: 0.12, f1: 680, f2: 1260, q: 9, vol: 0.35, hissVol: 0.07, hissHz: 3200, hissMs: 70 }],
+        // ピタッ（ぴったり）
+        fit: [{ k: 'tone', f: 1568, type: 'triangle', vol: 0.14, dec: 0.09 }, { k: 'tone', f: 2093, type: 'triangle', vol: 0.12, dec: 0.16, delay: 0.05 }, { k: 'noise', f: 5000, vol: 0.06, dec: 0.03 }],
+        // がっしり！
+        sturdy: [{ k: 'noise', f: 180, type: 'lowpass', vol: 0.35, dec: 0.16 }, { k: 'tone', f: 98, type: 'triangle', vol: 0.3, dec: 0.2, slide: 0.6 }, { k: 'tone', f: 523, type: 'square', vol: 0.06, dec: 0.12, delay: 0.06 }, { k: 'tone', f: 784, type: 'square', vol: 0.06, dec: 0.2, delay: 0.14 }],
+        // あれ？
+        wonder: [{ k: 'tone', f: 440, type: 'triangle', vol: 0.1, dec: 0.08 }, { k: 'tone', f: 587, type: 'triangle', vol: 0.1, dec: 0.14, delay: 0.1 }],
+        // スカッ（穴に落ちる）
+        miss: [{ k: 'noise', f: 2400, q: 0.7, vol: 0.14, dec: 0.12, sweep: 0.3 }, { k: 'tone', f: 880, type: 'triangle', vol: 0.1, a: 0.01, dec: 0.55, slide: 0.2, delay: 0.12 }],
+        // ガッ（つまずく）
+        trip: [{ k: 'noise', f: 900, q: 1, vol: 0.5, dec: 0.07 }, { k: 'tone', f: 160, type: 'square', vol: 0.2, dec: 0.09, slide: 0.6 }],
+        // キュウ
+        kyu: [{ k: 'tone', f: 1175, type: 'sine', vol: 0.2, a: 0.02, dec: 0.3, slide: 0.55 }],
+        // スッ（しれっと戻る。風のようにふわっと入り、高くなりながら消える。細い笛のような音を重ねてまんがらしく）
+        back: [{ k: 'noise', f: 1279, q: 2.2, vol: 0.4, a: 0.1, dec: 0.41, sweep: 1.5 }, { k: 'noise', f: 2379, q: 0.6, vol: 0.04, a: 0.2, dec: 0.5 }, { k: 'tone', f: 620, type: 'triangle', vol: 0.05, a: 0.08, dec: 0.22, slide: 2.2 }],
+        // もぐっ（たねをほっぺに）
+        munch: [{ k: 'tone', f: 262, type: 'square', vol: 0.09, dec: 0.05, delay: 0.25 }, { k: 'tone', f: 196, type: 'square', vol: 0.09, dec: 0.07, delay: 0.33 }],
+        // ポンッ（たねを吐き出す）
+        pon: [{ k: 'tone', f: 520, type: 'sine', vol: 0.25, a: 0.002, dec: 0.12, slide: 0.35 }, { k: 'noise', f: 1200, vol: 0.1, dec: 0.03 }],
+        // クリア
+        clear: [0, 4, 7, 12, 16].map((n, i) => ({ k: 'tone', f: 523.25 * Math.pow(2, n / 12), type: 'triangle', vol: 0.11, dec: 0.22, delay: 0.25 + i * 0.09 })),
+        // 宝石を 1 つ数える（数えるごとに高く）
+        gem: [{ k: 'tone', f: 1319, type: 'triangle', vol: 0.13, dec: 0.1, up: 1.122 }, { k: 'tone', f: 1976, type: 'triangle', vol: 0.1, dec: 0.2, delay: 0.06, up: 1.122 }],
+        // これ以上置けない
+        deny: [{ k: 'tone', f: 196, type: 'square', vol: 0.12, dec: 0.06 }],
+      },
+    },
+
+    // 演出の秒数（ルールは一瞬で進む。歩く・落ちるは main が持つ）
+    anim: {
+      walk: 60,                 // 歩く速さ（ドット/秒）
+      stepSec: 0.12,            // 走りのコマ送り（6 コマで一回り。0・3 コマ目で体が沈む）
+      wonder: 0.6,              // あれ？
+      fall: 0.8,                // 落ちる
+      trip: 0.6, tripAir: 0.55, // つまずいて前にこける（長いとき。谷には落ちない）。そのうち宙にいる割合（残りは横倒しで止まる）
+      skull: 0.6,               // キュウ とドクロ
+      slash: 0.12,              // 切った線が光る
+      cutHop: 0.16, cutDrop: 0.2, // 切れはしが離れて跳ねる秒、手持ちの山へ落ちる秒
+      sink: 0.08,               // 置いた切れはしが 1 ドット沈む秒
+      seedFly: 0.3,             // たねがほっぺへ飛ぶ秒
+      clearWait: 0.7, gemEvery: 0.35, // クリア: たねを吐き出してから札が出るまで、宝石を 1 つ数える間
+      back: 0.35,               // しれっと戻る
+      fit: 0.35,                // ピタッ で止まる
+      verdict: 0.45,            // がっしり！／ギシギシ が出る間
+      creakEvery: 3,            // ギシギシ は走りの何コマごとにきしむか（3 コマ＝体が沈むたび）
+      next: 0.5,                // 次の谷へ
+    },
+  };
+})();
+</script>
+<script>
+// シード付きの乱数（mulberry32）。状態は整数1つで、ルールの状態の中に持つ（写しても同じ列になる）
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  // o.rng（整数）を進めて [0,1) を返す
+  function next(o) {
+    let t = (o.rng = (o.rng + 0x6d2b79f5) | 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const int = (o, n) => Math.floor(next(o) * n);
+  const pick = (o, arr) => arr[int(o, arr.length)];
+  // 重み付き。items: [{ weight }]
+  function weighted(o, items) {
+    let sum = 0;
+    for (const it of items) sum += it.weight;
+    let r = next(o) * sum;
+    for (const it of items) { r -= it.weight; if (r < 0) return it; }
+    return items[items.length - 1];
+  }
+  const seedFrom = (s) => (typeof s === 'number' ? s | 0 : [...String(s)].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619), 2166136261) | 0);
+
+  Game.rng = { next, int, pick, weighted, seedFrom };
+})();
+</script>
+<script>
+// 解き手: ステージを総当たりで解く。DOM・Canvas・言語に触らない。
+//   canClear(hand, gi, stage)  … その手持ちで gi 番目の谷から最後まで渡りきれるか
+//   analyze(stage)             … { ok, pars: [谷ごとの par], keep: 全部がっしりで残せる板の最大（できないときは -1） }
+//     par: その谷を「同じ長さの切れはしだけ」で埋めるときの最少枚数（最後まで渡りきれる解き方の中で）。3/4 なら 1/4 が 3 枚で、par は 3。
+//          長さの違う切れはしを混ぜる埋め方（1/2 と 1/4 で 2 枚）は par を決めるのには使わない（混ぜて par 以下の枚数で渡れば、それも がっしり）。
+//          同じ長さだけでは埋められない谷は、混ぜた埋め方の最少枚数
+// 手持ち hand = { boards, pieces: [長さ…] }。谷を 1 つ渡るときにできること: 手つかずの板を好きな数に切る（何枚でも）→ 切れはしを選んで、合計をちょうど谷の長さにする。
+// 板はどの谷で切っても同じなので、「その谷で切って、その谷で選ぶ」だけを調べれば足りる
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const keyOf = (boards, pieces) => boards + '|' + pieces.join(',');
+
+  // 1 つの谷の渡り方を全部: 渡ったあとの手持ちごとに、使った枚数の最少 k と、同じ長さだけで埋めたときの最少 ku（なければ Infinity）。Map<key, { boards, pieces, k, ku }>
+  function crossings(hand, len, cfg) {
+    const out = new Map(), seen = new Set();
+    const pick = (boards, pieces) => {
+      // 同じ長さをまとめて、長さごとに何枚使うかを決める
+      const lens = [...new Set(pieces)], cnt = lens.map((l) => pieces.filter((p) => p === l).length), use = lens.map(() => 0);
+      const rec = (i, rem, k) => {
+        if (rem === 0) {
+          const rest = [];
+          lens.forEach((l, j) => { for (let c = cnt[j] - use[j]; c > 0; c--) rest.push(l); });
+          const key = keyOf(boards, rest), old = out.get(key), ku = use.filter((c) => c > 0).length === 1 ? k : Infinity;
+          if (!old) out.set(key, { boards, pieces: rest, k, ku });
+          else { if (k < old.k) old.k = k; if (ku < old.ku) old.ku = ku; }
+          return;
+        }
+        if (i >= lens.length) return;
+        for (let c = Math.min(cnt[i], Math.floor(rem / lens[i])); c >= 0; c--) { use[i] = c; rec(i + 1, rem - c * lens[i], k + c); }
+        use[i] = 0;
+      };
+      rec(0, len, 0);
+    };
+    // 板の切り方（切る数の小さい順に決めて、同じ組み合わせを二度調べない）
+    const cutRec = (boards, pieces, minI) => {
+      const key = keyOf(boards, pieces);
+      if (seen.has(key)) return;
+      seen.add(key);
+      pick(boards, pieces);
+      if (boards < 1) return;
+      for (let i = minI; i < cfg.cuts.length; i++) {
+        const n = cfg.cuts[i], next = pieces.slice();
+        for (let c = 0; c < n; c++) next.push(cfg.unit / n);
+        next.sort((a, b) => b - a);
+        cutRec(boards - 1, next, i);
+      }
+    };
+    cutRec(hand.boards, hand.pieces.slice().sort((a, b) => b - a), 0);
+    return out;
+  }
+
+  // 覚え書きつきの道具一式（ステージ 1 つぶん）
+  function solverFor(stage, cfg) {
+    const lens = stage.gaps.map((g) => g.len), memoX = new Map(), memoC = new Map();
+    const cross = (hand, gi) => {
+      const key = gi + '#' + keyOf(hand.boards, hand.pieces);
+      let v = memoX.get(key);
+      if (!v) { v = [...crossings(hand, lens[gi], cfg).values()]; memoX.set(key, v); }
+      return v;
+    };
+    const can = (hand, gi) => {
+      if (gi >= lens.length) return true;
+      const key = gi + '#' + keyOf(hand.boards, hand.pieces);
+      if (memoC.has(key)) return memoC.get(key);
+      const v = cross(hand, gi).some((r) => can(r, gi + 1));
+      memoC.set(key, v);
+      return v;
+    };
+    return { cross, can, lens };
+  }
+
+  const norm = (hand) => ({ boards: hand.boards, pieces: hand.pieces.slice().sort((a, b) => b - a) });
+
+  function canClear(hand, gi, stage, cfg = Game.config) {
+    return solverFor(stage, cfg).can(norm(hand), gi);
+  }
+
+  function analyze(stage, cfg = Game.config) {
+    const S = solverFor(stage, cfg), n = S.lens.length;
+    const start = norm({ boards: stage.boards, pieces: stage.pieces || [] });
+    if (!S.can(start, 0)) return { ok: false, pars: [], keep: -1 };
+    const pars = [];
+    let reach = new Map([[keyOf(start.boards, start.pieces), start]]);
+    for (let gi = 0; gi < n; gi++) {
+      const next = new Map();
+      let par = Infinity, any = Infinity;
+      for (const h of reach.values()) for (const r of S.cross(h, gi)) {
+        if (!S.can(r, gi + 1)) continue;
+        if (r.ku < par) par = r.ku;
+        if (r.k < any) any = r.k;
+        next.set(keyOf(r.boards, r.pieces), r);
+      }
+      pars.push(par === Infinity ? any : par);
+      reach = next;
+    }
+    // keep: 全部の谷を par 以下の枚数で渡る（全部がっしり）解き方の中で、残せる板の最大
+    const memo = new Map();
+    const best = (h, gi) => {
+      if (gi >= n) return h.boards;
+      const key = gi + '#' + keyOf(h.boards, h.pieces);
+      if (memo.has(key)) return memo.get(key);
+      let b = -1;
+      for (const r of S.cross(h, gi)) if (r.k <= pars[gi]) b = Math.max(b, best(r, gi + 1));
+      memo.set(key, b);
+      return b;
+    };
+    return { ok: true, pars, keep: best(start, 0) };
+  }
+
+  Game.solver = { crossings, canClear, analyze };
+})();
+</script>
+<script>
+// ステージの型。数字は遊ぶたびに gen.js が決める（設計書 3.5）。ここに書くのは、段階（mode）、部品の候補（cands）、一例の数字（example）。
+//   cands: [{ part, …部品ごとの範囲 }]。部品の中身は gen.js の PARTS
+//   fixed: true のステージは、いつも example の数字（操作を覚えるステージ）
+//   example: { boards, pieces, gaps: [長さ…] }。長さは 1/120 単位
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  Game.stages = [
+    // ---- エリア 1: かさねて測る ----
+    { id: '1-1', area: 1, mode: 'overlay', fixed: true, example: { boards: 1, pieces: [], gaps: [60] } },           // 切る・運ぶ・わたる
+    { id: '1-2', area: 1, mode: 'overlay', fixed: true, example: { boards: 1, pieces: [], gaps: [40] } },           // 切る数を変える
+    // 1/n のいくつ分: 分母の違う谷が 2 つ。谷ごとに別の板が要る
+    { id: '1-3', area: 1, mode: 'overlay', example: { boards: 2, pieces: [], gaps: [80, 90] },
+      cands: [{ part: 'apart', dens: [3, 4, 5] }, { part: 'apart', dens: [5, 6, 8] }] },
+    // 余りを次の谷で使う（板が 1 枚残る）
+    { id: '1-4', area: 1, mode: 'overlay', example: { boards: 2, pieces: [], gaps: [90, 30] },
+      cands: [{ part: 'rest', dens: [3, 4, 5, 6, 8], big: true }, { part: 'rest', dens: [3, 4, 5, 6, 8], big: false }] },
+    // 割れた切れはし: いくつに割れていても、等しくなければ 1/n ではない
+    { id: '1-5', area: 1, mode: 'overlay', example: { boards: 1, pieces: [45, 45, 30], gaps: [40, 40] },
+      cands: [{ part: 'broken', dens: [3] }, { part: 'broken', dens: [4, 5] }] },
+    // 細かく切るほど 1 枚が短い
+    { id: '1-6', area: 1, mode: 'overlay', example: { boards: 3, pieces: [], gaps: [60, 30, 15] },
+      cands: [{ part: 'finer', chain: true }, { part: 'finer', chain: false }] },
+  ];
+})();
+</script>
+<script>
+// ステージを作る: 型（stages.js）と種から、1 回分のステージを作る（設計書 3.5）。DOM・Canvas・言語に触らない。
+//   make(def, seed, prevSeed) → { id, mode, boards, pieces, gaps: [{ len, par, sign }], keep, cand, seed, fallback }
+// 候補を 1 つ選び、数字を乱数で決め、解き手でねらいを確かめる。だめなら数字を決め直し、config.gen.tries 回でだめなら一例の数字（fallback: true）。
+// prevSeed を渡すと、その種で作ったステージと同じ候補・同じ数字にはしない
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+
+  // 部品: (c: 候補, o: 乱数の状態, cfg) → { boards, pieces, gaps: [長さ…] } か null（決め直し）
+  const PARTS = {
+    // べつべつ: 分母の違う谷が 2 つ（どちらも 1/n のいくつ分。分子は 2 以上）
+    apart(c, o, cfg) {
+      const R = Game.rng, n = R.pick(o, c.dens), m = R.pick(o, c.dens);
+      if (n === m) return null;
+      const num = (d) => { const a = 2 + R.int(o, d - 2); return gcd(a, d) === 1 ? a : 0; };
+      const a = num(n), b = num(m);
+      if (!a || !b) return null;
+      return { boards: 2, pieces: [], gaps: [(a * cfg.unit) / n, (b * cfg.unit) / m] };
+    },
+    // のこり: a/n → 残りの (n−a)/n。big: 大きいほうが先
+    rest(c, o, cfg) {
+      const R = Game.rng, n = R.pick(o, c.dens), a = 1 + R.int(o, n - 1);
+      if (gcd(a, n) !== 1 || a * 2 === n || (a * 2 > n) !== c.big) return null;
+      return { boards: 2, pieces: [], gaps: [(a * cfg.unit) / n, ((n - a) * cfg.unit) / n] };
+    },
+    // われた板: 板 1 枚と、不ぞろいに割れた切れはし n 個（合わせて板 1 枚ぶん）。谷は 1/n が 2 つ
+    broken(c, o, cfg) {
+      const R = Game.rng, n = R.pick(o, c.dens), unit = cfg.unit, part = unit / n;
+      // 5 ドットきざみで、どれも 1/n と違う長さに割る
+      const cuts = new Set();
+      while (cuts.size < n - 1) cuts.add(5 * (3 + R.int(o, unit / 5 - 5)));
+      const xs = [0, ...[...cuts].sort((x, y) => x - y), unit], pieces = [];
+      for (let i = 0; i < n; i++) pieces.push(xs[i + 1] - xs[i]);
+      if (pieces.some((p) => p < 15 || p === part || Math.abs(p - part) < 5)) return null;
+      return { boards: 1, pieces: pieces.sort((x, y) => y - x), gaps: [part, part] };
+    },
+    // こまかく: 1/a・1/b・1/c（どれも 1 枚で渡る）。chain: 分母が倍々につながり、谷がだんだん短くなる
+    finer(c, o, cfg) {
+      const R = Game.rng, cuts = cfg.cuts;
+      let ds;
+      if (c.chain) {
+        const chains = [];
+        for (const a of cuts) for (const b of cuts) for (const d of cuts) if (a < b && b < d && b % a === 0 && d % b === 0) chains.push([a, b, d]);
+        ds = R.pick(o, chains);
+      } else {
+        ds = [R.pick(o, cuts), R.pick(o, cuts), R.pick(o, cuts)];
+        if (new Set(ds).size < 3) return null;
+        const s = ds.slice().sort((x, y) => x - y);
+        if (s[1] % s[0] === 0 && s[2] % s[1] === 0) return null;         // 倍々のつながりは chain のほうで出す
+        if (ds[0] < ds[1] && ds[1] < ds[2]) return null;                 // だんだん短くなる並びも chain のほう
+      }
+      return { boards: 3, pieces: [], gaps: ds.map((d) => cfg.unit / d) };
+    },
+  };
+
+  // ねらいが成り立つか（raw: 部品が返した形、an: 解き手の答え）
+  const AIMS = {
+    apart: (raw, an) => an.keep === 0,                                   // 谷ごとに別の板が要る
+    rest: (raw, an) => an.keep === raw.boards - 1,                       // 余りを使うと板が 1 枚残る
+    broken(raw, an, cfg) {                                               // 割れた切れはしだけでは 1 つめの谷を渡れない。板を切れば 1 枚ずつで渡れる
+      const alone = Game.solver.crossings({ boards: 0, pieces: raw.pieces }, raw.gaps[0], cfg);
+      return alone.size === 0 && an.keep === 0 && an.pars.every((p) => p === 1);
+    },
+    finer: (raw, an) => an.keep === 0 && an.pars.every((p) => p === 1),  // どの谷も 1 枚。板は 3 枚とも要る
+  };
+
+  function finish(def, raw, an, extra) {
+    return Object.assign({
+      id: def.id, mode: def.mode, boards: raw.boards, pieces: raw.pieces.slice(),
+      gaps: raw.gaps.map((len, i) => ({ len, par: an.pars[i], sign: { kind: def.mode === 'overlay' ? 'none' : 'frac' } })),
+      keep: an.keep,
+    }, extra);
+  }
+  const sig = (st) => st.cand + ':' + st.boards + ':' + st.pieces.join(',') + ':' + st.gaps.map((g) => g.len).join(',');
+  // かざして見分けられる谷か: 谷の分母より粗い切り方の線が、谷の右の端のすぐそば（cfg.gen.lineGap ドット未満）に来ない。
+  // 遊ぶ人は粗いほうから順に試すので、先に出会う粗い切り方がそろって見えるとまちがえる。細かい側の近い線は、正しい切り方に先に出会うので構わない
+  function clearEdge(len, cfg) {
+    const den = cfg.unit / gcd(len, cfg.unit);
+    for (const n of cfg.cuts) if (n < den) for (let k = 1; k < n; k++) { const d = Math.abs((k * cfg.unit) / n - len); if (d > 0 && d < cfg.gen.lineGap) return false; }
+    return true;
+  }
+  const valid = (def, raw, an, cfg) => an.ok && an.keep >= 0 && raw.gaps.every((l) => Number.isInteger(l) && l > 0 && l <= cfg.maxGap && (def.mode !== 'overlay' || clearEdge(l, cfg)));
+
+  function example(def, seed, cfg) {
+    const an = Game.solver.analyze({ boards: def.example.boards, pieces: def.example.pieces, gaps: def.example.gaps.map((len) => ({ len })) }, cfg);
+    return finish(def, def.example, an, { cand: -1, seed, fallback: !def.fixed });
+  }
+
+  function make(def, seed, prevSeed, cfg = Game.config) {
+    if (def.fixed || !def.cands) return example(def, seed, cfg);
+    const prev = prevSeed == null || prevSeed === seed ? null : sig(make(def, prevSeed, null, cfg));
+    const o = { rng: Game.rng.seedFrom(seed) };
+    // 候補は先に 1 つ決め、数字だけを決め直す（通りにくい候補が出にくくならないように）
+    const ci = Game.rng.int(o, def.cands.length), c = def.cands[ci];
+    for (let t = 0; t < cfg.gen.tries; t++) {
+      const raw = PARTS[c.part](c, o, cfg);
+      if (!raw) continue;
+      const an = Game.solver.analyze({ boards: raw.boards, pieces: raw.pieces, gaps: raw.gaps.map((len) => ({ len })) }, cfg);
+      if (!valid(def, raw, an, cfg) || !AIMS[c.part](raw, an, cfg)) continue;
+      const st = finish(def, raw, an, { cand: ci, seed, fallback: false });
+      if (prev && sig(st) === prev) continue;
+      return st;
+    }
+    return example(def, seed, cfg);
+  }
+
+  Game.gen = { make, sig, PARTS, AIMS, clearEdge };
+})();
+</script>
+<script>
+// ルール: 1 ステージの状態と操作。DOM・Canvas・言語に触らない。状態はただのデータ（structuredClone で写せる）。
+// 操作は一瞬で進み、起きたことを出来事の列で返す（歩く・落ちるの時間は main が演出として持つ）。
+// stage = { id, mode: 'overlay' | 'hand' | 'fog', boards, pieces: [長さ…], gaps: [{ len, par, sign }], keep }（gen.js が作る）
+// 長さは 1/unit を単位にした整数
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const sum = (a) => a.reduce((x, y) => x + y, 0);
+  const desc = (a) => a.sort((x, y) => y - x);
+  const copyHand = (h) => ({ boards: h.boards, pieces: h.pieces.slice() });
+
+  function start(stage) {
+    const hand = { boards: stage.boards, pieces: desc((stage.pieces || []).slice()) };
+    return {
+      stage, gi: 0,
+      hand, bridge: [],          // bridge: 谷に並べた切れはし（左から）
+      cutN: 1,                   // 手つかずの板に入れている線の数（1 は切らない）
+      falls: stage.gaps.map(() => 0),
+      helpOn: false, helpUsed: false, // 「かさねて みる」を今の谷で使っているか、このステージで一度でも使ったか
+      sturdy: [],                // 渡った谷ごと: がっしりだったか
+      snap: copyHand(hand),      // 今の谷に着いたときの手持ち
+      stuck: null,               // 詰み: null / 'gap'（この谷の頭からなら渡りきれる）/ 'start'（最初からでないと渡りきれない）
+      crossing: null,            // わたる の結果（settle で片づけるまで、ほかの操作は受けない）
+      done: false,
+    };
+  }
+
+  const gap = (s) => s.stage.gaps[s.gi];
+  const busy = (s) => s.done || !!s.crossing;
+  const canHelp = (s, cfg = Game.config) => !s.done && s.falls[s.gi] >= cfg.help.falls;
+  // 板を谷にかざせるか（かさねて測る、または助け舟）
+  const overlay = (s) => s.stage.mode === 'overlay' || s.helpOn;
+
+  // 詰みの確かめ（板を切ったあとと、谷を渡ったあと）。今の手持ち（橋に置いた分も含む）で最後まで渡りきれるか。
+  // 渡りきれないとき、この谷の頭からなら渡りきれるなら 'gap'、だめなら 'start'。変わったときだけ出来事を返す
+  function checkStuck(s, cfg) {
+    const S = Game.solver;
+    let v = null;
+    if (!s.done && !S.canClear({ boards: s.hand.boards, pieces: s.hand.pieces.concat(s.bridge) }, s.gi, s.stage, cfg)) v = S.canClear(s.snap, s.gi, s.stage, cfg) ? 'gap' : 'start';
+    if (v === s.stuck) return [];
+    s.stuck = v;
+    return v ? [{ type: 'stuck', from: v }] : [];
+  }
+
+  // 切る数を決める（まだ切れていない）
+  function setCut(s, n, cfg = Game.config) {
+    if (busy(s) || s.hand.boards < 1) return [];
+    if (n !== 1 && !cfg.cuts.includes(n)) return [];
+    if (n === s.cutN) return [];
+    s.cutN = n;
+    return [{ type: 'cutn', n }];
+  }
+
+  // 切る: 手つかずの板 1 枚を cutN 個の等しい切れはしにする
+  function cut(s, cfg = Game.config) {
+    if (busy(s) || s.hand.boards < 1 || s.cutN < 2) return [];
+    const n = s.cutN, len = cfg.unit / n;
+    s.hand.boards--;
+    for (let i = 0; i < n; i++) s.hand.pieces.push(len);
+    desc(s.hand.pieces);
+    s.cutN = 1;
+    return [{ type: 'cut', n, len }].concat(checkStuck(s, cfg));
+  }
+
+  // 運ぶ: 長さ len の切れはしを 1 枚、谷の左から順につめて置く。窓からはみ出すほどは置けない
+  function place(s, len, cfg = Game.config) {
+    if (busy(s)) return [];
+    const i = s.hand.pieces.indexOf(len);
+    if (i < 0) return [];
+    const at = sum(s.bridge);
+    if (at + len > cfg.unit) return [{ type: 'full' }];
+    s.hand.pieces.splice(i, 1);
+    s.bridge.push(len);
+    return [{ type: 'place', len, at, i: s.bridge.length - 1 }];
+  }
+
+  // 戻す: 橋の上の i 番目の切れはしを手持ちへ
+  function take(s, i) {
+    if (busy(s) || i < 0 || i >= s.bridge.length) return [];
+    const len = s.bridge.splice(i, 1)[0];
+    s.hand.pieces.push(len);
+    desc(s.hand.pieces);
+    return [{ type: 'take', len, i }];
+  }
+
+  // わたる: 判定だけする。片づけは settle（演出のあとで main が呼ぶ）
+  function cross(s) {
+    if (busy(s)) return [];
+    const g = gap(s), total = sum(s.bridge), n = s.bridge.length;
+    const result = total < g.len ? 'short' : total > g.len ? 'long' : n <= g.par ? 'sturdy' : 'creak';
+    s.crossing = { result, total, len: g.len, bridge: s.bridge.slice() };
+    return [{ type: 'cross', result, total, len: g.len, bridge: s.bridge.slice(), gi: s.gi }];
+  }
+
+  // わたる の結果を片づける
+  function settle(s, cfg = Game.config) {
+    if (!s.crossing) return [];
+    const { result } = s.crossing, ev = [];
+    s.crossing = null;
+    if (result === 'short' || result === 'long') {
+      // 落ちた: 橋に置いた切れはしは手持ちに戻る。切ってしまった板は戻らない
+      s.hand.pieces.push(...s.bridge); desc(s.hand.pieces);
+      s.bridge = [];
+      s.falls[s.gi]++;
+      ev.push({ type: 'fell', result, gi: s.gi, falls: s.falls[s.gi] });
+      if (s.falls[s.gi] === cfg.help.falls) ev.push({ type: 'help_ready', gi: s.gi });
+      return ev;
+    }
+    // 渡れた: 使った切れはしは手持ちからなくなる
+    s.sturdy.push(result === 'sturdy');
+    s.bridge = [];
+    ev.push({ type: 'passed', result, gi: s.gi });
+    if (result === 'sturdy') ev.push({ type: 'seed', seeds: seeds(s) });
+    s.gi++;
+    s.cutN = 1;
+    s.helpOn = false;
+    if (s.gi >= s.stage.gaps.length) {
+      s.done = true;
+      ev.push({ type: 'clear', result: outcome(s) });
+    } else {
+      s.snap = copyHand(s.hand);
+      ev.push({ type: 'gap', gi: s.gi });
+      ev.push(...checkStuck(s, cfg));
+    }
+    return ev;
+  }
+
+  // この谷からやり直す: 谷に着いたときの手持ちに戻す（この谷で切った板も元通り）
+  function retryGap(s) {
+    if (busy(s)) return [];
+    s.hand = copyHand(s.snap);
+    s.bridge = [];
+    s.cutN = 1;
+    if (s.stuck === 'gap') s.stuck = null;
+    return [{ type: 'retry_gap', gi: s.gi }];
+  }
+
+  // 助け舟「かさねて みる」: 同じ谷で決めた回数落ちたあとだけ。今の谷で板をかざせるようにする
+  function help(s, cfg = Game.config) {
+    if (busy(s) || !canHelp(s, cfg) || s.helpOn) return [];
+    s.helpOn = true;
+    s.helpUsed = true;
+    return [{ type: 'help', gi: s.gi }];
+  }
+
+  const seeds = (s) => s.sturdy.filter(Boolean).length;
+  // ほっぺのふくらみ 0〜3（見た目だけ）: たねなし / 谷の数の半分より少ない / 半分以上 / 全部の谷でがっしり
+  function cheek(s) {
+    const n = seeds(s), all = s.stage.gaps.length;
+    return n === 0 ? 0 : n >= all ? 3 : n * 2 >= all ? 2 : 1;
+  }
+  // 宝石 3 つ（渡りきる / 全部がっしり / 板を keep 枚以上残す）と、足あと（助け舟を使わなかった）
+  function outcome(s) {
+    return {
+      gems: [s.done, s.done && s.sturdy.every(Boolean), s.done && s.hand.boards >= s.stage.keep],
+      stamp: s.done && !s.helpUsed,
+      seeds: seeds(s),
+    };
+  }
+
+  Game.rules = { start, gap, busy, canHelp, overlay, setCut, cut, place, take, cross, settle, retryGap, help, seeds, cheek, outcome, sum };
+})();
+</script>
+<script>
+// 記録: 開いたステージ、ステージごとの宝石（3 つ）と足あと、前に遊んだ種。DOM・Canvas・言語に触らない。
+// 保存の形: { v, stages: { '1-1': { gems: [bool, bool, bool], stamp: bool, seed: 整数 } } }
+// 前に取った宝石と足あとは消えない（遊び直して、取れていない分だけを足せる）
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  const fresh = (cfg = Game.config) => ({ v: cfg.save.version, stages: {} });
+  const blank = () => ({ gems: [false, false, false], stamp: false, seed: null });
+  const of = (p, id) => p.stages[id] || blank();
+
+  // 壊れたデータは、読めるところだけ使う。だめなら最初から
+  function parse(raw, cfg = Game.config, defs = Game.stages) {
+    let d = null;
+    try { if (typeof raw === 'string') d = JSON.parse(raw); } catch (e) { return fresh(cfg); }
+    const p = fresh(cfg);
+    if (!d || d.v !== cfg.save.version || !d.stages || typeof d.stages !== 'object') return p;
+    for (const def of defs) {
+      const s = d.stages[def.id];
+      if (!s || typeof s !== 'object') continue;
+      const e = blank();
+      if (Array.isArray(s.gems)) for (let i = 0; i < 3; i++) e.gems[i] = s.gems[i] === true;
+      e.stamp = s.stamp === true;
+      if (Number.isInteger(s.seed)) e.seed = s.seed;
+      p.stages[def.id] = e;
+    }
+    return p;
+  }
+
+  // 渡りきったか（1 つめの宝石）
+  const cleared = (p, id) => of(p, id).gems[0];
+  // 開いているか: 最初のステージか、1 つ前を渡りきっている
+  function open(p, id, defs = Game.stages) {
+    const i = defs.findIndex((d) => d.id === id);
+    return i === 0 || (i > 0 && cleared(p, defs[i - 1].id));
+  }
+  // ステージに入るときの種を覚える（次に入るとき、同じ数字にしないため）
+  function enter(p, id, seed) {
+    const e = (p.stages[id] = of(p, id));
+    const prev = e.seed;
+    e.seed = seed;
+    return prev;
+  }
+  // 結果を足す。返り値: 今回はじめて取れたもの { gems: [bool×3], stamp }
+  function record(p, id, outcome) {
+    const e = (p.stages[id] = of(p, id));
+    const got = { gems: [false, false, false], stamp: false };
+    for (let i = 0; i < 3; i++) if (outcome.gems[i] && !e.gems[i]) { e.gems[i] = true; got.gems[i] = true; }
+    if (outcome.stamp && !e.stamp) { e.stamp = true; got.stamp = true; }
+    return got;
+  }
+  // エリアの合計 { gems, stamps, stages }
+  function total(p, area, defs = Game.stages) {
+    const t = { gems: 0, stamps: 0, stages: 0 };
+    for (const d of defs) if (d.area === area) { const e = of(p, d.id); t.stages++; t.gems += e.gems.filter(Boolean).length; if (e.stamp) t.stamps++; }
+    return t;
+  }
+
+  Game.progress = { fresh, parse, of, cleared, open, enter, record, total };
+})();
+</script>
+<script>
+// 保存データの読み書き（localStorage）。記録（hoppe-bridge.progress、検め方は progress.parse）、設定（hoppe-bridge.settings）、手本を見たか（hoppe-bridge.tips）。
+// 読めない・壊れているときは最初の状態から始める。書けない（容量・プライベートモード）ときは黙って続ける
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  function read(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+  function write(key, data) { try { localStorage.setItem(key, JSON.stringify(data)); return true; } catch (e) { return false; } }
+  const json = (raw) => { try { return typeof raw === 'string' ? JSON.parse(raw) : null; } catch (e) { return null; } };
+
+  // 設定 { sound: bool }
+  function parseSettings(raw) { const d = json(raw); return { sound: !(d && d.sound === false) }; }
+  // 手本 { seen: { count: true, … } }（できたものだけ）
+  function parseTips(raw, cfg = Game.config) {
+    const d = json(raw), t = { seen: {} };
+    if (d && d.seen && typeof d.seen === 'object') for (const id of cfg.tips) if (d.seen[id] === true) t.seen[id] = true;
+    return t;
+  }
+
+  Game.save = {
+    parseSettings, parseTips,
+    loadProgress: (cfg = Game.config) => Game.progress.parse(read(cfg.save.progress), cfg),
+    storeProgress: (p, cfg = Game.config) => write(cfg.save.progress, p),
+    loadSettings: (cfg = Game.config) => parseSettings(read(cfg.save.settings)),
+    storeSettings: (s, cfg = Game.config) => write(cfg.save.settings, s),
+    loadTips: (cfg = Game.config) => parseTips(read(cfg.save.tips), cfg),
+    storeTips: (t, cfg = Game.config) => write(cfg.save.tips, t),
+  };
+})();
+</script>
+<script>
+// 5×7 の自作ドット文字。1文字 = 7行×5桁の文字列（'#' が点）。濁点・半濁点は bake.js で重ねる
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  const G = {};
+  // 7行を1行に並べて書く（' ' 区切り）
+  const def = (ch, rows) => { G[ch] = rows.split(' '); };
+
+  // 数字
+  def('0', '.###. #...# #..## #.#.# ##..# #...# .###.');
+  def('1', '..#.. .##.. ..#.. ..#.. ..#.. ..#.. .###.');
+  def('2', '.###. #...# ....# ...#. ..#.. .#... #####');
+  def('3', '##### ...#. ..#.. ...#. ....# #...# .###.');
+  def('4', '...#. ..##. .#.#. #..#. ##### ...#. ...#.');
+  def('5', '##### #.... ####. ....# ....# #...# .###.');
+  def('6', '..##. .#... #.... ####. #...# #...# .###.');
+  def('7', '##### ....# ...#. ..#.. .#... .#... .#...');
+  def('8', '.###. #...# #...# .###. #...# #...# .###.');
+  def('9', '.###. #...# #...# .#### ....# ...#. .##..');
+
+  // 英字（大文字）
+  def('A', '.###. #...# #...# ##### #...# #...# #...#');
+  def('B', '####. #...# #...# ####. #...# #...# ####.');
+  def('C', '.###. #...# #.... #.... #.... #...# .###.');
+  def('D', '###.. #..#. #...# #...# #...# #..#. ###..');
+  def('E', '##### #.... #.... ####. #.... #.... #####');
+  def('F', '##### #.... #.... ####. #.... #.... #....');
+  def('G', '.###. #...# #.... #.### #...# #...# .####');
+  def('H', '#...# #...# #...# ##### #...# #...# #...#');
+  def('I', '.###. ..#.. ..#.. ..#.. ..#.. ..#.. .###.');
+  def('J', '..### ...#. ...#. ...#. ...#. #..#. .##..');
+  def('K', '#...# #..#. #.#.. ##... #.#.. #..#. #...#');
+  def('L', '#.... #.... #.... #.... #.... #.... #####');
+  def('M', '#...# ##.## #.#.# #.#.# #...# #...# #...#');
+  def('N', '#...# #...# ##..# #.#.# #..## #...# #...#');
+  def('O', '.###. #...# #...# #...# #...# #...# .###.');
+  def('P', '####. #...# #...# ####. #.... #.... #....');
+  def('Q', '.###. #...# #...# #...# #.#.# #..#. .##.#');
+  def('R', '####. #...# #...# ####. #.#.. #..#. #...#');
+  def('S', '.#### #.... #.... .###. ....# ....# ####.');
+  def('T', '##### ..#.. ..#.. ..#.. ..#.. ..#.. ..#..');
+  def('U', '#...# #...# #...# #...# #...# #...# .###.');
+  def('V', '#...# #...# #...# #...# #...# .#.#. ..#..');
+  def('W', '#...# #...# #...# #.#.# #.#.# #.#.# .#.#.');
+  def('X', '#...# #...# .#.#. ..#.. .#.#. #...# #...#');
+  def('Y', '#...# #...# .#.#. ..#.. ..#.. ..#.. ..#..');
+  def('Z', '##### ....# ...#. ..#.. .#... #.... #####');
+
+  // 英小文字（英語の文）。幅は字ごとに変わる（行の長さ＝字の幅、送り＝幅＋1）。x の高さは 2〜6 行。
+  // g j p q y は 8 行（本体 4 行＋下 2 行で、7 行目＝並びの下の線より 1 行下へ出る。数字の 9 と見分けるため）。
+  // 下へ出る分は、英語のときの文の置き場所（config.textBox の en）で空ける。x は記号の x（幅 5、倍率の x1.25）を使う
+  def('a', '.... .... .##. ...# .### #..# .###');
+  def('b', '#... #... ###. #..# #..# #..# ###.');
+  def('c', '.... .... .### #... #... #... .###');
+  def('d', '...# ...# .### #..# #..# #..# .###');
+  def('e', '.... .... .##. #..# #### #... .###');
+  def('f', '.## #.. ### #.. #.. #.. #..');
+  def('g', '.... .... .### #..# #..# .### ...# ###.');
+  def('h', '#... #... ###. #..# #..# #..# #..#');
+  def('i', '# . # # # # #');
+  def('j', '..# ... ..# ..# ..# ..# ..# ##.');
+  def('k', '#... #... #..# #.#. ##.. #.#. #..#');
+  def('l', '#. #. #. #. #. #. .#');
+  def('m', '..... ..... ##.#. #.#.# #.#.# #.#.# #.#.#');
+  def('n', '.... .... ###. #..# #..# #..# #..#');
+  def('o', '.... .... .##. #..# #..# #..# .##.');
+  def('p', '.... .... ###. #..# #..# ###. #... #...');
+  def('q', '.... .... .### #..# #..# .### ...# ...#');
+  def('r', '.... .... #.## ##.. #... #... #...');
+  def('s', '.... .... .### #... .##. ...# ###.');
+  def('t', '.#. .#. ### .#. .#. .#. ..#');
+  def('u', '.... .... #..# #..# #..# #..# .###');
+  def('v', '..... ..... #...# #...# #...# .#.#. ..#..');
+  def('w', '..... ..... #...# #...# #.#.# #.#.# .#.#.');
+  def('y', '.... .... #..# #..# #..# .### ...# ###.');
+  def('z', '.... .... #### ..#. .#.. #... ####');
+  def("'", '# # . . . . .');
+  def(',', '.. .. .. .. .# .# #.');
+
+  // 記号
+  def(' ', '..... ..... ..... ..... ..... ..... .....');
+  def('!', '..#.. ..#.. ..#.. ..#.. ..#.. ..... ..#..');
+  // 矢印（あそびかたのキーの行）
+  def('←', '..... ..#.. .#... ##### .#... ..#.. .....');
+  def('→', '..... ..#.. ...#. ##### ...#. ..#.. .....');
+  def('↑', '..#.. .###. #.#.# ..#.. ..#.. ..#.. ..#..');
+  def('↓', '..#.. ..#.. ..#.. ..#.. #.#.# .###. ..#..');
+  def('…', '..... ..... ..... ..... ..... #.#.# .....');
+  def('?', '.###. #...# ....# ...#. ..#.. ..... ..#..');
+  def('.', '..... ..... ..... ..... ..... ..... ..#..');
+  def(':', '..... ..#.. ..... ..... ..... ..#.. .....');
+  def('-', '..... ..... ..... .###. ..... ..... .....');
+  def('+', '..... ..#.. ..#.. ##### ..#.. ..#.. .....');
+  def('%', '##... ##..# ...#. ..#.. .#... #..## ...##');
+  def('x', '..... ..... #...# .#.#. ..#.. .#.#. #...#');
+  def('/', '....# ....# ...#. ..#.. .#... #.... #....');
+  def('(', '...#. ..#.. .#... .#... .#... ..#.. ...#.');
+  def(')', '.#... ..#.. ...#. ...#. ...#. ..#.. .#...');
+  def('=', '..... ..... ##### ..... ##### ..... .....');
+  def('ー', '..... ..... ..... ##### ..... ..... .....');
+  def('〜', '..... ..... .#... #.#.# ...#. ..... .....');
+  def('。', '..... ..... ..... ..... .#... #.#.. .#...');
+  def('、', '..... ..... ..... ..... #.... .#... .....');
+  def('・', '..... ..... ..... ..#.. ..... ..... .....');
+  def('♪', '..##. ..#.# ..#.. ..#.. ###.. ###.. .....');
+
+  // ひらがな
+  def('あ', '..#.. ##### ..#.. .####  #.#.# #.#.# .#.#.'.replace('  ', ' '));
+  def('い', '..... #...# #...# #...# #...# .#..# .....');
+  def('う', '.##.. ..... .###. #...# ....# ...#. .##..');
+  def('え', '.##.. ..... ####. ..#.. .##.. #.#.. #..##');
+  def('お', '.#... ####. .#.## .###. ##..# #...# .###.');
+  def('か', '.#... ####. .#.#. .#..# .#..# #...# #.##.');
+  def('き', '..#.. ####. ..#.. #####. ...#. .#... .###.'.replace('#####.', '#####'));
+  def('く', '...#. ..#.. .#... #.... .#... ..#.. ...#.');
+  def('け', '#..#. #.### #..#. #..#. #..#. #.#.. #....');
+  def('こ', '..... .###. ..... ..... ..... #.... .###.');
+  def('さ', '..#.. ##### ...#. .###. #.... #.... .###.');
+  def('し', '.#... .#... .#... .#... .#... .#..# ..##.');
+  def('す', '..#.. ##### ..#.. .##.. .##.. ..#.. .#...');
+  def('せ', '.#.#. ##### .#.#. .#.#. .#... .#... ..###');
+  def('そ', '####. ..#.. .#... ##### ..#.. .#... ..##.');
+  def('た', '.#... ####. .#... #.### #.... #.... #.###');
+  def('ち', '.#... ####. .#... .###. #...# ....# .###.');
+  def('つ', '..... ..... ####. ....# ....# ...#. ###..');
+  def('て', '..... ##### ..#.. .#... .#... .#... ..##.');
+  def('と', '.#... .#... .#.## .##.. #.... #.... .####');
+  def('な', '.#... ####. .#..# #..#. ...#. .###. #.##.');
+  def('に', '#.... #.### #.... #.... #.#.. #.#.. #..##');
+  def('ぬ', '.#.#. ##### #.#.# #.#.# #.### #..## .#.##');
+  def('ね', '.#... ####. .#.#. .##.# ##..# #.#.# #.#.#');
+  def('の', '..... .###. #.#.# #.#.# #.#.# #..#. .....');
+  def('は', '#..#. #.### #..#. #..#. #.##. #.#.# #.##.');
+  def('ひ', '..... ##.#. .#..# #...# #...# #...# .###.');
+  def('ふ', '..#.. ...#. ..#.. ..#.. #.#.# #...# .##..');
+  def('へ', '..... ..... .#... #.#.. ...#. ....# .....');
+  def('ほ', '#.### #..#. #.### #..#. #.##. #.#.# #.##.');
+  def('ま', '..#.. ##### ..#.. ##### ..#.. .###. #.#.#');
+  def('み', '###.. .#... .#.#. #####  .#.#. #..#. ..#..'.replace('  ', ' '));
+  def('む', '.#... ####. .#..# .#... ##... #.#.# .###.');
+  def('め', '.#.#. ..#.. ##### #.#.# ##..# #..#. .##..');
+  def('も', '..#.. .###. ..#.. .###. ..#.# ..#.# ...#.');
+  def('や', '.#... .#.#. ###.# .#.#. ..#.. ..#.. ..#..');
+  def('ゆ', '..#.. #.##. ##.## #.#.# #.##. ..#.. .#...');
+  def('よ', '...#. ...#. ...## ...#. .###. #..#. .##.#');
+  def('ら', '.##.. ...#. .#... #.... ####. ....# .###.');
+  def('り', '#..#. #...# #...# #...# ....# ...#. ..#..');
+  def('る', '####. ..#.. .#... ####. #...# .###. .##.#');
+  def('れ', '.#... ##.#. .##.# .#..# ##..# .#..# .#..#');
+  def('ろ', '####. ..#.. .#... ####. ....# ....# .###.');
+  def('わ', '.#... ###.. .#.#. .##.# ##..# .#..# .#.#.');
+  def('を', '.#... ####. ..#.. .#### ##... #.#.. .####');
+  def('ん', '..#.. ..#.. .#... .#... ##.#. #.#.# #..#.');
+  def('っ', '..... ..... ..... .###. ...#. ...#. .##..');
+  def('ゃ', '..... ..... .#... .###. ##.#. .#... .#...');
+  def('ゅ', '..... ..... .#... ####. ##.#. .#... .....');
+  def('ょ', '..... ..... ...#. ...#. .###. #..#. .###.');
+
+  // カタカナ
+  def('ア', '##### ....# ..##. ..#.. ..#.. .#... #....');
+  def('イ', '....# ...#. ..#.. .##.. #.#.. ..#.. ..#..');
+  def('ウ', '..#.. ##### #...# ....# ...#. ..#.. .#...');
+  def('エ', '..... ##### ..#.. ..#.. ..#.. ..#.. #####');
+  def('オ', '...#. ##### ...#. ..##. .#.#. #..#. ..##.');
+  def('カ', '..#.. ##### ..#.# ..#.# .#..# .#..# #..#.');
+  def('キ', '..#.. ##### ..#.. ##### ..#.. ..#.. ..#..');
+  def('ク', '.#... .#### #...# ....# ...#. ..#.. ##...');
+  def('ケ', '.#... .#### #..#. ...#. ...#. ..#.. .#...');
+  def('コ', '..... ##### ....# ....# ....# ....# #####');
+  def('サ', '.#.#. ##### .#.#. .#.#. ...#. ..#.. .#...');
+  def('シ', '#.... .#..# ....# ##..# ...#. ..#.. ##...');
+  def('ス', '##### ....# ...#. ..#.. .#.#. #...# .....');
+  def('セ', '.#... ##### .#..# .#.#. .#... .#... ..###');
+  def('ソ', '#...# #...# .#..# ....# ...#. ..#.. ##...');
+  def('タ', '.#... .#### #...# .##.# ...#. ..#.. ##...');
+  def('チ', '...## ###.. ..#.. ##### ..#.. ..#.. .#...');
+  def('ツ', '#.#.# #.#.# #.#.# ....# ...#. ..#.. ##...');
+  def('テ', '.###. ..... ##### ..#.. ..#.. ..#.. .#...');
+  def('ト', '.#... .#... .##.. .#.#. .#... .#... .#...');
+  def('ナ', '..#.. ##### ..#.. ..#.. ..#.. .#... #....');
+  def('ニ', '..... .###. ..... ..... ..... ..... #####');
+  def('ヌ', '##### ....# .#.#. ..#.. .#.#. #.... .....');
+  def('ネ', '..#.. ##### ...#. ..#.. .###. #.#.# ..#..');
+  def('ノ', '....# ....# ...#. ..#.. .#... #.... .....');
+  def('ハ', '..... .#.#. .#.#. #...# #...# #...# .....');
+  def('ヒ', '#.... #.... #..## ###.. #.... #.... .####');
+  def('フ', '##### ....# ....# ...#. ..#.. .#... #....');
+  def('ヘ', '..... .#... #.#.. ...#. ....# ..... .....');
+  def('ホ', '..#.. ##### ..#.. #.#.# #.#.# ..#.. ..#..');
+  def('マ', '##### ....# ...#. #.#.. .#... ..#.. .....');
+  def('ミ', '.###. ..... .###. ..... ..... .###. .....');
+  def('ム', '..#.. ..#.. .#... .#... .#..# ##### .....');
+  def('メ', '....# ...#. #.#.. .#... .##.. #..#. .....');
+  def('モ', '.###. ..#.. ##### ..#.. ..#.. ..#.. ..###');
+  def('ヤ', '.#... ##### .#..# .#.#. .#... .#... .#...');
+  def('ユ', '..... .###. ...#. ...#. ...#. ##### .....');
+  def('ヨ', '##### ....# ....# ##### ....# ....# #####');
+  def('ラ', '.###. ..... ##### ....# ...#. ..#.. ##...');
+  def('リ', '#...# #...# #...# ....# ...#. ..#.. .#...');
+  def('ル', '..#.. #.#.. #.#.. #.#.. #.#.# #.##. #.#..');
+  def('レ', '#.... #.... #.... #...# #..#. #.#.. ##...');
+  def('ロ', '..... ##### #...# #...# #...# ##### .....');
+  def('ワ', '##### #...# ....# ...#. ..#.. .#... #....');
+  def('ヲ', '##### ....# .###. ....# ...#. ..#.. ##...');
+  def('ン', '##... ....# ....# ...#. ..#.. .#... #....');
+  def('ッ', '..... ..... #.#.# #.#.# ...#. ..#.. .#...');
+  def('ャ', '..... ..... .#... ##### .#.#. .#... .#...');
+  def('ュ', '..... ..... ..... .##.. ..#.. .###. .....');
+  def('ョ', '..... ..... .###. ...#. .###. ...#. .###.');
+
+  // 濁点・半濁点の付いた字は、元の字に重ねて作る
+  const DAKU = { が: 'か', ぎ: 'き', ぐ: 'く', げ: 'け', ご: 'こ', ざ: 'さ', じ: 'し', ず: 'す', ぜ: 'せ', ぞ: 'そ', だ: 'た', ぢ: 'ち', づ: 'つ', で: 'て', ど: 'と', ば: 'は', び: 'ひ', ぶ: 'ふ', べ: 'へ', ぼ: 'ほ',
+    ガ: 'カ', ギ: 'キ', グ: 'ク', ゲ: 'ケ', ゴ: 'コ', ザ: 'サ', ジ: 'シ', ズ: 'ス', ゼ: 'セ', ゾ: 'ソ', ダ: 'タ', ヂ: 'チ', ヅ: 'ツ', デ: 'テ', ド: 'ト', バ: 'ハ', ビ: 'ヒ', ブ: 'フ', ベ: 'ヘ', ボ: 'ホ', ヴ: 'ウ' };
+  const HANDAKU = { ぱ: 'は', ぴ: 'ひ', ぷ: 'ふ', ぺ: 'へ', ぽ: 'ほ', パ: 'ハ', ピ: 'ヒ', プ: 'フ', ペ: 'ヘ', ポ: 'ホ' };
+
+  // 分数用の小さい数字（3×5）。横棒の上下に置く
+  const SMALL = {};
+  const sdef = (ch, rows) => { SMALL[ch] = rows.split(' '); };
+  sdef('0', '### #.# #.# #.# ###');
+  sdef('1', '.#. ##. .#. .#. ###');
+  sdef('2', '### ..# ### #.. ###');
+  sdef('3', '### ..# .## ..# ###');
+  sdef('4', '#.# #.# ### ..# ..#');
+  sdef('5', '### #.. ### ..# ###');
+  sdef('6', '### #.. ### #.# ###');
+  sdef('7', '### ..# ..# .#. .#.');
+  sdef('8', '### #.# ### #.# ###');
+  sdef('9', '### #.# ### ..# ###');
+
+  Game.font = { glyphs: G, small: SMALL, DAKU, HANDAKU, w: 5, h: 7, adv: 6 };
+})();
+</script>
+<script>
+// 画面の文は全部ここ（render / main に文をじかに書かない）。最初の版は日本語だけ
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  Game.text = {
+    ja: {
+      btn: { retry: 'やりなおす', help: 'かさねて みる' },
+      title: { name1: 'HOPPE', name2: 'BRIDGE', tap: 'タップで はじめる' },
+      select: { area: 'エリア {n}', sub: ['かさねて はかる'], locked: '?' },
+      sound: { on: 'おと オン', off: 'おと オフ' },
+      menu: { resume: 'つづける', restart: 'さいしょから', select: 'ステージえらび' },
+      stuck: { gap: 'この たにから やりなおそう', start: 'さいしょから やりなおそう' },
+      clear: { title: 'クリア!', next: 'つぎへ', again: 'もういちど', select: 'ステージえらび' },
+      // 擬音
+      fx: { click: 'カチ', saw: 'ザクッ', put: 'コトン', step: 'トン', fit: 'ピタッ', sturdy: 'がっしり!', creak: 'ギシ', miss: 'スカッ', trip: 'ガッ', kyu: 'キュウ', back: 'スッ', munch: 'もぐっ', pon: 'ポンッ' },
+    },
+  };
+})();
+</script>
+<script>
+// 文の表（text.js）を引く t。最初の版は日本語だけ（表の形は HOPPE DIVE と同じなので、あとで言語を足せる）
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  const L = {
+    cur: 'ja',
+    // 'a.b.c' の道をたどる。vars があれば {x} を埋める。ないときは '?'
+    t(path, vars, lang = L.cur) {
+      let v = Game.text[lang];
+      for (const k of path.split('.')) { if (v == null) break; v = v[k]; }
+      if (v == null) return '?';
+      if (vars && typeof v === 'string') v = v.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? String(vars[k]) : m));
+      return v;
+    },
+  };
+
+  Game.lang = L;
+})();
+</script>
+<script>
+// 絵（文字の格子）。色セットは Endesga 32。1文字 = 1色、'.' は透明。
+// ハムスターは「体」と「足」を分けて描き、bake.js でコマに組み立てる。探検家・たね・宝石は HOPPE DIVE から写したもの
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  // Endesga 32
+  const PAL = {
+    0: '#181425', 1: '#262b44', 2: '#3a4466', 3: '#5a6988', 4: '#8b9bb4', 5: '#c0cbdc', 6: '#ffffff',
+    a: '#be4a2f', b: '#d77643', c: '#ead4aa', d: '#e4a672', e: '#b86f50', f: '#733e39', g: '#3e2731',
+    h: '#a22633', i: '#e43b44', j: '#f77622', k: '#feae34', l: '#fee761',
+    m: '#63c74d', n: '#3e8948', o: '#265c42', p: '#193c3e',
+    q: '#124e89', r: '#0099db', s: '#2ce8f5',
+    t: '#ff0044', u: '#68386c', v: '#b55088', w: '#f6757a', x: '#e8b796', y: '#c28569',
+  };
+
+  const S = {};
+
+  // ---- ハムスター（右向き、16×16。体は 0〜14 行、足は 15 行） ----
+  S.hamBody = [
+    '................',
+    '................',
+    '......ggggg.....',
+    '.....gcccccg....',
+    '.....gccccccg...',
+    '....geeeeeeeeg..',
+    '...gdddddddddddg',
+    '..gfgbbbbbbb0bg.',
+    '.gfefgbbbbbbbbbg',
+    '.gfefgbbbbbbbbwg',
+    '.gffgbbbbbbcwwcg',
+    '..ggbbbbbbbccccg',
+    '...gbbbbbbcccccg',
+    '...gbbbbbbbcccg.',
+    '....ggbbbbbbgg..',
+  ];
+  // 足の位置（後ろ足 x、前足 x）と、体の上下（dy）。走りは6コマ
+  S.hamRun = [
+    { feet: [4, 11], dy: 0 },
+    { feet: [5, 10], dy: -1 },
+    { feet: [7, 9], dy: -1 },
+    { feet: [8, 8], dy: 0 },
+    { feet: [7, 9], dy: -1 },
+    { feet: [5, 10], dy: -1 },
+  ];
+  S.hamFoot = ['ww'];
+
+  S.seed = [
+    '..f..',
+    '.fcf.',
+    '.fclf',
+    'fclkf',
+    'fckkf',
+    '.fkf.',
+    '..f..',
+  ];
+  S.gem = [
+    '..000..',
+    '.0s6s0.',
+    '0srssr0',
+    '0rrsrr0',
+    '.0qrq0.',
+    '..0q0..',
+    '...0...',
+  ];
+  S.sparkle = [['..6..', '.666.', '..6..'].join(','), ['6...6', '..6..', '6...6'].join(',')].map((x) => x.split(','));
+
+
+  S.finger = [
+    '.000000.',
+    '0xxxxxx0',
+    '0xyxyxx0',
+    '0xxxxxx0',
+    '.0xxxx0.',
+    '..0xx0..',
+    '..0xx0..',
+    '..0xx0..',
+    '..0xx0..',
+    '...00...',
+  ];
+  S.arrowL = ['...00', '..060', '.0660', '06660', '.0660', '..060', '...00'];
+  S.arrowR = S.arrowL.map((r) => r.split('').reverse().join(''));
+
+  // ---- HOPPE BRIDGE の絵 ----
+  // 音の入り切り（スピーカー）
+  S.spkOn = ['...6..6.', '..66...6', '6666.6.6', '6666.6.6', '6666.6.6', '..66...6', '...6..6.'];
+  S.spkOff = ['...6....', '..66....', '6666.i.i', '6666..i.', '6666.i.i', '..66....', '...6....'];
+  // 吹き出し「？」（あれ？）
+  S.qBubble = [
+    '.0000000.',
+    '066666660',
+    '066000660',
+    '066660660',
+    '066600660',
+    '066606660',
+    '066666660',
+    '066606660',
+    '066666660',
+    '.0000000.',
+    '...060...',
+    '....0....',
+  ];
+  // 吹き出しのドクロ（キュウ）
+  S.skull = [
+    '.000000000.',
+    '06666666660',
+    '06660006660',
+    '06600000660',
+    '06006060060',
+    '06000000060',
+    '06600600660',
+    '06600000660',
+    '06606060660',
+    '06666666660',
+    '.000000000.',
+    '....060....',
+    '.....0.....',
+  ];
+  // 足あと（助け舟を使わずにクリアした印）
+  S.foot = [
+    '.0.0.0.',
+    '0w0w0w0',
+    '.0.0.0.',
+    '.00000.',
+    '0wwwww0',
+    '0wwwww0',
+    '.00000.',
+  ];
+  // 板の小さな絵（手持ちの枚数）
+  S.boardIcon = [
+    '00000000000',
+    '0ccccccccc0',
+    '0dddyyddyd0',
+    '0eeeeeeeee0',
+    '00000000000',
+  ];
+  // 下向きの矢印（上から下へ切る）
+  S.arrowD = [
+    '.00000.',
+    '.0lll0.',
+    '.0lll0.',
+    '.0lll0.',
+    '.0lll0.',
+    '.0lll0.',
+    '000l000',
+    '0lllll0',
+    '.0lll0.',
+    '..0l0..',
+    '...0...',
+  ];
+  // 右向きの小さな矢印（わたる）
+  S.arrowGo = [
+    '...00..',
+    '0000l0.',
+    '0lllll0',
+    '0000l0.',
+    '...00..',
+  ];
+
+  Game.sprites = { PAL, S };
+})();
+</script>
+<script>
+// 文字の格子を、画面に出さない Canvas に焼く。左右反転・色の差し替え・白く光らせる版もここで作る
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const { PAL, S } = Game.sprites;
+  const F = Game.font;
+
+  const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+
+  // rows: 文字列の配列。opt: { map: {文字: 色の文字}, white: 全部白, flip: 左右反転 }
+  function bake(rows, opt = {}) {
+    const h = rows.length, w = Math.max(...rows.map((r) => r.length));
+    const c = mk(w, h), g = c.getContext('2d');
+    for (let y = 0; y < h; y++) for (let x = 0; x < rows[y].length; x++) {
+      let ch = rows[y][x];
+      if (ch === '.' || ch === ' ') continue;
+      if (opt.map && opt.map[ch] != null) ch = opt.map[ch];
+      const col = opt.white ? '#ffffff' : PAL[ch];
+      if (!col) continue;
+      g.fillStyle = col;
+      g.fillRect(opt.flip ? w - 1 - x : x, y, 1, 1);
+    }
+    return c;
+  }
+
+  // ---- ハムスターのコマを組み立てる ----
+  // 体の行を dy だけずらし、足を置く。lean: 上半分を1ドット前へ
+  // たねの数（ほっぺの段階 0〜3）ごとに、ほっぺがふくらむ（8〜14 行を差し替える）。体の輪郭（16 ドット）の外、前へ張り出すので、
+  // コマは HW ドット幅で焼く（左端そろえ。描く位置は 16 ドットのときと同じ）
+  const HW = 20;
+  // ほっぺ: 目の下から後ろ（肩の方）へ広がるクリーム色の頬袋。前へは出さない（鼻先は小さいまま）。
+  // 下の縁を濃い色（y）で描き、お腹とのあいだにオレンジの帯を残して、お腹と分ける
+  const CHEEK = [null,
+    {
+      8: '.gfefgbbbxxcbbbg',
+      9: '.gfefgbbxccccbwg',
+      10: '.gffgbbbccccccbg',
+      11: '..ggbbbbyccccybg',
+      12: '...gbbbbbyyyybcg',
+    },
+    {
+      8: '.gfefgbbxxxcbbbg',
+      9: '.gfefgbxxcccccwg',
+      10: '.gffgbxcccccccccg',
+      11: '..ggbbcccccccccg',
+      12: '...gbbycccccccyg',
+      13: '...gbbbyyyyyyyg.',
+    },
+    // ぱんぱん（全部の谷でがっしり）: 頬袋が目の下いっぱいに広がり、前と下へ張り出す
+    {
+      8: '.gfefgbxxxxxcbbg',
+      9: '.gfefgxxccccccwg',
+      10: '.gffgxccccccccccg',
+      11: '..ggbcccccccccccg',
+      12: '...gbcccccccccccg',
+      13: '...gbyccccccccyg',
+      14: '....ggyyyyyyyyg.',
+    },
+  ];
+  const pad = (r) => (r + '.'.repeat(HW)).slice(0, HW);
+  function hamRows(o) {
+    let body = S.hamBody.map(pad);
+    const ch = CHEEK[o.cheek || 0];
+    if (ch) for (const y in ch) body[y] = pad(ch[y]);
+    if (o.lean) body = body.map((r, i) => (i < 8 ? '.' + r.slice(0, HW - 1) : r));
+    if (o.eyeClosed) body = body.map((r) => r.replace('0bg', 'gbg'));
+    const rows = [];
+    for (let y = 0; y < 16; y++) rows.push(pad(''));
+    const dy = o.dy || 0;
+    for (let y = 0; y < body.length; y++) {
+      const ty = y + dy;
+      if (ty >= 0 && ty < 16) rows[ty] = body[y];
+    }
+    const put = (x, y, s) => { if (y < 0 || y > 15) return; const r = rows[y].split(''); for (let i = 0; i < s.length; i++) if (s[i] !== '.' && x + i >= 0 && x + i < HW) r[x + i] = s[i]; rows[y] = r.join(''); };
+    for (const fx of o.feet || []) put(fx, o.feetY == null ? 15 : o.feetY, 'ww');
+    return rows;
+  }
+
+  const HAM = {
+    run: S.hamRun.map((f) => ({ feet: f.feet, dy: f.dy })),
+    lean: { feet: [5, 10], lean: true },
+    hit: { feet: [4, 11], eyeClosed: true },
+    fall: [{ feet: [3, 11], feetY: 13, dy: -1 }, { feet: [4, 10], feetY: 12, dy: -2 }],
+    hold: { feet: [5, 10], dy: 0 },
+  };
+
+  // ---- 文字 ----
+  function glyphRows(ch) {
+    const g = F.glyphs[ch];
+    if (g) return g;
+    const base = F.DAKU[ch] || F.HANDAKU[ch];
+    if (!base || !F.glyphs[base]) return null;
+    const rows = F.glyphs[base].map((r) => r + '.');
+    const put = (x, y) => { const r = rows[y].split(''); r[x] = '#'; rows[y] = r.join(''); };
+    if (F.DAKU[ch]) { put(4, 0); put(5, 1); }
+    else { put(4, 0); put(3, 1); put(5, 1); put(4, 2); }
+    return rows;
+  }
+  const hasGlyph = (ch) => !!glyphRows(ch);
+
+  const glyphCache = {};
+  function glyph(ch, color) {
+    const k = ch + color;
+    if (glyphCache[k]) return glyphCache[k];
+    const rows = glyphRows(ch) || glyphRows('?');
+    const c = mk(6, rows.length), g = c.getContext('2d'); // g j p q y は 8 行（下へ 1 行出る）
+    g.fillStyle = color;
+    for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[y].length; x++) if (rows[y][x] === '#') g.fillRect(x, y, 1, 1);
+    return (glyphCache[k] = c);
+  }
+
+  // 送り幅: 字の幅＋1（幅 5 の字と、濁点を重ねた幅 6 の字は 6）。空白は日本語 6・英語 4（分かち書きの間は今のまま）
+  const SPACE = { ja: F.adv, en: 4 };
+  function advOf(ch) {
+    if (ch === ' ') return SPACE[(Game.lang && Game.lang.cur) || 'ja'] || F.adv;
+    const rows = glyphRows(ch) || glyphRows('?');
+    return Math.min(rows[0].length, F.w) + 1;
+  }
+  // 字ごとの x（先頭からのずれ）
+  function layout(str) {
+    let x = 0;
+    return [...str].map((ch) => { const at = x; x += advOf(ch); return { ch, at }; });
+  }
+  const textW = (str) => [...str].reduce((w, ch) => w + advOf(ch), 0) - 1;
+
+  // 1行の文字。outline を渡すと1ドットの縁取り（擬音・見出し用）
+  function text(g, str, x, y, color, outline) {
+    x = Math.round(x); y = Math.round(y);
+    const chars = layout(str);
+    if (outline) {
+      for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        chars.forEach((c) => g.drawImage(glyph(c.ch, outline), x + c.at + ox, y + oy));
+      }
+    }
+    chars.forEach((c) => g.drawImage(glyph(c.ch, color), x + c.at, y));
+  }
+
+  // 幅（ドット）に収まるように、空白で折り返す。1 語が幅より長いときは、その語だけで 1 行
+  function wrap(str, maxPx) {
+    const words = str.split(' '), lines = [];
+    let cur = '';
+    for (const w of words) {
+      const next = cur ? cur + ' ' + w : w;
+      if (textW(next) > maxPx && cur) { lines.push(cur); cur = w; } else cur = next;
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  // ---- 分数（横棒の上下に小さい数字。スラッシュは使わない） ----
+  const smallW = (n) => String(n).length * 4 - 1;
+  function small(g, n, x, y, color) {
+    g.fillStyle = color;
+    [...String(n)].forEach((ch, i) => { const rows = F.small[ch]; for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) if (rows[r][c] === '#') g.fillRect(x + i * 4 + c, y + r, 1, 1); });
+  }
+  // 幅と高さ（高さはいつも 13: 数字 5・すきま 1・棒 1・すきま 1・数字 5）
+  const fracW = (n, d) => Math.max(smallW(n), smallW(d)) + 2;
+  const FRAC_H = 13;
+  // (x, y) を左上にして描く
+  function frac(g, n, d, x, y, color) {
+    const w = fracW(n, d);
+    small(g, n, x + Math.floor((w - smallW(n)) / 2), y, color);
+    g.fillStyle = color; g.fillRect(x, y + 6, w, 1);
+    small(g, d, x + Math.floor((w - smallW(d)) / 2), y + 8, color);
+  }
+  // 長さ（1/120 単位）を、約した分数にする
+  const gcd = (a, b) => (b ? gcd(b, a % b) : a);
+  function fracOf(len, unit) { const k = gcd(len, unit); return { n: len / k, d: unit / k }; }
+
+  // ---- 全部焼く ----
+  let baked = null;
+  function all() {
+    if (baked) return baked;
+    const b = {};
+    // hamG[ほっぺの段階 0〜3]
+    b.hamG = [0, 1, 2, 3].map((cheek) => {
+      const hamSet = (o) => { const r = hamRows(Object.assign({ cheek }, o)); return { n: bake(r) }; };
+      const set = { run: HAM.run.map(hamSet), fall: HAM.fall.map(hamSet) };
+      for (const k of ['lean', 'hit', 'hold']) set[k] = hamSet(HAM[k]);
+      // こけた姿: 目をつぶった絵を右へ 90 度たおす（頭が前、顔が下）
+      const r = hamRows(Object.assign({ cheek }, HAM.hit)), n = r.length;
+      set.down = { n: bake(r[0].split('').map((_, y) => r.map((_, x) => r[n - 1 - x][y]).join(''))) };
+      return set;
+    });
+    for (const k of ['seed', 'gem', 'finger', 'arrowL', 'arrowR', 'arrowD', 'arrowGo', 'qBubble', 'skull', 'foot', 'boardIcon', 'spkOn', 'spkOff']) b[k] = bake(S[k]);
+    b.gemOff = bake(S.gem, { map: { s: '3', r: '2', q: '1', 6: '3' } });
+    b.footOff = bake(S.foot, { map: { w: '2' } });
+    b.sparkle = S.sparkle.map((r) => bake(r));
+    return (baked = b);
+  }
+
+  Game.bake = { bake, hamRows, HAM, HW, all, text, textW, advOf, wrap, glyph, glyphRows, hasGlyph, mk, frac, fracW, FRAC_H, fracOf, small, smallW };
+})();
+</script>
+<script>
+// Web Audio の合成音。ファイルは使わない。最初に触るまでは鳴らせない（ブラウザの制約）。
+// 音の出口（AudioContext）はページを開いたときに作っておき、最初の操作では「再開」だけをする（作るところから始めると、鳴り出すまでが遅い）。
+// タッチでは、指を離したときに初めて再開が許される。だから main は指を置いたとき・離したときの両方で unlock を呼ぶ
+// HOPPE DIVE の audio.js の作り（unlock / env / tone / noise）に、木の音の部品を足したもの:
+//   click  … カチ: ごく短い雑音（帯域通過）＋短い三角波
+//   knock  … コトン・トン: 短い雑音の「叩き」＋木の棒の響き（倍音がきれいに並ばないいくつかの高さ。すぐ消える）
+//   rasp   … ザクッ: 帯域通過した雑音のひき。押すひきと引くひきで高さを変え、歯の刻みを低い四角い波で足す（手びきの録音を測り、まんがの音へ寄せた）
+//   creak  … ギシギシ: 「引っかかって、すべる」の脈（のこぎり波。速さをすべらせる）を木の響きに通し、終わりに短い息の音（きしみの録音を測り、まんがの音へ寄せた）
+// 効果音の作り（どの部品をどの数字で鳴らすか）は config.audio.sfx に置く。dev/sounds.html で聞いて決める
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  function create(cfg) {
+    let ac = null, master = null, out = null, noiseBuf = null, hidden = false;
+    // 再開が済むまでは鳴らさない（ためておくと、再開したときにまとめて鳴ってしまう）
+    const enabled = () => cfg.audio.enabled && ac && !hidden && ac.state === 'running';
+
+    function init() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (ac || !AC) return;
+      try {
+        ac = new AC({ latencyHint: 'interactive' });
+        const comp = ac.createDynamicsCompressor();
+        comp.threshold.value = -14; comp.ratio.value = 6;
+        master = ac.createGain();
+        master.gain.value = cfg.audio.volume;
+        master.connect(comp).connect(ac.destination);
+        noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+        const d = noiseBuf.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        // 出力を起こしたままにする、聞こえない低い音。無音が続くと端末やイヤホンが出力を休ませ、
+        // 次の音の頭（0.1 秒ほど）が欠けて、カチ・コトンのような短い音が丸ごと消えるため
+        const K = cfg.audio.keepAlive;
+        if (K && K.vol > 0) { const o = ac.createOscillator(), v = ac.createGain(); o.frequency.value = K.hz; v.gain.value = K.vol; o.connect(v).connect(ac.destination); o.start(); }
+      } catch (e) { ac = null; }
+    }
+    function unlock() {
+      init();
+      return ac && !hidden && ac.state !== 'running' ? ac.resume() : Promise.resolve();
+    }
+    init();
+
+    function env(node, t, a, peak, dec) {
+      node.gain.setValueAtTime(0.0001, t);
+      node.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + a);
+      node.gain.exponentialRampToValueAtTime(0.0001, t + a + dec);
+    }
+    function tone(t, { f = 440, type = 'square', vol = 0.15, a = 0.003, dec = 0.1, slide = 0, up = 0 }, vars) {
+      if (up && vars && vars.step) f *= Math.pow(up, vars.step); // up: 段（vars.step）が 1 つ上がるごとの高さの倍率
+      const o = ac.createOscillator(), v = ac.createGain();
+      o.type = type; o.frequency.setValueAtTime(f, t);
+      if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, f * slide), t + a + dec);
+      env(v, t, a, vol, dec);
+      o.connect(v).connect(out);
+      o.start(t); o.stop(t + a + dec + 0.05);
+    }
+    function noiseSrc(t, dur) {
+      const src = ac.createBufferSource(); src.buffer = noiseBuf;
+      src.start(t, Math.random() * 0.5); src.stop(t + dur + 0.05);
+      return src;
+    }
+    // a: 立ち上がりの秒（長くすると、ふわっと入る風のような音になる）
+    function noise(t, { vol = 0.2, a = 0.002, dec = 0.15, f = 2000, q = 1, type = 'bandpass', sweep = 0 }) {
+      const flt = ac.createBiquadFilter(); flt.type = type; flt.frequency.setValueAtTime(f, t); flt.Q.value = q;
+      if (sweep) flt.frequency.exponentialRampToValueAtTime(Math.max(30, f * sweep), t + a + dec);
+      const v = ac.createGain(); env(v, t, a, vol, dec);
+      noiseSrc(t, a + dec).connect(flt).connect(v).connect(out);
+    }
+
+    // カチ。step: 切る数の段（0〜8）。段が上がるほど高い
+    function click(t, p, vars) {
+      const k = Math.pow(p.stepUp, vars.step || 0);
+      noise(t, { vol: p.noiseVol, dec: p.noiseMs / 1000, f: p.noiseHz * k, q: p.q });
+      tone(t, { f: p.toneHz * k, type: 'triangle', vol: p.toneVol, a: 0.001, dec: p.toneMs / 1000 });
+    }
+    // 木の打音。len: 切れはしの長さ（短いほど高い）。gain: 大きさの倍率
+    function knock(t, p, vars) {
+      const len = vars.len || cfg.unit, gain = vars.gain == null ? 1 : vars.gain;
+      const base = p.baseHz * Math.pow(cfg.unit / len, p.pitchPow);
+      noise(t, { vol: p.noiseVol * gain, dec: p.noiseMs / 1000, f: p.noiseHz, q: 0.8 });
+      [[1, 1, 1], [p.r2, 0.45, 0.55], [p.r3, 0.2, 0.3]].forEach(([r, amp, d]) => {
+        if (base * r < 12000) tone(t, { f: base * r, type: 'sine', vol: p.vol * amp * gain, a: 0.001, dec: p.dec * d });
+      });
+    }
+    // のこぎり。手びきの録音（ウィキメディア・コモンズの WWS Wheelwrightwoodsaw.ogg）を測った形を土台に、まんがの「ギコギコ」へ寄せる
+    //   録音から: ひきごとに高さが下がる。押すひきが大きく、引くひきは 6 割ほど。大きさが不規則にざらつく
+    //   デフォルメ: 引くひきを低くする（alt）、ひきの間に切れ目を入れる（gap）、歯の刻みを音の高さとして足す（buzzVol / buzzHz）
+    // strokes 回ひく（奇数回目＝押す、偶数回目＝引く）。rough: ざらつきの深さ、roughHz: ざらつきの速さ、back: 引くひきの大きさの割合
+    function rasp(t, p) {
+      const one = p.ms / 1000 / p.strokes, on = one * (1 - (p.gap || 0));
+      for (let i = 0; i < p.strokes; i++) {
+        const pull = i % 2, t0 = t + i * one, vol = p.vol * (pull ? p.back : 1), kf = pull ? (p.alt || 1) : 1;
+        const flt = ac.createBiquadFilter(); flt.type = 'bandpass'; flt.Q.value = p.q;
+        flt.frequency.setValueAtTime(p.hz * kf, t0);
+        flt.frequency.exponentialRampToValueAtTime(p.hzTo * kf, t0 + on);
+        const v = ac.createGain();
+        v.gain.setValueAtTime(0.0001, t0);
+        v.gain.exponentialRampToValueAtTime(vol, t0 + on * 0.3);
+        v.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol * 0.12), t0 + on);
+        v.gain.linearRampToValueAtTime(0.0001, t0 + on + 0.02);
+        // 不規則なざらつき
+        const grit = ac.createGain(), n = Math.max(2, Math.round(on * p.roughHz));
+        grit.gain.setValueAtTime(1, t0);
+        for (let k = 1; k <= n; k++) grit.gain.linearRampToValueAtTime(1 - Math.random() * p.rough, t0 + (k * on) / n);
+        noiseSrc(t0, on + 0.02).connect(flt).connect(v).connect(grit).connect(out);
+        // 歯の刻み（低い四角い波。押すひきは高く、引くひきは低い）
+        if (p.buzzVol) tone(t0, { f: p.buzzHz * kf, type: 'square', vol: p.buzzVol * (pull ? p.back : 1), a: on * 0.2, dec: on * 0.8, slide: p.hzTo / p.hz });
+      }
+    }
+    // きしみ。木のきしむ録音（ウィキメディア・コモンズの Creaky wooden casket.ogg と WWS Creakingfloors.ogg）を測った形を土台にする
+    //   録音から: 「引っかかって、すべる」の脈が、決まった高さの響き（1.1〜1.9kHz と 600〜700Hz）を鳴らす。
+    //            脈の速さは 1 回のきしみの中で大きく動く（20〜70Hz → 数百 Hz）。1 回は 0.1〜0.35 秒で、きしみごとに響きの高さが違う
+    //   デフォルメ: 1 回を短くし、脈の速さを pulseHz → pulseTo へはっきりすべらせる（ギ）。終わりに短い息の音（シ、hissVol）
+    // pitch: 一歩ごとの高さの倍率
+    function creak(t, p, vars) {
+      const dur = p.ms / 1000, k = vars.pitch || 1;
+      const o = ac.createOscillator(); o.type = 'sawtooth';
+      const n = Math.max(2, Math.round(dur / 0.02)), to = p.pulseTo || p.pulseHz;
+      for (let i = 0; i <= n; i++) {
+        const f = p.pulseHz * Math.pow(to / p.pulseHz, i / n);
+        o.frequency.setValueAtTime(f * k * (1 + (Math.random() * 2 - 1) * p.wobble), t + (i * dur) / n);
+      }
+      const v = ac.createGain();
+      v.gain.setValueAtTime(0.0001, t);
+      v.gain.exponentialRampToValueAtTime(p.vol, t + dur * 0.2);
+      v.gain.setValueAtTime(p.vol, t + dur * 0.7);
+      v.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      for (const f of [p.f1, p.f2]) {
+        const flt = ac.createBiquadFilter(); flt.type = 'bandpass'; flt.frequency.value = f * k; flt.Q.value = p.q;
+        o.connect(flt).connect(v);
+      }
+      v.connect(out);
+      o.start(t); o.stop(t + dur + 0.05);
+      if (p.hissVol) noise(t + dur * 0.75, { vol: p.hissVol, a: 0.01, dec: p.hissMs / 1000, f: p.hissHz * k, q: 1.5 });
+    }
+
+    const PART = { tone, noise, click, knock, rasp, creak };
+    // 効果音 1 つ（config.audio.sfx[name] の部品を順に鳴らす）。vars: 長さ・段・高さなど、その場で変わるもの
+    // 音ごとの大きさ（config.audio.level）は、部品の数字とは別に、ここでまとめてかける
+    function play(name, vars = {}) {
+      if (!enabled()) return;
+      const layers = cfg.audio.sfx[name];
+      if (!layers) return;
+      out = ac.createGain(); out.gain.value = cfg.audio.level[name] == null ? 1 : cfg.audio.level[name];
+      out.connect(master);
+      for (const p of layers) PART[p.k](ac.currentTime + (p.delay || 0) + (vars.delay || 0), p, vars);
+    }
+
+    // 出来事 → 効果音（ルールの出来事と、main が演出の節目で出す fx_ で始まる出来事）
+    function on(e) {
+      if (!enabled()) return;
+      switch (e.type) {
+        case 'cutn': play('click', { step: [1].concat(cfg.cuts).indexOf(e.n) }); break;
+        case 'cut': play('saw'); for (let i = 0; i < Math.min(e.n, 6); i++) play('knock', { len: e.len, gain: 0.5, delay: cfg.audio.sfx.saw[0].ms / 1000 + i * 0.03 }); break;
+        case 'place': play('knock', { len: e.len }); break;
+        case 'take': play('knock', { len: e.len, gain: 0.5 }); break;
+        case 'full': play('deny'); break;
+        case 'retry_gap': play('back'); break;
+        case 'fx_step': play('knock', { len: e.len, gain: 0.45 }); break;
+        case 'fx_wonder': play('wonder'); break;
+        case 'fx_miss': play('miss'); break;
+        case 'fx_trip': play('trip'); break;
+        case 'fx_kyu': play('kyu'); break;
+        case 'fx_back': play('back'); break;
+        case 'fx_fit': play('fit'); break;
+        case 'fx_sturdy': play('sturdy'); break;
+        case 'fx_creak': play('creak', { pitch: e.pitch, delay: e.delay }); break;
+        case 'fx_seed': play('munch'); break;
+        case 'fx_pon': play('pon'); play('clear'); break;
+        case 'fx_gem': play('gem', { step: e.i }); break;
+      }
+    }
+
+    return {
+      unlock, on, play,
+      setHidden(h) { hidden = h; if (!ac) return; if (h) ac.suspend(); else ac.resume(); },
+      running: () => !!ac && ac.state === 'running',
+    };
+  }
+
+  Game.audio = { create };
+})();
+</script>
+<script>
+// 演出: 出来事から、擬音（マンガの描き文字ふう）と橋の揺れ（整数ドット）を出す。ルールの状態は書き換えない。
+// HOPPE DIVE の fx.js の擬音の仕組みを写したもの。大きさは 3 段階: S（1 倍）/ M（2 倍）/ L（3 倍、トゲトゲのフキダシ付きで震える）。
+// 1 文字ずつハンコのように押されて出て（1 段大きく出てから落ち着く）、斜め上へ並ぶ。消えるときは、下からすっと消える（速い点滅は使わない）
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const B = Game.bake;
+  const lt = (path) => Game.lang.t(path);
+
+  const INK = '#181425';
+  const TIER = {
+    S: { scale: 1, life: 0.5, stagger: 0.03, slant: 1 },
+    M: { scale: 2, life: 0.7, stagger: 0.04, slant: 1 },
+    L: { scale: 3, life: 1.0, stagger: 0.05, slant: 1, burst: true, tremble: 0.25 },
+  };
+
+  function create(cfg) {
+    let pops = [], seq = 0;
+    let shake = 0, shakeT = 0;   // 橋の揺れ（ドット）と残りの秒
+    let seeds = [];              // たねが出て、ほっぺへ飛ぶ { x0, y0, x1, y1, t }
+    const charCache = {}, burstCache = {};
+    const L = cfg.layout;
+
+    // 1 文字を「縁取りだけ」と「中身だけ」に分けて焼く（縁取りを全部描いてから中身を描くと、隣の字にかぶらない）
+    function charImg(ch, color) {
+      const k = ch + color;
+      if (charCache[k]) return charCache[k];
+      const line = B.mk(8, 9), fill = B.mk(8, 9);
+      B.text(line.getContext('2d'), ch, 1, 1, INK, INK);
+      B.text(fill.getContext('2d'), ch, 1, 1, color);
+      return (charCache[k] = { line, fill });
+    }
+    // トゲトゲのフキダシ（ドット単位で塗る。縁は墨色）
+    function burst(w, h) {
+      const k = w + 'x' + h;
+      if (burstCache[k]) return burstCache[k];
+      const c = B.mk(w, h), g = c.getContext('2d');
+      const cx = w / 2, cy = h / 2, spikes = 14;
+      const R = (a) => 0.72 + 0.28 * Math.abs(((a / (2 * Math.PI)) * spikes) % 1 * 2 - 1);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const dx = (x + 0.5 - cx) / cx, dy = (y + 0.5 - cy) / cy;
+        const d = Math.hypot(dx, dy), r = R(Math.atan2(dy, dx) + Math.PI);
+        if (d >= r) continue;
+        g.fillStyle = d > r - 0.12 ? INK : '#ffffff';
+        g.fillRect(x, y, 1, 1);
+      }
+      return (burstCache[k] = c);
+    }
+
+    // (x, y) を真ん中にして出す。窓からはみ出さないように寄せる
+    function pop(word, color, x, y, tier) {
+      const T = TIER[tier];
+      const chars = [...word].map((ch) => charImg(ch, color));
+      const w = chars.length * 6 * T.scale + 2 * T.scale, h = 9 * T.scale + (chars.length - 1) * T.slant * T.scale;
+      const V = cfg.view, m = T.burst ? 9 : 1;
+      const left = Math.max(m, Math.min(V.w - w - m, Math.round(x - w / 2)));
+      const top = Math.max(m, Math.min(V.h - h - m, Math.round(y - h / 2)));
+      pops.push({ chars, T, x: left, y: top, w, h, t: 0, bg: T.burst ? burst(w + 16, h + 14) : null });
+      if (pops.length > 8) pops.shift();
+    }
+
+    // 出来事 → 擬音。場所は app（探検家・板・谷の置き場所）から決める
+    function on(e, app) {
+      const R = Game.render, s = app.rules, h = app.ham;
+      const hx = h.x, top = L.deckY - 24;
+      switch (e.type) {
+        case 'cutn': { const b = R.boardRect(s); pop(lt('fx.click'), '#c0cbdc', b.x + b.w - 6, b.y - 20, 'S'); break; }
+        case 'cut': { const b = R.boardRect(s); pop(lt('fx.saw'), '#fee761', b.x + b.w / 2, b.y - 14, 'M'); break; }
+        case 'place': { const x = L.gapX + R.sumBefore(s.bridge, s.bridge.length - 1) + e.len / 2; pop(lt('fx.put'), '#ead4aa', x, L.deckY - 12, 'S'); break; }
+        case 'fx_step': pop(lt('fx.step'), '#c0cbdc', hx + 4, L.deckY + L.deckH + 7, 'S'); break;
+        case 'fx_fit': pop(lt('fx.fit'), '#ffffff', hx, top - 4, 'M'); break;
+        case 'fx_sturdy': pop(lt('fx.sturdy'), '#feae34', cfg.view.w / 2, top - 22, 'L'); break;
+        case 'fx_creak': pop(lt('fx.creak'), '#8b9bb4', hx + (e.n % 2 ? 10 : -6), L.deckY + L.deckH + 8 + (e.n % 2) * 6, 'S'); shake = 1; shakeT = 0.2; break;
+        case 'fx_miss': pop(lt('fx.miss'), '#c0cbdc', hx + 6, top, 'M'); break;
+        case 'fx_trip': pop(lt('fx.trip'), '#e43b44', hx + 8, top, 'M'); shake = 1; shakeT = 0.12; break;
+        case 'fx_kyu': pop(lt('fx.kyu'), '#ffffff', hx + 14, (h.skull === 'pit' ? L.trayY - 18 : L.deckY - 22), 'S'); break;
+        case 'fx_back': pop(lt('fx.back'), '#8b9bb4', 16, top + 2, 'S'); break;
+        // たねが橋から出て、ほっぺへ飛ぶ
+        case 'fx_seed': seeds.push({ x0: hx - 10, y0: L.deckY - 4, x1: hx + 4, y1: L.deckY - 9, t: 0 }); pop(lt('fx.munch'), '#feae34', hx + 14, top + 4, 'S'); break;
+        case 'fx_pon': pop(lt('fx.pon'), '#feae34', hx + 14, top, 'M'); break;
+      }
+    }
+
+    function update(dt) {
+      for (const p of pops) p.t += dt;
+      pops = pops.filter((p) => p.t < p.T.life);
+      for (const p of seeds) p.t += dt;
+      seeds = seeds.filter((p) => p.t < cfg.anim.seedFly);
+      if (shakeT > 0) shakeT -= dt; else shake = 0;
+      seq++;
+    }
+
+    function draw(g) {
+      const A = B.all();
+      for (const p of seeds) {
+        // ぽんと跳ね上がって、口へ
+        const u = p.t / cfg.anim.seedFly;
+        g.drawImage(A.seed, Math.round(p.x0 + (p.x1 - p.x0) * u) - 2, Math.round(p.y0 + (p.y1 - p.y0) * u - 14 * Math.sin(Math.PI * u)) - 3);
+      }
+      for (const p of pops) {
+        const T = p.T;
+        let ox = 0, oy = 0;
+        if (T.tremble && p.t < T.tremble) { ox = (seq % 2) ? 1 : -1; oy = (seq % 3) - 1; }
+        // 消えるとき: 最後の 0.15 秒で、上へ 2 ドット上がりながら薄くなる
+        const out = Math.max(0, (p.t - (T.life - 0.15)) / 0.15);
+        g.globalAlpha = 1 - out; oy -= Math.round(out * 2);
+        if (p.bg) g.drawImage(p.bg, p.x - 8 + ox, p.y - 7 + oy);
+        for (const layer of ['line', 'fill']) {
+          p.chars.forEach((c, i) => {
+            const local = p.t - i * T.stagger;
+            if (local < 0) return;
+            const sc = T.scale + (local < 0.06 ? 1 : 0);  // ハンコ: 1 段大きく出てから落ち着く
+            const n = p.chars.length - 1 - i;
+            const cx = p.x + i * 6 * T.scale + ox, cy = p.y + n * T.slant * T.scale + oy;
+            const d = (sc - T.scale) * 4;
+            g.drawImage(c[layer], cx - d, cy - d, 8 * sc, 9 * sc);
+          });
+        }
+        g.globalAlpha = 1;
+      }
+    }
+
+    // 橋の揺れ（上下に 1 ドット）
+    const bridgeDy = () => (shake ? ((seq >> 2) % 2 ? shake : 0) : 0);
+
+    return { on, update, draw, bridgeDy, clear() { pops = []; seeds = []; shake = 0; } };
+  }
+
+  Game.fx = { create };
+})();
+</script>
+<script>
+// 指の動きを、窓の中のドット座標にして渡すだけ。何をつまんだかは main が置き場所（render.layout）で決める
+// 出すもの: { type: 'down' | 'move' | 'up' | 'cancel', x, y }（ドット）
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  function create(target, emit) {
+    let id = null;
+    const at = (e) => Game.render.toField(e.clientX, e.clientY);
+    target.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (id != null) return;
+      id = e.pointerId;
+      try { target.setPointerCapture(id); } catch (err) { /* 古い端末 */ }
+      emit(Object.assign({ type: 'down' }, at(e)));
+    });
+    target.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== id) return;
+      emit(Object.assign({ type: 'move' }, at(e)));
+    });
+    target.addEventListener('pointerup', (e) => {
+      if (e.pointerId !== id) return;
+      id = null;
+      emit(Object.assign({ type: 'up' }, at(e)));
+    });
+    target.addEventListener('pointercancel', (e) => {
+      if (e.pointerId !== id) return;
+      id = null;
+      emit({ type: 'cancel', x: 0, y: 0 });
+    });
+  }
+
+  Game.input = { create };
+})();
+</script>
+<script>
+// 描画。画面全体を「ドット」単位の小さな Canvas に描き、整数倍 k で実際の画素へ拡大する（拡大は CSS の image-rendering: pixelated）。
+// 遊ぶ窓（135×240）はその中の整数の位置に置く。状態は読むだけ。
+// 置き場所は layout(app) が返し、main の当たり（何をつまんだか）にも同じものを使う。
+// 橋は少し上から見下ろした形: 踏み板は「上の面（deckH）」と「手前の厚み（deckFront）」。斜めにはずらさない（つなぎ目が縦にまっすぐでないと、長さを見比べにくい）。
+// 手すりのロープは奥側だけ。探検家は板の奥行きの真ん中に立つ
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const B = Game.bake;
+  const lt = (path, vars) => Game.lang.t(path, vars);
+  const INK = '#181425', GUIDE = '#262b44'; // GUIDE: 点線と幅の印（空の上でも見える濃い色）
+
+  const R = {
+    canvas: null, g: null,
+    k: 1, Lw: 0, Lh: 0, fx: 0, fy: 0, cssK: 1,
+
+    init(canvas) {
+      R.canvas = canvas;
+      R.g = canvas.getContext('2d');
+      const resize = () => {
+        const V = Game.config.view;
+        const dpr = window.devicePixelRatio || 1;
+        const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
+        R.k = Math.max(1, Math.floor(Math.min(w / V.w, h / V.h)));
+        R.Lw = Math.ceil(w / R.k); R.Lh = Math.ceil(h / R.k);
+        // 表示の大きさ: 1 ドットがちょうど k 画素。端数の dpr では Canvas を右と下へ数ドット足して、丸めの要らない大きさにする（HOPPE DIVE と同じ）
+        const fit = (n) => { for (let p = 0; p < 64; p++) { const v = ((n + p) * R.k * 64) / dpr; if (Math.abs(v - Math.round(v)) < 1e-6) return n + p; } return n; };
+        const cw = fit(R.Lw), ch = fit(R.Lh);
+        canvas.width = cw; canvas.height = ch;
+        canvas.style.width = (cw * R.k) / dpr + 'px';
+        canvas.style.height = (ch * R.k) / dpr + 'px';
+        R.fx = Math.floor((R.Lw - V.w) / 2);
+        R.fy = Math.floor((R.Lh - V.h) * 0.6); // 余った縦は上に多めに回す（ボタンを親指の近くに）
+        R.cssK = R.k / dpr;
+      };
+      addEventListener('resize', resize);
+      resize();
+    },
+
+    // CSS px → 窓の中のドット座標
+    toField(cx, cy) { return { x: cx / R.cssK - R.fx, y: cy / R.cssK - R.fy }; },
+    // 窓の中のドット座標 → CSS px（テスト用）
+    toCss(x, y) { return { x: (x + R.fx + 0.5) * R.cssK, y: (y + R.fy + 0.5) * R.cssK }; },
+
+    // ---- 置き場所 ----
+    // 手持ちの切れはし: 同じ長さをまとめた山を、長い順に左から並べ、入らなければ次の行へ
+    groups(pieces) {
+      const P = Game.config.layout.pieces, bh = Game.config.layout.boardH, out = [];
+      let x = 0, row = 0;
+      for (const len of [...new Set(pieces)]) {
+        const n = pieces.filter((p) => p === len).length;
+        const w = len + (n > 1 ? 13 : 1);
+        if (x > 0 && x + w > P.w) { x = 0; row++; }
+        out.push({ len, n, x: P.x + x, y: P.y + row * P.rowH, w: len, h: bh });
+        x += w + 3;
+      }
+      return out;
+    },
+    // 今の板（手つかずの 1 枚）を描く場所。かざせるときは谷の真上、そうでなければ手元
+    boardRect(s) {
+      const L = Game.config.layout, U = Game.config.unit;
+      return Game.rules.overlay(s) ? { x: L.gapX, y: L.hoverY, w: U, h: L.boardH } : { x: L.boardX, y: L.boardY, w: U, h: L.boardH };
+    },
+    // 橋の上の切れはし（左から）
+    bridgeRects(bridge) {
+      const L = Game.config.layout;
+      let at = 0;
+      return bridge.map((len, i) => { const r = { i, len, x: L.gapX + at, y: L.deckY, w: len, h: L.deckH }; at += len; return r; });
+    },
+    // 橋の上の i 枚目より前の長さの合計
+    sumBefore(bridge, i) { let a = 0; for (let k = 0; k < i; k++) a += bridge[k]; return a; },
+    // 切る数を 1 段ずらす（dir: +1 細かく / -1 粗く）
+    cutStep(n, dir) {
+      const ns = [1].concat(Game.config.cuts);
+      return ns[Math.max(0, Math.min(ns.length - 1, ns.indexOf(n) + dir))];
+    },
+
+    draw(app) {
+      const g = R.g, cfg = Game.config, L = cfg.layout;
+      g.imageSmoothingEnabled = false;
+      g.fillStyle = INK;
+      g.fillRect(0, 0, R.Lw, R.Lh);
+      g.save();
+      g.translate(R.fx, R.fy);
+
+      drawBack(g, app, app.mode === 'title' || app.mode === 'select');
+      if (app.mode === 'title') { drawTitle(g, app); g.restore(); return; }
+      if (app.mode === 'select') { drawSelect(g, app); g.restore(); return; }
+      drawBridge(g, app);
+      drawActors(g, app);
+      if (app.fx) app.fx.draw(g);
+      drawTray(g, app);
+      drawHud(g, app);
+
+      // つまんでいる切れはし（指より上に描く）
+      const d = app.drag;
+      if (d && d.kind === 'piece') wood(g, Math.round(d.x - d.len / 2), Math.round(d.y - L.dragLift), d.len, L.boardH - L.boardFront, L.boardFront, WOOD.held);
+
+      if (app.mode === 'clear') drawClear(g, app);
+      if (app.menu) drawMenu(g, app);
+      g.restore();
+    },
+  };
+
+  const center = (g, str, y, color) => B.text(g, str, Math.round((Game.config.view.w - B.textW(str)) / 2), y, color, INK);
+  // ゆっくり明るくなったり暗くなったりする 0〜1（速い点滅は使わない）
+  const pulse = (t, sec = 1.2) => 0.5 - 0.5 * Math.cos((t * 2 * Math.PI) / sec);
+
+  // 手本（指の絵）を出すか: その操作をまだ一度もしていない間だけ
+  const tip = (app, id) => app.tips && !app.tips.seen[id] && !app.anim && !app.drag && app.mode === 'play' && !app.menu;
+  // 指が (x0, y0) から (x1, y1) へ動いては戻る
+  function fingerMove(g, app, x0, y0, x1, y1) {
+    const k = Math.min(1, ((app.time * 0.7) % 1) * 1.4);
+    g.drawImage(B.all().finger, Math.round(x0 + (x1 - x0) * k), Math.round(y0 + (y1 - y0) * k));
+  }
+
+  // ---- 木の板 ----
+  // hi: 上の面の奥の縁の明るい線、top: 上の面、grain: 木目、front: 手前の厚み
+  const WOOD = {
+    piece: { hi: '#ead4aa', top: '#e4a672', grain: '#c28569', front: '#b86f50' },
+    piece2: { hi: '#ead4aa', top: '#e8b796', grain: '#c28569', front: '#b86f50' },   // 橋の上で 1 枚おきに色を変えて、つなぎ目を見やすく
+    held: { hi: '#ffffff', top: '#fee761', grain: '#feae34', front: '#feae34' },
+    flash: { hi: '#ffffff', top: '#ffffff', grain: '#ffffff', front: '#ead4aa' },
+    under: { hi: '#c28569', top: '#b86f50', grain: '#b86f50', front: '#733e39' },     // 重ねた山の下の板
+    old: { hi: '#b86f50', top: '#733e39', grain: '#3e2731', front: '#3e2731' },       // 橋に残っている古い踏み板
+  };
+  // 1 枚（縁は墨色。x から w ドットがちょうど長さ）。th: 上の面の高さ、fh: 手前の厚み
+  // flat: 左右の墨色の縁を描かない（橋の上。縁があると、ぴったりでもすきまに見える）。seam: 左の端に、前の 1 枚とのつなぎ目の細い線
+  function wood(g, x, y, w, th, fh, c, flat, seam) {
+    g.fillStyle = INK; g.fillRect(x, y, w, th + fh);
+    const iw = flat ? w : Math.max(1, w - 2), ix = flat ? x : w > 2 ? x + 1 : x;
+    g.fillStyle = c.top; g.fillRect(ix, y + 1, iw, th - 1);
+    g.fillStyle = c.hi; g.fillRect(ix, y + 1, iw, 1);
+    g.fillStyle = c.front; g.fillRect(ix, y + th, iw, fh - 1);
+    // 木目（場所で決まる短い線）
+    g.fillStyle = c.grain;
+    for (let k = 0, gx = ix + 2; gx + 3 <= ix + iw; gx += 7, k++) g.fillRect(gx, y + 3 + ((k * 5 + w) % Math.max(1, th - 3)), 3, 1);
+    if (seam) { g.fillStyle = c.front; g.fillRect(x, y + 1, 1, th - 1); g.fillStyle = '#733e39'; g.fillRect(x, y + th, 1, fh - 1); }
+  }
+
+  // ---- 背景: 空、遠くまで重なる山、谷の底 ----
+  // 動かないので、窓の大きさごとに 1 回だけ描いて取っておく。full: タイトル・ステージ選び（下まで景色）
+  const tri = (x, p, ph) => Math.abs(2 * ((((x + ph) % p) + p) % p) / p - 1); // 0〜1 の山形
+  let backC = null, backKey = '';
+  function drawBack(g, app, full) {
+    const key = [R.Lw, R.Lh, R.fx, R.fy, full ? 1 : 0].join();
+    if (key !== backKey) { backC = B.mk(R.Lw, R.Lh); const c = backC.getContext('2d'); c.translate(R.fx, R.fy); paintBack(c, full); backKey = key; }
+    g.drawImage(backC, -R.fx, -R.fy);
+  }
+  function paintBack(g, full) {
+    const BK = Game.config.back, x0 = -R.fx, y0 = -R.fy, x1 = x0 + R.Lw;
+    const H = full ? 150 : Game.config.layout.deckY, bottom = full ? y0 + R.Lh : Game.config.layout.trayY;
+    // 空: 上は青く、山ぎわへ向かって白っぽく
+    g.fillStyle = BK.sky; g.fillRect(x0, y0, R.Lw, bottom - y0);
+    const n = BK.skyBands, sh = Math.ceil((H - y0) / n);
+    for (let i = 1; i < n; i++) { g.fillStyle = `rgba(255,255,255,${(BK.skyFade * i) / (n - 1)})`; g.fillRect(x0, y0 + i * sh, R.Lw, bottom); }
+    // 雲（平たい 2 段）
+    g.fillStyle = 'rgba(255,255,255,0.75)';
+    for (const [cx, cy, w] of BK.clouds) { g.fillRect(cx + 3, H - cy - 2, w - 8, 2); g.fillRect(cx, H - cy, w, 2); }
+    // 山: 遠いほど空の色に近い。稜線は 2 つの山形の重ね
+    for (const m of BK.ridges) {
+      for (let x = x0; x < x1; x++) {
+        const y = Math.round(H + m.base - m.a1 * tri(x, m.p1, m.ph1) - m.a2 * tri(x, m.p2, m.ph2));
+        g.fillStyle = m.color; g.fillRect(x, y, 1, bottom - y);
+        g.fillStyle = m.edge; g.fillRect(x, y, 1, 1);
+      }
+      if (m.mist) { g.fillStyle = `rgba(255,255,255,${m.mist})`; g.fillRect(x0, H + m.base, R.Lw, bottom - H - m.base); }
+    }
+    // 谷の底は、下へ行くほど暗い
+    const top = H + BK.shadeFrom, k = 4, hh = Math.ceil((bottom - top) / k);
+    for (let i = 0; i < k; i++) { g.fillStyle = `rgba(24,20,37,${BK.shade * (i + 1) / k})`; g.fillRect(x0, top + i * hh, R.Lw, hh); }
+  }
+
+  // ---- 橋: 奥の手すり、残っている踏み板、谷に渡した切れはし ----
+  function drawBridge(g, app) {
+    const cfg = Game.config, V = cfg.view, L = cfg.layout, s = app.rules;
+    const gap = s.done ? null : Game.rules.gap(s), len = gap ? gap.len : 0, a = app.anim;
+    const T = L.deckH, F = L.deckFront, x0 = -R.fx, x1 = V.w + R.fx + 5;
+    const inGap = (x) => gap && x >= L.gapX && x < L.gapX + len;
+    // 奥の手すり: 支えの棒は踏み板のあるところだけ。ロープは棒の間でたるむ
+    const P = 15, railY = L.deckY - 11;
+    for (let x = x0 - (((x0 - L.gapX) % P) + P) % P; x < x1; x += P) {
+      if (!inGap(x) && !inGap(x - 1)) { g.fillStyle = INK; g.fillRect(x - 1, railY - 1, 3, L.deckY - railY + 1); g.fillStyle = '#b86f50'; g.fillRect(x, railY, 1, L.deckY - railY); }
+      for (let i = 0; i < P; i++) { const u = i / P, sag = Math.round(3 * (1 - (2 * u - 1) * (2 * u - 1))); g.fillStyle = '#c28569'; g.fillRect(x + i, railY + 1 + sag, 1, 1); }
+    }
+    // 踏み板を支える 2 本の綱（谷のところで見える。奥と手前）
+    g.fillStyle = '#733e39'; g.fillRect(x0, L.deckY + 1, R.Lw, 1);
+    g.fillStyle = '#c28569'; g.fillRect(x0, L.deckY + T, R.Lw, 1);
+    g.fillStyle = INK; g.fillRect(x0, L.deckY + T + 1, R.Lw, 1);
+    // 残っている踏み板（5 ドットごと）
+    const planks = (xa, xb) => { for (let x = xa; x < xb; x += 5) wood(g, x, L.deckY, Math.min(5, xb - x) + 1, T, F, WOOD.old); };
+    if (gap) { planks(L.gapX - 5 * Math.ceil((L.gapX - x0) / 5), L.gapX); planks(L.gapX + len, x1); } else planks(x0 - (((x0 - L.gapX) % 5) + 5) % 5, x1);
+    if (gap) { g.fillStyle = INK; g.fillRect(L.gapX - 1, L.deckY, 1, T + F); }
+
+    // 谷に渡した切れはし（わたる の間は、判定したときの並び）。ギシギシ のときは 1 ドット揺れる
+    const bridge = a && a.bridge ? a.bridge : s.bridge, dy = app.fx ? app.fx.bridgeDy() : 0;
+    const sink = app.time - app.placeT < cfg.anim.sink ? 1 : 0;
+    for (const r of R.bridgeRects(bridge)) {
+      const over = gap && r.x + r.w > L.gapX + len; // 谷からはみ出して、右の踏み板に乗り上げている
+      const last = r.i === bridge.length - 1;
+      wood(g, r.x, r.y - (over ? 2 : 0) + (dy && r.i % 2 === 0 ? dy : 0) + (last && sink && !a ? 1 : 0), r.w, T, F, r.i % 2 ? WOOD.piece2 : WOOD.piece, !over, r.i > 0);
+    }
+    // あれ？ のとき: 足りない分（ゆうれいの板。うすい輪郭）と、はみ出た分（光る）。記号は付けない
+    if (a && a.mark) {
+      const k = pulse(app.time, 0.9);
+      if (a.mark.kind === 'short') {
+        g.globalAlpha = 0.45 + 0.4 * k; g.fillStyle = '#ffffff';
+        const x = a.mark.x, w = a.mark.w, y = L.deckY, h = T + F;
+        for (let i = 0; i < w; i += 2) { g.fillRect(x + i, y, 1, 1); g.fillRect(x + i, y + h - 1, 1, 1); }
+        for (let i = 0; i < h; i += 2) { g.fillRect(x, y + i, 1, 1); g.fillRect(x + w - 1, y + i, 1, 1); }
+        g.globalAlpha = 0.12 + 0.1 * k; g.fillRect(x + 1, y + 1, Math.max(0, w - 2), h - 2);
+      } else {
+        g.globalAlpha = 0.35 + 0.45 * k; g.fillStyle = '#fee761';
+        g.fillRect(a.mark.x, L.deckY - 2, a.mark.w, T + F);
+      }
+      g.globalAlpha = 1;
+    }
+  }
+
+  // ---- 立て札・かざした板・探検家 ----
+  function drawActors(g, app) {
+    const cfg = Game.config, L = cfg.layout, s = app.rules, A = B.all(), a = app.anim;
+    const gap = s.done ? null : Game.rules.gap(s);
+    // 立て札（かさねて測れないとき）: 谷の長さを分数で。下に、どこからどこまでかの印
+    if (gap && !Game.rules.overlay(s)) drawSign(g, gap);
+    // かざした板（かさねて測る）
+    if (!s.done && s.hand.boards > 0 && Game.rules.overlay(s) && !a && !app.cutFx) drawBoard(g, app);
+    if (app.cutFx && app.cutFx.overlay) drawCutFx(g, app);
+
+    // 探検家（板の奥行きの真ん中に立つ。つまんでいる間は、指のほうへ少し身を乗り出す）
+    const h = app.ham, d = app.drag, held = d && d.kind === 'ham', footY = L.deckY + L.footDy;
+    if (h.visible) {
+      const set = A.hamG[Game.rules.cheek(s)];
+      const img = held ? set.lean.n : h.pose === 'fall' ? set.fall[Math.floor(app.time * 8) % 2].n : h.pose === 'hit' ? set.hit.n : h.pose === 'down' ? set.down.n : h.pose === 'run' ? set.run[Math.floor(app.time / cfg.anim.stepSec) % set.run.length].n : set.hold.n;
+      const pull = held ? Math.max(0, Math.min(L.ham.pull, d.x - d.x0)) * 0.5 : 0;
+      const dy = app.fx && h.x > L.gapX ? app.fx.bridgeDy() : 0;
+      if (h.y === 0) { g.fillStyle = 'rgba(24,20,37,0.35)'; g.fillRect(Math.round(h.x - 5 + pull), footY, 11, 1); g.fillRect(Math.round(h.x - 3 + pull), footY + 1, 7, 1); }
+      g.drawImage(img, Math.round(h.x - 8 + pull), Math.round(footY - 16 + h.y + dy) + (h.pose === 'down' ? 1 : 0));
+      if (h.bubble === '?') g.drawImage(A.qBubble, Math.round(h.x - 3), footY - 30);
+      // 橋に切れはしがあるとき: 右へ引けることを小さな矢印で知らせる
+      if (s.bridge.length > 0 && !s.done && tip(app, 'go')) fingerMove(g, app, h.x + 6, footY - 12, h.x + 6 + L.ham.pull + 8, footY - 12);
+      if (!a && !held && !s.done && s.bridge.length > 0) g.drawImage(A.arrowGo, Math.round(h.x + 10 + 2 * pulse(app.time, 0.8)), footY - 22);
+    }
+    // ドクロの吹き出し（短いときは谷底、長いときは橋の上）
+    if (h.skull) g.drawImage(A.skull, Math.round(h.x - 1), h.skull === 'deck' ? footY - 31 : L.trayY - 22);
+  }
+
+  // 立て札: 谷の真ん中の上に吊るした札と、谷の幅を示す印
+  function drawSign(g, gap) {
+    const L = Game.config.layout, U = Game.config.unit;
+    const f = gap.sign && gap.sign.kind === 'frac' ? gap.sign : B.fracOf(gap.len, U);
+    const fw = B.fracW(f.n, f.d), w = fw + 8, h = B.FRAC_H + 6;
+    const cx = L.gapX + Math.round(gap.len / 2), x = Math.max(2, Math.min(Game.config.view.w - w - 2, cx - Math.round(w / 2))), y = L.signY;
+    g.fillStyle = '#c28569'; g.fillRect(x + 3, -R.fy, 1, y + R.fy); g.fillRect(x + w - 4, -R.fy, 1, y + R.fy);
+    g.fillStyle = INK; g.fillRect(x, y, w, h);
+    g.fillStyle = '#ead4aa'; g.fillRect(x + 1, y + 1, w - 2, h - 2);
+    g.fillStyle = '#e4a672'; g.fillRect(x + 1, y + h - 3, w - 2, 2);
+    B.frac(g, f.n, f.d, x + 4, y + 3, INK);
+    // 幅の印: ├───┤
+    const my = y + h + 5, xa = L.gapX, xb = L.gapX + gap.len - 1;
+    g.fillStyle = GUIDE;
+    g.fillRect(xa, my, xb - xa + 1, 1); g.fillRect(xa, my - 2, 1, 5); g.fillRect(xb, my - 2, 1, 5);
+    for (let yy = my + 4; yy < L.deckY - 1; yy += 3) { g.fillRect(xa, yy, 1, 1); g.fillRect(xb, yy, 1, 1); }
+  }
+
+  // 今の板と、蛇腹の線
+  function drawBoard(g, app) {
+    const cfg = Game.config, L = cfg.layout, s = app.rules, r = R.boardRect(s), A = B.all();
+    const th = r.h - L.boardFront;
+    const bounce = app.time - app.cutT < 0.07 ? -1 : 0; // 数が変わった瞬間に 1 ドット弾む
+    wood(g, r.x, r.y + bounce, r.w, th, L.boardFront, WOOD.piece);
+    if (s.cutN > 1) {
+      g.fillStyle = INK;
+      for (let i = 1; i < s.cutN; i++) g.fillRect(r.x + (i * cfg.unit) / s.cutN, r.y + bounce - 1, 1, r.h + 2);
+    }
+    // かざしているとき: 板の両端と線から橋へ、点線を下ろす（どこにそろうかを見る）
+    if (Game.rules.overlay(s)) {
+      g.fillStyle = GUIDE;
+      for (let i = 0; i <= s.cutN; i++) {
+        const x = Math.min(r.x + r.w - 1, r.x + (i * cfg.unit) / s.cutN);
+        for (let y = r.y + r.h + 2; y < L.deckY - 1; y += 3) g.fillRect(x, y, 1, 1);
+      }
+    }
+    // 切る数の札（板の右上）
+    const d = app.drag, tag = String(s.cutN), tw = B.textW(tag);
+    const tx = r.x + r.w - tw - 6, ty = r.y - 13;
+    g.fillStyle = INK; g.fillRect(tx, ty, tw + 6, 11);
+    g.fillStyle = d && d.kind === 'count' ? '#fee761' : '#ead4aa'; g.fillRect(tx + 1, ty + 1, tw + 4, 9);
+    B.text(g, tag, tx + 3, ty + 2, INK);
+    // まだ線がないとき: 左へなぞれることを、指と矢印で知らせる（指が板の上を左へ動いては、右に戻る）
+    if (s.cutN === 1 && tip(app, 'count')) {
+      const k = (app.time * 0.8) % 1, fx = r.x + r.w - 30 - Math.round(Math.min(1, k * 1.5) * 32);
+      g.drawImage(A.arrowL, fx - 8, r.y - 8);
+      g.drawImage(A.finger, fx, r.y - 9);
+    }
+    // 線が入っているとき: 上から下へ切れることを矢印で知らせる
+    if (s.cutN > 1 && !d) g.drawImage(A.arrowD, r.x + Math.round(r.w / 2) - 3, r.y - 15 + Math.round(2 * pulse(app.time, 0.8)));
+    if (s.cutN > 1 && tip(app, 'cut')) fingerMove(g, app, r.x + Math.round(r.w / 2) + 6, r.y - 12, r.x + Math.round(r.w / 2) + 6, r.y + r.h + 6);
+    // 板を横切ろうとしている指のあと
+    if (d && d.kind === 'slash') { g.fillStyle = '#ffffff'; g.fillRect(Math.round(d.x), Math.round(d.y0), 1, Math.max(1, Math.round(d.y - d.y0))); }
+  }
+
+  // 切った直後: 切れはしが 1 ドットずつ離れて少し跳ね、手持ちの山へ落ちていく
+  function drawCutFx(g, app) {
+    const cfg = Game.config, L = cfg.layout, c = app.cutFx, AN = cfg.anim;
+    const t = app.time - c.t0, th = L.boardH - L.boardFront;
+    const gr = R.groups(app.rules.hand.pieces).find((q) => q.len === c.len);
+    for (let i = 0; i < c.n; i++) {
+      let x = c.x + i * c.len + Math.round((i - (c.n - 1) / 2) * Math.min(1, t / 0.05)), y = c.y;
+      if (t < AN.cutHop) y -= Math.round(3 * Math.sin((Math.PI * t) / AN.cutHop));
+      else if (gr) { const u = Math.min(1, (t - AN.cutHop) / AN.cutDrop), k = u * u; x = Math.round(x + (gr.x - x) * k); y = Math.round(y + (gr.y - y) * k); }
+      wood(g, x, y, c.len, th, L.boardFront, t < cfg.anim.slash ? WOOD.flash : WOOD.piece);
+    }
+  }
+
+  // ---- 手持ち（作業台） ----
+  function drawTray(g, app) {
+    const cfg = Game.config, L = cfg.layout, s = app.rules, x0 = -R.fx;
+    g.fillStyle = '#3e2731'; g.fillRect(x0, L.trayY, R.Lw, R.Lh);
+    g.fillStyle = INK; g.fillRect(x0, L.trayY, R.Lw, 1);
+    g.fillStyle = '#733e39'; g.fillRect(x0, L.trayY + 1, R.Lw, 2);
+    g.fillStyle = '#5d2c33';
+    for (let y = L.trayY + 14; y < R.Lh; y += 22) g.fillRect(x0, y, R.Lw, 1);
+
+    // 手元の板（かざせないとき）
+    if (!s.done && s.hand.boards > 0 && !Game.rules.overlay(s) && !app.cutFx) drawBoard(g, app);
+
+    // 切れはし（つまんでいる 1 枚は山から抜いて描く。切った直後に飛んでくる分は、着くまで数えない）
+    const d = app.drag, c = app.cutFx, th = L.boardH - L.boardFront;
+    for (const gr of R.groups(s.hand.pieces)) {
+      const n = gr.n - (d && d.kind === 'piece' && d.len === gr.len ? 1 : 0) - (c && c.len === gr.len ? c.n : 0);
+      if (n > 1) wood(g, gr.x + 1, gr.y + 2, gr.w, th, L.boardFront, WOOD.under);
+      if (n > 0) wood(g, gr.x, gr.y, gr.w, th, L.boardFront, WOOD.piece);
+      if (n > 1) B.text(g, 'x' + n, gr.x + gr.w + 3, gr.y + 1, '#c0cbdc', INK);
+    }
+    if (c && !c.overlay) drawCutFx(g, app);
+    // 手本: 切れはしを谷へ運ぶ
+    const gr0 = R.groups(s.hand.pieces)[0];
+    if (gr0 && !s.done && s.bridge.length === 0 && s.hand.boards === 0 && tip(app, 'carry')) fingerMove(g, app, gr0.x + Math.round(gr0.w / 2) - 4, gr0.y + 2, L.gapX + 10, L.deckY - 2);
+  }
+
+  // ---- ボタン（置き場所は R.buttons。main の当たりも同じものを使う） ----
+  function button(g, b, app, color) {
+    const d = app.drag, on = d && d.kind === 'btn' && d.id === b.id;
+    g.fillStyle = INK; g.fillRect(b.x, b.y, b.w, b.h);
+    g.fillStyle = on ? '#5a6988' : color || '#3a4466'; g.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
+    g.fillStyle = on ? '#8b9bb4' : '#5a6988'; g.fillRect(b.x + 1, b.y + 1, b.w - 2, 1);
+    if (b.label) B.text(g, b.label, b.x + Math.round((b.w - B.textW(b.label)) / 2), b.y + Math.floor((b.h - 7) / 2), '#ffffff');
+  }
+  const soundLabel = (app) => lt(app.settings && app.settings.sound === false ? 'sound.off' : 'sound.on');
+  // 今の画面で押せるもの [{ id, x, y, w, h, label }]
+  R.buttons = function (app) {
+    const cfg = Game.config, V = cfg.view, L = cfg.layout, s = app.rules, out = [];
+    if (app.mode === 'title') return [{ id: 'start', x: -R.fx, y: -R.fy, w: R.Lw, h: R.Lh }];
+    if (app.mode === 'select') {
+      const S = L.select;
+      Game.stages.filter((d) => d.area === app.area).forEach((def, i) => out.push({ id: 'stage:' + def.id, def, x: S.x + (i % S.cols) * (S.w + S.gapX), y: S.y + Math.floor(i / S.cols) * (S.h + S.gapY), w: S.w, h: S.h }));
+      out.push(Object.assign({ id: 'sound' }, S.sound)); // 右上の小さな絵のボタン（下の真ん中に大きく置くと、はじめるボタンに見える）
+      return out;
+    }
+    if (app.menu) {
+      ['resume', 'restart', 'sound', 'select'].forEach((id, i) => out.push({ id, x: 24, y: 62 + i * 17, w: 87, h: 13, label: id === 'sound' ? soundLabel(app) : lt('menu.' + id) }));
+      return out;
+    }
+    if (app.mode === 'clear') {
+      if (app.time - app.clearT < cfg.anim.clearWait + cfg.anim.gemEvery * 5) return out;
+      const ids = (app.nextId ? ['next'] : []).concat(['again', 'select']);
+      ids.forEach((id, i) => out.push({ id, x: 24, y: 62 + i * 16, w: 87, h: 13, label: lt('clear.' + id) }));
+      return out;
+    }
+    out.push(Object.assign({ id: 'retry', label: lt('btn.retry') }, L.btn.retry));
+    out.push(Object.assign({ id: 'menu' }, L.btn.menu));
+    if (s && !app.anim && Game.rules.canHelp(s) && !Game.rules.overlay(s)) out.push(Object.assign({ id: 'help', label: lt('btn.help') }, L.btn.help));
+    return out;
+  };
+
+  // ---- 上の帯: 手持ちの板の枚数、たね、やりなおす、メニュー。その下に道の地図と、詰みの声かけ ----
+  function drawHud(g, app) {
+    const cfg = Game.config, L = cfg.layout, s = app.rules, A = B.all();
+    g.drawImage(A.boardIcon, 2, 5);
+    B.text(g, 'x' + s.hand.boards, 15, 4, '#ffffff', INK);
+    g.drawImage(A.seed, 36, 4);
+    B.text(g, 'x' + Game.rules.seeds(s), 43, 4, '#ffffff', INK);
+    if (app.mode !== 'play') return;
+    for (const b of R.buttons(app)) {
+      if (b.id === 'retry' && s.stuck === 'gap' || b.id === 'menu' && s.stuck === 'start') { g.globalAlpha = 0.4 + 0.6 * pulse(app.time, 1); g.fillStyle = '#fee761'; g.fillRect(b.x - 1, b.y - 1, b.w + 2, b.h + 2); g.globalAlpha = 1; }
+      button(g, b, app, b.id === 'help' ? '#3e8948' : null);
+      if (b.id === 'menu') { g.fillStyle = '#ffffff'; for (let i = 0; i < 3; i++) g.fillRect(b.x + 3, b.y + 3 + i * 2, b.w - 6, 1); }
+    }
+    // 道の地図: 谷を左から。穴の幅は谷の長さ。渡った谷は、がっしりならたね。今の谷の下に印
+    const my = L.mapY;
+    s.stage.gaps.forEach((gp, i) => {
+      const x = 3 + i * 21, hole = Math.max(2, Math.round((gp.len / cfg.unit) * 15));
+      g.fillStyle = INK; g.fillRect(x - 1, my - 1, 19, 5);
+      g.fillStyle = '#733e39'; g.fillRect(x, my, 17, 3);
+      if (i >= s.gi) { g.fillStyle = INK; g.fillRect(x + 1, my, hole, 3); }
+      else { g.fillStyle = '#e4a672'; g.fillRect(x + 1, my, hole, 3); if (s.sturdy[i]) g.drawImage(A.seed, x + 6, my + 5); }
+      if (i === s.gi) { g.fillStyle = '#fee761'; g.fillRect(x, my + 5, 17, 1); }
+    });
+    if (s.stuck && !app.anim) { const str = lt('stuck.' + s.stuck); B.text(g, str, Math.round((cfg.view.w - B.textW(str)) / 2), my + 12, '#fee761', INK); }
+  }
+
+  // ---- メニュー ----
+  function panel(g, x, y, w, h) {
+    g.fillStyle = INK; g.fillRect(x, y, w, h);
+    g.fillStyle = '#262b44'; g.fillRect(x + 1, y + 1, w - 2, h - 2);
+    g.fillStyle = '#3a4466'; g.fillRect(x + 1, y + 1, w - 2, 1);
+  }
+  function drawMenu(g, app) {
+    g.fillStyle = 'rgba(24,20,37,0.6)'; g.fillRect(-R.fx, -R.fy, R.Lw, R.Lh);
+    panel(g, 16, 54, 103, 80);
+    for (const b of R.buttons(app)) button(g, b, app);
+  }
+
+  // ---- タイトル ----
+  function big(g, str, cx, y, k, color) {
+    const w = B.textW(str) + 2, c = B.mk(w, 9), cg = c.getContext('2d');
+    B.text(cg, str, 1, 1, color, INK);
+    g.drawImage(c, Math.round(cx - (w * k) / 2), y, w * k, 9 * k);
+  }
+  function drawTitle(g, app) {
+    const V = Game.config.view, A = B.all();
+    big(g, lt('title.name1'), V.w / 2, 46, 3, '#fee761');
+    big(g, lt('title.name2'), V.w / 2, 76, 3, '#feae34');
+    // 橋を渡る探検家
+    const y = 150;
+    g.fillStyle = '#c28569'; g.fillRect(-R.fx, y - 11, R.Lw, 1);
+    for (let x = -R.fx - (((-R.fx) % 5) + 5) % 5; x < R.Lw; x += 5) wood(g, x, y, 6, 9, 3, WOOD.old);
+    for (let i = 0; i < 3; i++) wood(g, 30 + i * 25, y, 25, 9, 3, i % 2 ? WOOD.piece2 : WOOD.piece);
+    const set = A.hamG[2], f = set.run[Math.floor(app.time / Game.config.anim.stepSec) % set.run.length].n;
+    g.drawImage(f, 50, y - 27, 40, 32);
+    if (pulse(app.time, 1.6) > 0.25) center(g, lt('title.tap'), 196, '#ffffff');
+  }
+
+  // ---- ステージ選び ----
+  function drawSelect(g, app) {
+    const V = Game.config.view, A = B.all(), P = Game.progress, p = app.progress;
+    const head = lt('select.area', { n: app.area }), sub = lt('select.sub')[app.area - 1];
+    center(g, head, 10, '#fee761');
+    center(g, sub, 22, '#c0cbdc');
+    const t = P.total(p, app.area);
+    g.drawImage(A.gem, 36, 32); B.text(g, t.gems + '/' + t.stages * 3, 46, 32, '#ffffff', INK);
+    g.drawImage(A.foot, 80, 32); B.text(g, t.stamps + '/' + t.stages, 90, 32, '#ffffff', INK);
+    for (const b of R.buttons(app)) {
+      if (!b.def) { button(g, b, app); g.drawImage(app.settings && app.settings.sound === false ? A.spkOff : A.spkOn, b.x + 3, b.y + 3); continue; }
+      const open = P.open(p, b.def.id), e = P.of(p, b.def.id), d = app.drag, on = d && d.kind === 'btn' && d.id === b.id;
+      g.fillStyle = INK; g.fillRect(b.x, b.y, b.w, b.h);
+      g.fillStyle = !open ? '#262b44' : on ? '#5a6988' : '#3a4466'; g.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
+      g.fillStyle = open ? '#5a6988' : '#3a4466'; g.fillRect(b.x + 1, b.y + 1, b.w - 2, 1);
+      if (!open) { B.text(g, lt('select.locked'), b.x + Math.round(b.w / 2) - 2, b.y + 18, '#5a6988'); continue; }
+      B.text(g, b.def.id, b.x + Math.round((b.w - B.textW(b.def.id)) / 2), b.y + 6, '#ffffff', INK);
+      for (let i = 0; i < 3; i++) g.drawImage(e.gems[i] ? A.gem : A.gemOff, b.x + 8 + i * 10, b.y + 20);
+      g.drawImage(e.stamp ? A.foot : A.footOff, b.x + 42, b.y + 20);
+    }
+  }
+
+  // ---- クリア: たねを吐き出し、宝石を 1 つずつ数える ----
+  function drawClear(g, app) {
+    const cfg = Game.config, V = cfg.view, L = cfg.layout, A = B.all(), o = app.result, t = app.time - app.clearT, AN = cfg.anim;
+    // たねが探検家から飛び出す
+    if (o) for (let i = 0; i < o.seeds; i++) {
+      const u = (t - i * 0.08) / 0.5;
+      if (u <= 0 || u >= 1) continue;
+      g.drawImage(A.seed, Math.round(app.ham.x + 6 + (14 + i * 9) * u), Math.round(L.deckY - 8 - 22 * Math.sin(Math.PI * u)));
+    }
+    if (t < AN.clearWait) return;
+    const y = 24;
+    panel(g, 8, y, V.w - 16, 92);
+    center(g, lt('clear.title'), y + 6, '#fee761');
+    if (o) {
+      for (let i = 0; i < 3; i++) {
+        const shown = t >= AN.clearWait + AN.gemEvery * (i + 1), x = V.w / 2 - 20 + i * 12, pop = shown && t < AN.clearWait + AN.gemEvery * (i + 1) + 0.08 ? -2 : 0;
+        g.drawImage(shown && o.gems[i] ? A.gem : A.gemOff, x, y + 19 + (o.gems[i] ? pop : 0));
+      }
+      const fs = t >= AN.clearWait + AN.gemEvery * 4;
+      g.drawImage(fs && o.stamp ? A.foot : A.footOff, V.w / 2 + 20, y + 19);
+    }
+    for (const b of R.buttons(app)) button(g, b, app, b.id === 'next' ? '#3e8948' : null);
+  }
+
+  Game.render = R;
+})();
+</script>
+<script>
+// ループと場面。指の動きを置き場所（render.layout）と照らしてルールの操作にし、返ってきた出来事を演出に配る。
+// わたる の歩き・落ちるは、ここが時間を持つ（ルールは一瞬で進む）。
+// 操作: 板の上を横になぞって切る数を決める / 板を上から下へ横切って切る / 切れはしをつまんで谷へ運ぶ / 探検家を右へ引いて わたる
+// 画面: title → select（ステージ選び）→ play → clear。記録（宝石・足あと）は渡りきったときに保存する。
+// URL（確かめ用）: ?stage=1-4 でそのステージから始める / ?seed=123 で数字を決める種 / ?fix=1 で一例の数字 / ?mode=hand で立て札の形 / ?nosave=1 で保存しない
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const cfg = Game.config, RU = Game.rules, L = cfg.layout, AN = cfg.anim;
+  const q = new URLSearchParams(location.search);
+
+  const HOME = 7; // 探検家が待つ場所（左の踏み板の上。体の真ん中の x）
+  const P = Game.progress, SV = Game.save, NOSAVE = q.get('nosave') === '1';
+
+  const app = (Game.app = {
+    mode: 'title',           // title | select | play | clear
+    menu: false,             // play の上にメニューを開いているか
+    area: 1, def: null, stage: null, nextId: null, // 選んでいるエリア、遊んでいるステージの型と中身、次のステージ（開いていれば）
+    progress: null, settings: null, tips: null,
+    rules: null, result: null,
+    time: 0, manual: false,
+    cutT: -1, slashT: -1,    // 切る数が最後に変わった時刻（蛇腹の弾み）、切った時刻（光る）
+    drag: null,              // { kind: 'board' → 'count' | 'slash', x, y, x0, y0 } | { kind: 'piece', len, x, y } | { kind: 'ham', x, x0 } | { kind: 'btn', id }
+    anim: null,              // わたる の演出: { steps: [{ dur, enter, tick }], i, t, bridge, mark }
+    ham: { x: HOME, y: 0, pose: 'idle', visible: true, bubble: null, skull: false },
+    lastEvents: [],
+    audio: null, fx: null,
+    cutFx: null,             // 切った直後の切れはし { t0, n, len, x, y, overlay }
+    placeT: -1, clearT: 0, gemN: 0, // 置いた時刻（沈む）、クリアした時刻、数え終えた宝石の数
+  });
+
+  // ステージに入る: 数字を決める（前に遊んだのと同じにはしない）
+  function enter(id) {
+    const def = Game.stages.find((d) => d.id === id);
+    if (!def) return;
+    const seed = q.has('seed') ? +q.get('seed') | 0 : (Math.random() * 0x7fffffff) | 0;
+    const prev = P.enter(app.progress, id, seed);
+    if (!NOSAVE) SV.storeProgress(app.progress);
+    app.def = def;
+    app.stage = Game.gen.make(q.get('fix') === '1' ? Object.assign({}, def, { fixed: true }) : def, seed, prev);
+    if (q.get('mode') === 'hand') app.stage.mode = 'hand';
+    start();
+  }
+  // さいしょから（数字は変えない）
+  function start() {
+    app.rules = RU.start(structuredClone(app.stage));
+    app.mode = 'play'; app.menu = false; app.result = null; app.anim = null; app.drag = null; app.cutFx = null;
+    if (app.fx) app.fx.clear();
+    Object.assign(app.ham, { x: HOME, y: 0, pose: 'idle', visible: true, bubble: null, skull: false });
+  }
+
+  // 演出の節目（歩く・落ちるの途中）で出す出来事。名前は fx_ で始める
+  // app.fxLog: 直近の節目（通しテストが見る）
+  const emit = (e) => { (app.fxLog = app.fxLog || []).push(e.type); if (app.fxLog.length > 60) app.fxLog.shift(); if (app.audio) app.audio.on(e); if (app.fx) app.fx.on(e, app); };
+  // 出来事を演出（音・擬音）に配る
+  function dispatch(events) {
+    app.lastEvents = events;
+    for (const e of events) {
+      emit(e);
+      if (TIP[e.type]) seenTip(TIP[e.type]);
+      if (e.type === 'cutn') app.cutT = app.time;
+      else if (e.type === 'place') app.placeT = app.time;
+      else if (e.type === 'cross') startCross(e);
+      else if (e.type === 'clear') { app.result = e.result; }
+    }
+  }
+
+  // 手本: その操作が一度できたら、もう出さない
+  const TIP = { cutn: 'count', cut: 'cut', place: 'carry', cross: 'go' };
+  function seenTip(id) { if (app.tips.seen[id]) return; app.tips.seen[id] = true; if (!NOSAVE) SV.storeTips(app.tips); }
+
+  // ---- わたる の演出 ----
+  const inside = (r, x, y, pad = 0) => x >= r.x - pad && x < r.x + r.w + pad && y >= r.y - pad && y < r.y + r.h + pad;
+  function startCross(e) {
+    const h = app.ham, fail = e.result === 'short' || e.result === 'long';
+    const steps = [];
+    const a = (app.anim = { steps, i: -1, t: 0, bridge: e.bridge, mark: null, fail });
+    if (fail) {
+      // ずれた場所の手前まで歩く → あれ？ → 落ちる → キュウとドクロ → しれっと戻る
+      const edge = L.gapX + Math.min(e.total, e.len);
+      const stop = Math.max(HOME, edge - 4);
+      steps.push(chain(stop));
+      steps.push({ dur: AN.wonder, enter() { emit({ type: 'fx_wonder' }); h.pose = 'idle'; h.bubble = '?'; a.mark = e.result === 'short' ? { kind: 'short', x: edge, w: e.len - e.total } : { kind: 'long', x: L.gapX + e.len, w: e.total - e.len }; } });
+      if (e.result === 'short') {
+        // 短い: 一歩踏み出して穴から落ちる
+        steps.push({ dur: AN.fall, enter() { emit({ type: 'fx_miss' }); h.bubble = null; h.pose = 'fall'; }, tick(st, k) { h.x = stop + 8 * Math.min(1, k * 3); h.y = k < 0.25 ? 0 : 300 * (k - 0.25) * (k - 0.25); } });
+        steps.push({ dur: AN.skull, enter() { emit({ type: 'fx_kyu' }); h.visible = false; h.skull = 'pit'; } });
+      } else {
+        // 長い: 乗り上げた板につまずいて、橋の上で前にこける（谷には落ちない）
+        steps.push({ dur: AN.trip, enter() { emit({ type: 'fx_trip' }); h.bubble = null; h.pose = 'hit'; }, tick(st, k) { const u = Math.min(1, k / AN.tripAir); h.x = stop + 9 * u; h.y = u < 1 ? -6 * Math.sin(Math.PI * u) : 0; h.pose = u < 1 ? 'hit' : 'down'; } }); // 前へ跳ねて、横倒しに着地
+        steps.push({ dur: AN.skull, enter() { emit({ type: 'fx_kyu' }); h.skull = 'deck'; } });
+      }
+      steps.push({ dur: AN.back, enter() { emit({ type: 'fx_back' }); h.skull = false; a.mark = null; a.bridge = null; dispatch(RU.settle(app.rules)); h.visible = true; h.y = 0; h.x = -10; h.pose = 'run'; }, tick(st, k) { h.x = -10 + (HOME + 10) * k; } });
+    } else {
+      // 渡りきる → 最後のつなぎ目で ピタッ → 右へ抜ける → 次の谷の手前へ左から入ってくる
+      // ギシギシ のときは、谷の上を歩いている間、走りのコマ送りに合わせてきしむ（creakEvery コマごと）。
+      // ペースはいつも同じで、谷が長いほど回数が増える。谷が短くて一度も合わなかったら、渡りきるところで 1 回
+      const walk = chain(L.gapX + e.len), tick0 = walk.tick;
+      const beat = () => Math.floor(app.time / (AN.stepSec * AN.creakEvery));
+      let last = null, n = 0;
+      const creakOnce = () => { emit({ type: 'fx_creak', n, pitch: n++ % 2 ? 0.8 : 1 }); };
+      if (e.result === 'creak') walk.tick = (st, k) => {
+        tick0(st, k);
+        const b = beat();
+        if (h.x >= L.gapX && last != null && b !== last) creakOnce();
+        last = b;
+        if (k >= 1 && !n) creakOnce();
+      };
+      steps.push(walk);
+      steps.push({ dur: AN.fit, enter() { h.pose = 'idle'; emit({ type: 'fx_fit' }); } });
+      steps.push({ dur: AN.verdict, enter() { if (e.result === 'sturdy') { emit({ type: 'fx_sturdy' }); emit({ type: 'fx_seed' }); } } });
+      steps.push(chain(cfg.view.w + 12));
+      steps.push({ dur: AN.next, enter() { a.bridge = null; dispatch(RU.settle(app.rules)); h.x = -10; h.pose = 'run'; if (app.rules.done) { h.visible = false; } }, tick(st, k) { h.x = -10 + (HOME + 10) * k; } });
+    }
+    nextStep();
+  }
+  // 歩く 1 区間（始まるときの位置から x まで）
+  function chain(x) {
+    const h = app.ham, st = { dur: 0, x0: 0 };
+    st.enter = () => { st.x0 = h.x; st.dur = Math.abs(x - h.x) / AN.walk + 1e-3; h.pose = 'run'; };
+    st.tick = (_, k) => {
+      const prev = h.x;
+      h.x = st.x0 + (x - st.x0) * k;
+      const a = app.anim;
+      if (!a || !a.bridge) return;
+      let at = L.gapX;
+      for (const len of a.bridge) {
+        const mid = at + len / 2;
+        if (prev < mid && h.x >= mid) emit({ type: 'fx_step', len });
+        at += len;
+      }
+    };
+    return st;
+  }
+  function nextStep() {
+    const a = app.anim;
+    a.i++; a.t = 0;
+    if (a.i >= a.steps.length) { endAnim(); return; }
+    const st = a.steps[a.i];
+    if (st.enter) st.enter(st);
+  }
+  function endAnim() {
+    app.anim = null;
+    Object.assign(app.ham, { x: HOME, y: 0, pose: 'idle', bubble: null, skull: false, visible: true });
+    if (app.rules.done) {
+      app.mode = 'clear'; app.clearT = app.time; app.gemN = 0; emit({ type: 'fx_pon' });
+      // 記録する（前に取った宝石と足あとは消えない）
+      P.record(app.progress, app.def.id, app.result);
+      if (!NOSAVE) SV.storeProgress(app.progress);
+      const i = Game.stages.indexOf(app.def), next = Game.stages[i + 1];
+      app.nextId = next && P.open(app.progress, next.id) ? next.id : null;
+    }
+  }
+  function tickAnim(dt) {
+    const a = app.anim;
+    if (!a) return;
+    a.t += dt;
+    let st = a.steps[a.i];
+    while (app.anim === a && a.t >= st.dur) {
+      if (st.tick) st.tick(st, 1);
+      const over = a.t - st.dur;
+      nextStep();
+      if (app.anim !== a) return;
+      a.t = over;
+      st = a.steps[a.i];
+    }
+    if (app.anim === a && st.tick) st.tick(st, Math.min(1, a.t / st.dur));
+  }
+  // 落ちる演出はタップで飛ばせる
+  function skipAnim() {
+    const a = app.anim;
+    if (!a || !a.fail) return;
+    while (app.anim === a) { const st = a.steps[a.i]; if (st.tick) st.tick(st, 1); nextStep(); }
+  }
+
+  // ---- 指 ----
+  // 切る数: 板の上を横になぞる（左へ＝細かく） / 切る: 板を上から下へ横切る / 運ぶ: 切れはしをつまんで谷へ / わたる: 探検家を右へ引く
+  // わたる の引き始めは、画面の左端から探検家の前まで受ける（端のジェスチャーを避けて、探検家の前から引ける）
+  const hamRect = () => ({ x: -Game.render.fx, y: L.deckY - L.ham.h, w: Game.render.fx + L.ham.w, h: L.ham.h - 4 });
+  function doCut(s) {
+    const b = Game.render.boardRect(s), overlay = RU.overlay(s), ev = RU.cut(s);
+    const c = ev.find((e) => e.type === 'cut');
+    if (c) { app.slashT = app.time; app.cutFx = { t0: app.time, n: c.n, len: c.len, x: b.x, y: b.y, overlay }; }
+    dispatch(ev);
+  }
+  function onInput(e) {
+    const s = app.rules, R = Game.render;
+    const { x, y } = e;
+    // ボタン（押したところと離したところが同じボタンなら押したことにする）
+    if (e.type === 'down') {
+      app.drag = null;
+      if (!app.anim || app.menu) for (const b of R.buttons(app)) if (inside(b, x, y, 2)) { app.drag = { kind: 'btn', id: b.id }; return; }
+    }
+    if (app.mode !== 'play' || app.menu) {
+      const d0 = app.drag;
+      if (e.type === 'up' || e.type === 'cancel') app.drag = null;
+      if (e.type === 'up' && d0 && d0.kind === 'btn') { const b = R.buttons(app).find((b) => b.id === d0.id); if (b && inside(b, x, y, 4)) press(b); }
+      return;
+    }
+    if (app.anim) { if (e.type === 'down') skipAnim(); return; }
+    if (e.type === 'down') {
+      for (const gr of R.groups(s.hand.pieces)) if (inside({ x: gr.x, y: gr.y, w: gr.w + (gr.n > 1 ? 13 : 0), h: gr.h }, x, y, 4)) { app.drag = { kind: 'piece', len: gr.len, x, y }; return; }
+      // 橋の上の切れはしをつまむ: いったん手持ちに戻して、そのまま指についてくる
+      for (const r of R.bridgeRects(s.bridge)) if (inside({ x: r.x, y: r.y - 4, w: r.w, h: r.h + 10 }, x, y)) { dispatch(RU.take(s, r.i)); app.drag = { kind: 'piece', len: r.len, x, y }; return; }
+      if (inside(hamRect(), x, y)) { app.drag = { kind: 'ham', x, x0: x }; return; }
+      if (s.hand.boards > 0) {
+        const b = R.boardRect(s);
+        if (x >= b.x - 4 && x < b.x + b.w + 4) {
+          // 板の上: 横に動けば切る数、下へ動けば切る（動き出してから決める）
+          if (y >= b.y - 3 && y < b.y + b.h) { app.drag = { kind: 'board', x, y, x0: x, y0: y }; return; }
+          // 板のすぐ下: 横になぞると切る数（ここからは切れない）
+          if (y >= b.y + b.h && y < Math.min(b.y + b.h + L.countBelow, RU.overlay(s) ? L.deckY - 4 : Infinity)) { app.drag = { kind: 'board', below: true, x, y, x0: x, y0: y }; return; }
+          // 板より上: 上から下へ横切るスワイプの始まり
+          if (y >= b.y - L.slash.reach && y < b.y) { app.drag = { kind: 'slash', x, y, x0: x, y0: y }; return; }
+        }
+      }
+      return;
+    }
+    const d = app.drag;
+    if (!d) return;
+    if (e.type === 'move') {
+      if (d.kind === 'board') {
+        // 縦か横か、先に大きく動いたほうに決める
+        const dx = Math.abs(x - d.x0), dy = y - d.y0;
+        if (Math.max(dx, Math.abs(dy)) < L.slash.slop) return;
+        if (dx < Math.abs(dy) && d.below) { app.drag = null; return; }
+        d.kind = dx >= Math.abs(dy) ? 'count' : 'slash';
+        if (d.kind === 'count') d.xs = d.x0;
+      }
+      if (d.kind === 'count') {
+        // 左へ cutStep なぞるごとに 1 段細かく、右へで 1 段粗く
+        d.x = x;
+        while (Math.abs(x - d.xs) >= L.cutStep) {
+          const dir = x < d.xs ? 1 : -1;
+          d.xs -= dir * L.cutStep;
+          dispatch(RU.setCut(s, R.cutStep(s.cutN, dir)));
+        }
+      } else if (d.kind === 'piece') { d.x = x; d.y = y; }
+      else if (d.kind === 'ham') { d.x = x; if (x - d.x0 >= L.ham.pull) { app.drag = null; dispatch(RU.cross(s)); } }
+      else if (d.kind === 'slash') {
+        d.x = x; d.y = y;
+        // 上から下へ、板の下の端を抜けたら切る
+        const b = R.boardRect(s);
+        if (y - d.y0 >= L.slash.min && y >= b.y + b.h) { app.drag = null; doCut(s); }
+      }
+      return;
+    }
+    app.drag = null;
+    if (e.type !== 'up') return;
+    if (d.kind === 'btn') { const b = R.buttons(app).find((b) => b.id === d.id); if (b && inside(b, x, y, 4)) press(b); }
+    // 谷の側（手持ちの場所より上）で離したら置く。手元で離したら手持ちのまま
+    else if (d.kind === 'piece') { if (d.y - L.dragLift < L.trayY) dispatch(RU.place(s, d.len)); }
+  }
+
+  // ボタンを押した
+  function press(b) {
+    const s = app.rules;
+    app.audio.play('click', { step: 2 });
+    if (b.id === 'start') app.mode = 'select';
+    else if (b.id.startsWith('stage:')) { if (P.open(app.progress, b.def.id)) enter(b.def.id); else app.audio.play('deny'); }
+    else if (b.id === 'sound') { app.settings.sound = !app.settings.sound; cfg.audio.enabled = app.settings.sound; if (!NOSAVE) SV.storeSettings(app.settings); app.audio.play('click', { step: 4 }); }
+    else if (b.id === 'retry') dispatch(RU.retryGap(s));
+    else if (b.id === 'help') dispatch(RU.help(s));
+    else if (b.id === 'menu') app.menu = true;
+    else if (b.id === 'resume') app.menu = false;
+    else if (b.id === 'restart' || b.id === 'again') { start(); emit({ type: 'fx_back' }); }
+    else if (b.id === 'select') { app.mode = 'select'; app.menu = false; app.anim = null; app.fx.clear(); }
+    else if (b.id === 'next') enter(app.nextId);
+  }
+
+  function update(dt) {
+    app.time += dt;
+    if (!app.menu) tickAnim(dt);
+    if (app.cutFx && app.time - app.cutFx.t0 >= AN.cutHop + AN.cutDrop) app.cutFx = null;
+    // クリア: 宝石を 1 つずつ数える（3 つと、足あと）
+    if (app.mode === 'clear' && app.result) {
+      const n = Math.max(0, Math.min(4, Math.floor((app.time - app.clearT - AN.clearWait) / AN.gemEvery)));
+      while (app.gemN < n) { const i = app.gemN++; if (i < 3 ? app.result.gems[i] : app.result.stamp) emit({ type: 'fx_gem', i }); }
+    }
+    app.fx.update(dt);
+  }
+
+  function boot() {
+    const canvas = document.getElementById('c');
+    Game.render.init(canvas);
+    app.audio = Game.audio.create(cfg);
+    app.fx = Game.fx.create(cfg);
+    Game.input.create(canvas, onInput);
+    // 音の再開。タッチは指を離したときに初めて許されるので、置いたとき・離したときの両方で試す
+    for (const ev of ['pointerdown', 'pointerup', 'touchend', 'keydown']) document.addEventListener(ev, () => { if (!app.audio.running()) app.audio.unlock(); }, true);
+    document.addEventListener('visibilitychange', () => app.audio.setHidden(document.hidden));
+    app.progress = NOSAVE ? P.fresh() : SV.loadProgress();
+    app.settings = NOSAVE ? { sound: true } : SV.loadSettings();
+    app.tips = NOSAVE ? { seen: {} } : SV.loadTips();
+    cfg.audio.enabled = app.settings.sound;
+    if (q.has('stage')) { for (const d of Game.stages) { if (d.id === q.get('stage')) break; P.record(app.progress, d.id, { gems: [true, false, false], stamp: false }); } enter(q.get('stage')); }
+    let last = performance.now();
+    const frame = (now) => {
+      const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
+      last = now;
+      if (!app.manual) update(dt);
+      Game.render.draw(app);
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+
+  // テスト用: 実時間に関係なく進める
+  Game.debug = {
+    step(sec) { app.manual = true; for (let i = 0; i < Math.round(sec * 60); i++) update(1 / 60); Game.render.draw(app); },
+    start, enter, input: onInput,
+  };
+
+  boot();
+})();
+</script>
+</body>
+</html>
