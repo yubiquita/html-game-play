@@ -1,0 +1,2410 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#181425">
+<title>HOPPE CLOCK</title>
+<style>
+html, body { margin: 0; height: 100%; background: #181425; overflow: hidden; }
+body { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; overscroll-behavior: none; }
+canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelated; } /* 大きさは render.js が 1 ドット＝k 画素に合わせて書き換える */
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script>
+// 数字は全部ここ。設計書: docs/specs/2026-11-13-hoppe-clock-design.md
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  Game.config = {
+    view: { w: 135, h: 240 },   // 遊ぶ窓（ドット）。縦持ち専用
+    day: 144,                   // 12 時間（5 分 = 1）
+    cards: [12, 6, 3, 2, 1],    // 札: 1 じかん・30 ぷん・15 ふん・10 ぷん・5 ふん
+    queueMax: 6,                // 一度に並べられる札の枚数
+    help: { nights: 2 },
+    // ステージ作り: 決め直す回数、エリアごとのゆとり（N = par + slack）、内の輪の宝どうしの間（位置の数）
+    gen: { tries: 600, slack: { 1: 6, 2: 6, 3: 4, 4: 4, 5: 4 }, inGap: 6, luckFrom: 3, luckMax: 0.2, luckRuns: 60, wallRoom: 11 },   // luck: エリア luckFrom から先は、でたらめな札でクリアできる割合が luckMax 以下の盤だけ
+    tips: ['put', 'lever'],     // 最初の 1 回だけ指の絵で見せる手本
+    ghostEvery: 3,              // 夜、この回数に 1 回ほどお化けが出る（見た目だけ）        // 同じステージでこの回数夜になると「てがかりを だす」が出る
+    save: { progress: 'hoppe-clock.progress', settings: 'hoppe-clock.settings', tips: 'hoppe-clock.tips', version: 1 },
+
+    // 置き場所（窓の中のドット）。render と main の当たりが同じものを使う
+    layout: {
+      topH: 44,                                   // 上の帯（空と木々）の高さ
+      sundial: { cx: 116, cy: 21, r: 13 },        // 日時計
+      sign: { x: 3, y: 4 },                       // 扉の時刻・止まったあとの時刻の名前
+      ham: { x: 3, y: 164 },                      // 探検家（床の手前の縁、左）
+      lever: { x: 104, y: 156, w: 31, h: 32, pull: 10, px: 116, py: 182, len: 16, a0: -0.6, a1: 1.15 }, // レバーの当たり、下か右へこれだけ引いたら すすめる。棒の付け根・長さ・傾き（真上から右回りのラジアン。引く前 → 倒れたあと）
+      door: { x: 6, y: 6, w: 50, h: 38 },         // 扉（鍵のステージ。上の帯の左）
+      queue: { x: 13, y: 189, w: 17, h: 15, gap: 1 },   // 並べた札の列（最大 queueMax 枚）
+      hand: { x: 1, y: 209, w: 25, h: 28, gap: 2 },     // 手元の札（最大 5 種類）
+      btn: { menu: { x: 2, y: 47, w: 13, h: 13 }, sleep: { x: 120, y: 47, w: 13, h: 13 }, help: { x: 2, y: 62, w: 13, h: 13 } },   // 小さなボタン（床の左上と右上のすみ）
+      clear: { x: 19, y: 70, w: 97, h: 72, btnY: 50, btnW: 42, btnH: 16 },   // クリアの札と、その中のボタン
+      select: { x: 5, top: 8, rowH: 44, tile: { w: 17, h: 24, gap: 1 }, sound: { x: 119, y: 224, w: 13, h: 13 } },  // ステージ選び: エリアごとに 1 行（名前の下にステージ 6 つと扉）
+      dropR: 66,                                  // 盤の中心からこれより近くで離すと、並べる
+      dragLift: 14,                               // つまんだ札を、指よりこれだけ上に描く
+    },
+
+    // 空の色（使った枚数 / N の割合ごと）と夜
+    sky: { keys: [[0, '#a5dcf7'], [0.4, '#3fa2e0'], [0.6, '#8fc7e8'], [0.8, '#f4a259'], [1, '#b55088']], night: '#181425', nightDim: 0.6 },
+
+    // 演出の秒数（ルールは一瞬で進む。針が回る・夜になるは main が持つ）
+    anim: {
+      tick: 0.07, tickHour: 0.035,  // 5 分ぶん針が進む秒（「1 じかん」の札は速く刻む）
+      bounceWait: 0.18, back: 0.3,  // 弾かれて止まる間、元の位置へ戻る秒
+      take: 0.3,                    // ピタッ で止まる
+      leverWait: 0.32,              // レバーを倒してから、針が動き出すまでの 1 拍
+      leverBack: 0.25,              // レバーが戻る秒
+      door: 1.5,                    // 扉がゆっくり開く秒（鍵のステージ）
+      lockTip: 4,                   // 鍵のステージの始まりに「あわせよう」を出す秒
+      night: 1.8, dusk: 0.6, ghostWait: 0.85,  // ghostWait: お化けが出てから、倒れるまでの 1 拍（暗くなる秒を含む）
+             // 夜のあいだ、暗くなる・明るくなる秒
+      name: 1.6,                    // 止まったあと、時刻の名前を出す秒
+      demo: 1.8,                    // 手本の指が 1 回動く秒
+      clearWait: 0.6, gemEvery: 0.35, // クリア: 札が出るまで、ごほうびを 1 つ数える間
+    },
+
+    // 音。効果音は部品（k: tone / noise / click / knock）の重ね。数字は dev/sounds.html で聞いて決める
+    audio: {
+      enabled: true, volume: 0.5,
+      keepAlive: { hz: 40, vol: 0.004 }, // 出力を休ませないための、聞こえない低い音（無音が続くと短い音の頭が欠ける）
+      level: { ghost: 1, tick: 1.45, hour: 1, door: 1.6, put: 0.9, lever: 1.4, fit: 1.1, gatsun: 2, back: 0.65, night: 0.8, dawn: 1.2, clear: 1, gem: 1.1, deny: 3.2 },
+      sfx: {
+        // カチ（針が 5 分進む。札の中で少しずつ高く）
+        tick: [{ k: 'click', noiseHz: 3200, q: 1.2, noiseMs: 8, noiseVol: 0.6, toneHz: 1300, toneMs: 20, toneVol: 0.14, stepUp: 1.03 }],
+        // ポン（長針が 1 周して、短針が数字 1 つぶん動ききった合図。何かに当たった音に聞こえないよう、やわらかい音にする）
+        hour: [{ k: 'tone', f: 392, type: 'sine', vol: 0.12, a: 0.004, dec: 0.16 }, { k: 'tone', f: 196, type: 'triangle', vol: 0.1, a: 0.004, dec: 0.22 }],
+        // コトン（札を並べる。大きい札ほど低い）
+        put: [{ k: 'knock', baseHz: 520, r2: 2.76, r3: 5.4, dec: 0.08, vol: 0.4, noiseHz: 1800, noiseMs: 12, noiseVol: 0.3 }],
+        // ガチャ（レバー）
+        lever: [{ k: 'noise', f: 1400, q: 1.5, vol: 0.4, dec: 0.04 }, { k: 'tone', f: 220, type: 'square', vol: 0.12, dec: 0.07, slide: 0.6 }, { k: 'noise', f: 2600, q: 2, vol: 0.25, dec: 0.03, delay: 0.09 }],
+        // ピタッ（宝を取る）
+        fit: [{ k: 'tone', f: 1568, type: 'triangle', vol: 0.14, dec: 0.09 }, { k: 'tone', f: 2093, type: 'triangle', vol: 0.12, dec: 0.16, delay: 0.05 }, { k: 'noise', f: 5000, vol: 0.06, dec: 0.03 }],
+        // ガツン（罠・壁に弾かれる）
+        gatsun: [{ k: 'noise', f: 900, q: 1, vol: 0.5, dec: 0.07 }, { k: 'tone', f: 160, type: 'square', vol: 0.2, dec: 0.09, slide: 0.6 }],
+        // スッ（針が元の位置へ戻る）
+        back: [{ k: 'noise', f: 1279, q: 2.2, vol: 0.4, a: 0.1, dec: 0.41, sweep: 1.5 }, { k: 'tone', f: 620, type: 'triangle', vol: 0.05, a: 0.08, dec: 0.22, slide: 2.2 }],
+        // 夜（ねむくなる）
+        night: [{ k: 'tone', f: 392, type: 'triangle', vol: 0.12, a: 0.02, dec: 0.3 }, { k: 'tone', f: 330, type: 'triangle', vol: 0.12, a: 0.02, dec: 0.3, delay: 0.28 }, { k: 'tone', f: 262, type: 'triangle', vol: 0.12, a: 0.02, dec: 0.6, delay: 0.56 }],
+        // お化け（ひゃあ）
+        ghost: [{ k: 'tone', f: 740, type: 'sine', vol: 0.12, a: 0.03, dec: 0.5, slide: 0.45 }, { k: 'tone', f: 747, type: 'sine', vol: 0.08, a: 0.03, dec: 0.5, slide: 0.45, delay: 0.04 }],
+        // 朝
+        dawn: [{ k: 'tone', f: 523, type: 'triangle', vol: 0.1, dec: 0.1 }, { k: 'tone', f: 784, type: 'triangle', vol: 0.1, dec: 0.2, delay: 0.1 }],
+        // クリア
+        clear: [0, 4, 7, 12, 16].map((n, i) => ({ k: 'tone', f: 523.25 * Math.pow(2, n / 12), type: 'triangle', vol: 0.11, dec: 0.22, delay: 0.25 + i * 0.09 })),
+        // ゴゴゴ…ズン（石の大きな扉がゆっくり開いて、止まる）
+        door: [
+          { k: 'rumble', ms: 1350, hz: 68, hzTo: 50, lowpass: 700, pulseHz: 8, depth: 0.7, vol: 0.19, gritHz: 600, gritVol: 0.19, hissHz: 2000, hissVol: 0.04, q: 0.9, rough: 0.6, roughHz: 40 },
+          { k: 'noise', f: 220, type: 'lowpass', vol: 0.5, dec: 0.22, delay: 1.38 },
+          { k: 'tone', f: 82, type: 'square', vol: 0.22, dec: 0.25, slide: 0.6, delay: 1.38 },
+        ],
+        // ごほうびを 1 つ数える（数えるごとに高く）
+        gem: [{ k: 'tone', f: 1319, type: 'triangle', vol: 0.13, dec: 0.1, up: 1.122 }, { k: 'tone', f: 1976, type: 'triangle', vol: 0.1, dec: 0.2, delay: 0.06, up: 1.122 }],
+        // これ以上並べられない
+        deny: [{ k: 'tone', f: 196, type: 'square', vol: 0.12, dec: 0.06 }],
+      },
+    },
+
+    // 文字盤（床）。真上から見た真円。半径はドット。中心は 1 ドット（直径は奇数）
+    dial: {
+      cx: 67, cy: 112,
+      floorR: 59,               // 石の床
+      minR: 63,                 // 分の数字（5・10…55）の中心。床の外
+      tickR0: 54, tickR1: 57,   // 目盛り（5 分ごと。12・3・6・9 は内へ長い）
+      outR: 48,                 // 外の輪: 長針の先・長針の宝
+      pairR: 52,                // 対の印（内の輪の宝が「何分」かを示す小さな点）。外の輪のすぐ外
+      numR: 38,                 // 数字 1〜12 の中心
+      inR: 27,                  // 内の輪: 短針の先・短針の宝
+      zoneR0: 20, zoneR1: 33,   // 時ごとの色分けの帯
+      wallHalf: 4,              // 壁の帯の幅（内の輪の内と外へ）
+      longW: 1, shortW: 3,      // 針の太さ
+    },
+  };
+})();
+</script>
+<script>
+// シード付きの乱数（mulberry32）。状態は整数1つで、ルールの状態の中に持つ（写しても同じ列になる）
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  // o.rng（整数）を進めて [0,1) を返す
+  function next(o) {
+    let t = (o.rng = (o.rng + 0x6d2b79f5) | 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  }
+  const int = (o, n) => Math.floor(next(o) * n);
+  const pick = (o, arr) => arr[int(o, arr.length)];
+  // 重み付き。items: [{ weight }]
+  function weighted(o, items) {
+    let sum = 0;
+    for (const it of items) sum += it.weight;
+    let r = next(o) * sum;
+    for (const it of items) { r -= it.weight; if (r < 0) return it; }
+    return items[items.length - 1];
+  }
+  const seedFrom = (s) => (typeof s === 'number' ? s | 0 : [...String(s)].reduce((h, c) => Math.imul(h ^ c.charCodeAt(0), 16777619), 2166136261) | 0);
+
+  Game.rng = { next, int, pick, weighted, seedFrom };
+})();
+</script>
+<script>
+// 時刻 t（5 分 = 1 の整数。0〜143 で 12 時間）と、針の位置・呼び名。DOM・Canvas・言語に触らない。
+// 長針の位置は 12 か所（数字の位置）、短針の位置は 144 か所（数字と数字の間に 12 か所）。2 本は必ず連動する
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const DAY = 144;
+  const wrap = (t) => ((t % DAY) + DAY) % DAY;
+
+  const long = (t) => wrap(t) % 12;
+  const short = (t) => wrap(t);
+  // 呼び名: { h: 1〜12, m: 0〜55 }（文にするのは lang）
+  const name = (t) => ({ h: Math.floor(wrap(t) / 12) || 12, m: (wrap(t) % 12) * 5 });
+  const of = (h, m) => wrap((h % 12) * 12 + Math.round(m / 5));
+
+  Game.clock = { DAY, wrap, long, short, name, of };
+})();
+</script>
+<script>
+// ステージの型。数字（宝の位置、始まりの時刻）は遊ぶたびに gen.js が決める。ここは型と、作れなかったときの一例の数字（sample）。
+// 型: { id, area, door, cards, hints, gen: { start, in, inAt, span, out, outStep, lock, par: [少, 多] }, sample: { start, items, lock } }
+//   start: 始まりの時刻の刻み（'sharp' ちょうど / 'half' 30 分ごと / 'quarter' 15 分ごと / 'any'）
+//   in: 内の輪の宝の数、inAt: その刻み（'sharp' / 'half' = 少なくとも 1 つは「何時半」）、span: 始まりから何時間先までに置くか
+//   out: 外の輪の宝の数、outStep: 始まりの長針から数えた刻み（3 = 15 分ごと）
+//   lock: 扉の時刻の刻み（'half' = 何時半 / 'min' = ちょうどでも半でもない）
+//   inAt 'between' = 数字の間の宝が 1 つは要る。trapOut / trapIn: 罠の数。wall: 壁あり。batch: 途中の位置に罠があり、まとめて並べないと par で取れない盤だけ
+// できたステージ: { id, area, door, cards, hints, start, items: [{ ring: 'out' | 'in', pos, kind: 'gem' | 'trap' }], wall: null | 位置, lock: null | t, par, N, noonAt, seed, fallback }
+//   par: いちばん少ない枚数。pulls: その枚数で取りきるときの、「すすめる」のいちばん少ない回数。N: 1 日に使える枚数（par + slack）。noonAt: ここまでなら昼（par + floor(slack / 2)）
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const K = Game.clock;
+  const ALL = { nums: 'all', mins: true, zones: true, ticks: true, names: true };
+  const H1 = { nums: 'all', zones: true, names: true };   // エリア 1: 数字、時ごとの色分け、時刻の名前
+  const H2 = { nums: 'all', mins: true, names: true };    // エリア 2: 数字、分の数字、時刻の名前
+  const H3 = { nums: 'all', ticks: true };                 // エリア 3: 数字、目盛り
+  const H4 = { nums: 'quarter', ticks: true };             // エリア 4: 12・3・6・9、目盛り
+  const H5a = { nums: 'none', ticks: true }, H5b = { nums: 'none' };   // エリア 5: 目盛りだけ → 何もなし
+  const A5 = [12, 6, 3, 2, 1];
+  const gin = (h, m) => ({ ring: 'in', pos: K.of(h, m), kind: 'gem' });
+  const gout = (pos) => ({ ring: 'out', pos, kind: 'gem' });
+
+  Game.stages = [
+    // ---- エリア 1 みじかい はり: 何時・何時半 ----
+    { id: '1-1', area: 1, cards: [12], hints: H1, gen: { start: 'sharp', in: 1, inAt: 'sharp', span: 3, par: [2, 3] }, sample: { start: K.of(3, 0), items: [gin(5, 0)] } },
+    { id: '1-2', area: 1, cards: [12], hints: H1, gen: { start: 'sharp', in: 2, inAt: 'sharp', span: 5, par: [3, 5] }, sample: { start: K.of(1, 0), items: [gin(2, 0), gin(4, 0)] } },
+    { id: '1-3', area: 1, cards: [12], hints: H1, gen: { start: 'sharp', in: 3, inAt: 'sharp', span: 6, par: [4, 6] }, sample: { start: K.of(6, 0), items: [gin(7, 0), gin(9, 0), gin(11, 0)] } },
+    { id: '1-4', area: 1, cards: [12, 6], hints: H1, gen: { start: 'sharp', in: 1, inAt: 'half', span: 3, par: [2, 3] }, sample: { start: K.of(2, 0), items: [gin(3, 30)] } },
+    { id: '1-5', area: 1, cards: [12, 6], hints: H1, gen: { start: 'sharp', in: 2, inAt: 'half', span: 4, par: [3, 5] }, sample: { start: K.of(8, 0), items: [gin(9, 30), gin(11, 0)] } },
+    { id: '1-6', area: 1, cards: [12, 6], hints: H1, gen: { start: 'half', in: 3, inAt: 'half', span: 5, par: [4, 6] }, sample: { start: K.of(4, 30), items: [gin(5, 30), gin(7, 0), gin(8, 30)] } },
+    { id: '1-7', area: 1, door: true, cards: [12, 6], hints: H1, gen: { start: 'sharp', lock: 'half', span: 4, par: [2, 4] }, sample: { start: K.of(1, 0), items: [], lock: K.of(3, 30) } },
+    // ---- エリア 2 ながい はり: 5 とびの分 ----
+    { id: '2-1', area: 2, cards: [12, 6, 3], hints: H2, gen: { start: 'quarter', out: 1, outStep: 3, par: [1, 2] }, sample: { start: K.of(4, 0), items: [gout(9)] } },
+    { id: '2-2', area: 2, cards: [12, 6, 3, 1], hints: H2, gen: { start: 'quarter', out: 1, par: [2, 3] }, sample: { start: K.of(7, 0), items: [gout(4)] } },
+    { id: '2-3', area: 2, cards: [12, 6, 3, 2, 1], hints: H2, gen: { start: 'any', out: 1, par: [2, 3] }, sample: { start: K.of(10, 10), items: [gout(7)] } },
+    { id: '2-4', area: 2, cards: [12, 6, 3, 2, 1], hints: H2, gen: { start: 'any', out: 2, par: [2, 4] }, sample: { start: K.of(1, 5), items: [gout(4), gout(10)] } },
+    { id: '2-5', area: 2, cards: [12, 6, 3, 2, 1], hints: H2, gen: { start: 'any', out: 3, par: [3, 5] }, sample: { start: K.of(5, 0), items: [gout(2), gout(5), gout(11)] } },
+    { id: '2-6', area: 2, cards: [12, 6, 3, 2, 1], hints: H2, gen: { start: 'any', out: 3, par: [4, 6] }, sample: { start: K.of(9, 20), items: [gout(1), gout(3), gout(8)] } },
+    { id: '2-7', area: 2, door: true, cards: [12, 6, 3, 2, 1], hints: H2, gen: { start: 'any', lock: 'min', span: 3, par: [2, 4] }, sample: { start: K.of(4, 0), items: [], lock: K.of(5, 20) } },
+    // ---- エリア 3 ふたつの はり: 2 本を合わせて考える。罠 ----
+    { id: '3-1', area: 3, cards: A5, hints: H3, gen: { start: 'any', out: 1, in: 1, inAt: 'sharp', span: 3, par: [2, 4] }, sample: { start: 103, items: [{ ring: 'in', pos: 115, kind: 'gem' }, { ring: 'out', pos: 1, kind: 'gem' }] } },
+    { id: '3-2', area: 3, cards: A5, hints: H3, gen: { start: 'any', out: 1, in: 1, inAt: 'between', span: 3, par: [3, 5] }, sample: { start: 103, items: [{ ring: 'in', pos: 105, kind: 'gem' }, { ring: 'out', pos: 1, kind: 'gem' }] } },
+    { id: '3-3', area: 3, cards: A5, hints: H3, gen: { start: 'any', out: 2, trapOut: 1, par: [3, 5] }, sample: { start: 1, items: [{ ring: 'out', pos: 5, kind: 'gem' }, { ring: 'out', pos: 11, kind: 'gem' }, { ring: 'out', pos: 0, kind: 'trap' }] } },
+    { id: '3-4', area: 3, cards: A5, hints: H3, gen: { start: 'any', out: 1, in: 1, inAt: 'between', trapIn: 1, span: 3, par: [3, 5] }, sample: { start: 23, items: [{ ring: 'in', pos: 33, kind: 'gem' }, { ring: 'out', pos: 2, kind: 'gem' }, { ring: 'in', pos: 43, kind: 'trap' }] } },
+    { id: '3-5', area: 3, cards: A5, hints: H3, gen: { start: 'any', out: 2, in: 1, inAt: 'between', trapOut: 3, batch: true, span: 3, par: [3, 6] }, sample: { start: 128, items: [{ ring: 'in', pos: 139, kind: 'gem' }, { ring: 'out', pos: 9, kind: 'gem' }, { ring: 'out', pos: 11, kind: 'gem' }, { ring: 'out', pos: 1, kind: 'trap' }, { ring: 'out', pos: 5, kind: 'trap' }, { ring: 'out', pos: 10, kind: 'trap' }] } },
+    { id: '3-6', area: 3, cards: A5, hints: H3, gen: { start: 'any', out: 2, in: 2, inAt: 'between', trapOut: 1, trapIn: 1, span: 4, par: [4, 7] }, sample: { start: 0, items: [{ ring: 'in', pos: 1, kind: 'gem' }, { ring: 'in', pos: 23, kind: 'gem' }, { ring: 'out', pos: 7, kind: 'gem' }, { ring: 'out', pos: 8, kind: 'gem' }, { ring: 'in', pos: 42, kind: 'trap' }, { ring: 'out', pos: 9, kind: 'trap' }] } },
+    { id: '3-7', area: 3, door: true, cards: A5, hints: H3, gen: { start: 'any', lock: 'min', trapOut: 1, span: 3, par: [3, 5] }, sample: { start: 10, items: [{ ring: 'out', pos: 4, kind: 'trap' }], lock: 38 } },
+    // ---- エリア 4 かべ: 連動を先読みする ----
+    { id: '4-1', area: 4, cards: A5, hints: H4, gen: { start: 'any', out: 2, wall: true, par: [3, 5] }, sample: { start: 126, items: [{ ring: 'out', pos: 2, kind: 'gem' }, { ring: 'out', pos: 10, kind: 'gem' }], wall: 135 } },
+    { id: '4-2', area: 4, cards: A5, hints: H4, gen: { start: 'any', out: 1, in: 1, inAt: 'between', wall: true, span: 3, par: [3, 5] }, sample: { start: 23, items: [{ ring: 'in', pos: 33, kind: 'gem' }, { ring: 'out', pos: 6, kind: 'gem' }], wall: 37 } },
+    { id: '4-3', area: 4, cards: A5, hints: H4, gen: { start: 'any', out: 2, in: 1, inAt: 'between', wall: true, span: 3, par: [3, 6] }, sample: { start: 103, items: [{ ring: 'in', pos: 105, kind: 'gem' }, { ring: 'out', pos: 1, kind: 'gem' }, { ring: 'out', pos: 8, kind: 'gem' }], wall: 120 } },
+    { id: '4-4', area: 4, cards: A5, hints: H4, gen: { start: 'any', out: 2, in: 1, inAt: 'between', wall: true, trapOut: 1, span: 3, par: [3, 6] }, sample: { start: 103, items: [{ ring: 'in', pos: 105, kind: 'gem' }, { ring: 'out', pos: 1, kind: 'gem' }, { ring: 'out', pos: 8, kind: 'gem' }, { ring: 'out', pos: 4, kind: 'trap' }], wall: 115 } },
+    { id: '4-5', area: 4, cards: A5, hints: H4, gen: { start: 'any', out: 2, in: 2, inAt: 'between', wall: true, trapOut: 1, span: 4, par: [4, 7] }, sample: { start: 103, items: [{ ring: 'in', pos: 105, kind: 'gem' }, { ring: 'in', pos: 125, kind: 'gem' }, { ring: 'out', pos: 4, kind: 'gem' }, { ring: 'out', pos: 8, kind: 'gem' }, { ring: 'out', pos: 1, kind: 'trap' }], wall: 134 } },
+    { id: '4-6', area: 4, cards: A5, hints: H4, gen: { start: 'any', out: 2, in: 2, inAt: 'between', wall: true, trapOut: 1, trapIn: 1, span: 4, par: [4, 7] }, sample: { start: 40, items: [{ ring: 'in', pos: 50, kind: 'gem' }, { ring: 'in', pos: 77, kind: 'gem' }, { ring: 'out', pos: 7, kind: 'gem' }, { ring: 'out', pos: 9, kind: 'gem' }, { ring: 'in', pos: 41, kind: 'trap' }, { ring: 'out', pos: 3, kind: 'trap' }], wall: 83 } },
+    { id: '4-7', area: 4, door: true, cards: A5, hints: H4, gen: { start: 'any', lock: 'min', wall: true, trapOut: 1, span: 3, par: [3, 5] }, sample: { start: 23, items: [{ ring: 'out', pos: 6, kind: 'trap' }], lock: 33, wall: 37 } },
+    // ---- エリア 5 しるしの ない ばん: 目盛りだけ → 何もなし（ルールは増えない） ----
+    { id: '5-1', area: 5, cards: A5, hints: H5a, gen: { start: 'any', out: 2, in: 1, inAt: 'between', trapOut: 3, batch: true, span: 3, par: [3, 6] }, sample: { start: 128, items: [{ ring: 'in', pos: 139, kind: 'gem' }, { ring: 'out', pos: 9, kind: 'gem' }, { ring: 'out', pos: 11, kind: 'gem' }, { ring: 'out', pos: 1, kind: 'trap' }, { ring: 'out', pos: 5, kind: 'trap' }, { ring: 'out', pos: 10, kind: 'trap' }] } },
+    { id: '5-2', area: 5, cards: A5, hints: H5a, gen: { start: 'any', out: 2, in: 1, inAt: 'between', wall: true, span: 3, par: [3, 6] }, sample: { start: 103, items: [{ ring: 'in', pos: 105, kind: 'gem' }, { ring: 'out', pos: 1, kind: 'gem' }, { ring: 'out', pos: 8, kind: 'gem' }], wall: 120 } },
+    { id: '5-3', area: 5, cards: A5, hints: H5a, gen: { start: 'any', out: 2, in: 2, inAt: 'between', wall: true, trapOut: 1, span: 4, par: [4, 7] }, sample: { start: 103, items: [{ ring: 'in', pos: 105, kind: 'gem' }, { ring: 'in', pos: 125, kind: 'gem' }, { ring: 'out', pos: 4, kind: 'gem' }, { ring: 'out', pos: 8, kind: 'gem' }, { ring: 'out', pos: 1, kind: 'trap' }], wall: 134 } },
+    { id: '5-4', area: 5, cards: A5, hints: H5b, gen: { start: 'any', out: 2, in: 2, inAt: 'between', trapOut: 1, trapIn: 1, span: 4, par: [4, 7] }, sample: { start: 0, items: [{ ring: 'in', pos: 1, kind: 'gem' }, { ring: 'in', pos: 23, kind: 'gem' }, { ring: 'out', pos: 7, kind: 'gem' }, { ring: 'out', pos: 8, kind: 'gem' }, { ring: 'in', pos: 42, kind: 'trap' }, { ring: 'out', pos: 9, kind: 'trap' }] } },
+    { id: '5-5', area: 5, cards: A5, hints: H5b, gen: { start: 'any', out: 2, in: 1, inAt: 'between', wall: true, trapOut: 1, span: 3, par: [3, 6] }, sample: { start: 103, items: [{ ring: 'in', pos: 105, kind: 'gem' }, { ring: 'out', pos: 1, kind: 'gem' }, { ring: 'out', pos: 8, kind: 'gem' }, { ring: 'out', pos: 4, kind: 'trap' }], wall: 115 } },
+    { id: '5-6', area: 5, cards: A5, hints: H5b, gen: { start: 'any', out: 2, in: 2, inAt: 'between', wall: true, trapOut: 1, trapIn: 1, span: 4, par: [4, 7] }, sample: { start: 40, items: [{ ring: 'in', pos: 50, kind: 'gem' }, { ring: 'in', pos: 77, kind: 'gem' }, { ring: 'out', pos: 7, kind: 'gem' }, { ring: 'out', pos: 9, kind: 'gem' }, { ring: 'in', pos: 41, kind: 'trap' }, { ring: 'out', pos: 3, kind: 'trap' }], wall: 83 } },
+    { id: '5-7', area: 5, door: true, cards: A5, hints: H5b, gen: { start: 'any', lock: 'min', wall: true, trapOut: 1, span: 3, par: [3, 5] }, sample: { start: 23, items: [{ ring: 'out', pos: 6, kind: 'trap' }], lock: 33, wall: 37 } },
+  ];
+
+  // 確かめ用の、手で決めた盤（?stage=t2。記録には残らない）
+  Game.testStages = [
+    // 2 時から。長針の宝（20 分）→ 3 時半の宝。10+10、60+10 で 4 枚
+    { id: 't1', area: 0, cards: [12, 6, 3, 2, 1], hints: ALL, start: K.of(2, 0),
+      items: [{ ring: 'out', pos: 4, kind: 'gem' }, { ring: 'in', pos: K.of(3, 30), kind: 'gem' }], wall: null, lock: null, par: 4, pulls: 2, N: 8, noonAt: 6 },
+    // 9 時 50 分から。長針の宝（15 分）→ 10 時半の宝。0 分に罠、12 時に壁。15+10、15 で 3 枚
+    { id: 't2', area: 0, cards: [12, 6, 3, 2, 1], hints: { nums: 'all', ticks: true }, start: K.of(9, 50),
+      items: [{ ring: 'out', pos: 3, kind: 'gem' }, { ring: 'in', pos: K.of(10, 30), kind: 'gem' }, { ring: 'out', pos: 0, kind: 'trap' }], wall: K.of(12, 0), lock: null, par: 3, pulls: 2, N: 7, noonAt: 5 },
+    // 扉の鍵: 7 時 5 分から 8 時 45 分へ。60+30+10 で 3 枚
+    { id: 't3', area: 0, door: true, cards: [12, 6, 3, 2, 1], hints: { nums: 'quarter', ticks: true }, start: K.of(7, 5),
+      items: [], wall: null, lock: K.of(8, 45), par: 3, pulls: 1, N: 7, noonAt: 5 },
+  ];
+})();
+</script>
+<script>
+// ルール: 1 ステージの状態と操作。DOM・Canvas・言語に触らない。状態はただのデータ（structuredClone で写せる）。
+// 操作は一瞬で進み、起きたことを出来事の列で返す（針が回る・夜になるの時間は main が演出として持つ）。
+// 札は順に並べて、まとめて「すすめる」。宝・罠の判定は、最後に止まった所だけ。数えるのは使った札の枚数（弾かれたときも）。
+// 札の出どころ（いつも手元にある・山札から引く）は知らない。並べている途中の列は main が持つ
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const K = Game.clock;
+  const sum = (a) => a.reduce((x, y) => x + y, 0);
+
+  function start(stage) {
+    return {
+      stage, t: stage.start,
+      taken: stage.items.map(() => false),
+      used: 0,                 // きょう使った札の枚数
+      pulls: 0,                // きょう「すすめる」をした回数（レバー。弾かれたときも数える）
+      nights: 0,               // 夜になった回数（このステージで）
+      night: false,            // 夜になった（sleep で次の日へ行くまで、ほかの操作は受けない）
+      helpOn: false, helpUsed: false,
+      stuck: false,            // きょうの残りの枚数では取りきれない
+      done: false, gems: 0,
+    };
+  }
+
+  // 空: 'morning'（par まで）/ 'noon'（noonAt まで）/ 'evening'（N まで）
+  const phaseAt = (stage, used) => (used <= stage.par ? 'morning' : used <= stage.noonAt ? 'noon' : 'evening');
+  const phase = (s) => (s.night ? 'night' : phaseAt(s.stage, s.used));
+  const left = (s) => s.stage.N - s.used;
+  // いま、あと何枚並べられるか（すでに n 枚並べている）
+  const room = (s, n, cfg = Game.config) => (s.done || s.night ? 0 : Math.max(0, Math.min(cfg.queueMax, left(s)) - n));
+
+  // 止まる時刻 t で、その輪の針が物 it の上にあるか
+  const on = (it, t) => (it.ring === 'in' ? K.short(t) === it.pos : K.long(t) === it.pos);
+  const cleared = (s) => (s.stage.lock != null ? s.t === s.stage.lock : s.stage.items.every((it, i) => it.kind !== 'gem' || s.taken[i]));
+
+  // cards: 順に並んだ札（5 分 = 1 の数）
+  // check: 取りきれるかを解き手で確かめる（ステージ作りのでたらめな試し遊びでは切る）
+  function advance(s, cards, cfg = Game.config, check = true) {
+    if (s.done || s.night || !cards.length || cards.length > room(s, 0, cfg)) return [];
+    const st = s.stage, ev = [], total = sum(cards), from = s.t;
+    // 壁: 短針が届く・越えるなら、壁の手前まで進んで弾かれる
+    const toWall = st.wall == null ? Infinity : K.wrap(st.wall - from) || K.DAY;
+    const go = Math.min(total, toWall - 1);
+    let at = from, done = 0;
+    cards.forEach((n, i) => {
+      if (done >= go && total >= toWall) return;
+      ev.push({ type: 'card', i, n });
+      for (let k = 0; k < n && done < go; k++) {
+        at = K.wrap(at + 1); done++;
+        ev.push({ type: 'tick', t: at });
+        if (at % 12 === 0) ev.push({ type: 'hour', t: at });
+      }
+    });
+    const before = phase(s);
+    s.used += cards.length; s.pulls++;
+    const trap = total < toWall ? st.items.findIndex((it) => it.kind === 'trap' && on(it, at)) : -1;
+    if (total >= toWall) ev.push({ type: 'bounce', why: 'wall', back: from });
+    else if (trap >= 0) ev.push({ type: 'bounce', why: 'trap', item: trap, back: from });
+    else {
+      s.t = at;
+      st.items.forEach((it, i) => { if (it.kind === 'gem' && !s.taken[i] && on(it, at)) { s.taken[i] = true; ev.push({ type: 'take', item: i }); } });
+    }
+    if (cleared(s)) {
+      s.done = true; s.stuck = false;
+      s.gems = s.used <= st.par ? 3 : s.used <= st.noonAt ? 2 : 1;
+      ev.push({ type: 'clear', gems: s.gems });
+      return ev;
+    }
+    if (s.used >= st.N) { s.night = true; ev.push({ type: 'night' }); return ev; }
+    if (phase(s) !== before) ev.push({ type: 'phase', phase: phase(s) });
+    if (check && Game.solver) {
+      const stuck = !Game.solver.canClear(s, cfg);
+      if (stuck && !s.stuck) ev.push({ type: 'stuck' });
+      s.stuck = stuck;
+    }
+    return ev;
+  }
+
+  // 次の日へ（夜になったあと、または自分から寝る）。同じ盤を最初から
+  function sleep(s) {
+    if (s.done) return [];
+    s.t = s.stage.start; s.taken = s.stage.items.map(() => false);
+    s.used = 0; s.pulls = 0; s.nights++; s.night = false; s.stuck = false;   // 助け舟（helpOn）は、そのステージの間ずっと続く
+    return [{ type: 'day', nights: s.nights }];
+  }
+
+  const canHelp = (s, cfg = Game.config) => !s.done && s.nights >= cfg.help.nights;
+  function help(s, cfg = Game.config) {
+    if (!canHelp(s, cfg) || s.helpOn) return [];
+    s.helpOn = true; s.helpUsed = true;
+    return [{ type: 'help' }];
+  }
+  // ごほうび 3 つ、足あと、星
+  // 星: いちばん少ない枚数で、しかも「すすめる」の回数もいちばん少ない（stage.pulls。先まで読んで、まとめて並べた）
+  const star = (s) => s.done && s.stage.pulls != null && s.used <= s.stage.par && s.pulls <= s.stage.pulls;
+  const result = (s) => ({ gems: [s.gems >= 1, s.gems >= 2, s.gems >= 3], stamp: s.done && !s.helpUsed, star: star(s) });
+
+  Game.rules = { start, advance, sleep, help, canHelp, phase, phaseAt, left, room, cleared, result };
+})();
+</script>
+<script>
+// 解き手: いちばん少ない札の枚数（par）と、今の状態から取りきれるか。DOM・Canvas・言語に触らない。
+// いちばん少ない枚数の道のうち、「すすめる」（レバー）の回数がいちばん少ないものを返す（枚数 → 回数の順に比べる）。
+// 状態は（時刻 t、取った宝の組）。1 回の「すすめる」は、合計 d だけ進む手で、かかる枚数は「d を作るいちばん少ない札の枚数」。
+// 止まった所だけで判定するので、罠に止まる手・壁に届く手は弾かれるだけ（枚数を使って何も変わらない）→ 探さない
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const K = Game.clock;
+
+  // 合計 d（1〜）を作るいちばん少ない札の列。queueMax 枚で作れないものは入らない。返り値: { d: [札…] }
+  const tables = {};
+  function sums(cards, max) {
+    const key = cards.join() + '/' + max;
+    if (tables[key]) return tables[key];
+    const best = { 0: [] };
+    let layer = [0];
+    for (let n = 1; n <= max; n++) {
+      const next = [];
+      for (const d of layer) for (const c of cards) if (best[d + c] == null) { best[d + c] = best[d].concat(c); next.push(d + c); }
+      layer = next;
+    }
+    delete best[0];
+    return (tables[key] = best);
+  }
+
+  // from: { t, taken }（省くと始まりから）。budget: 使える枚数（これを超える道は探さない）
+  // 返り値: { cost: 枚数, pulls: 「すすめる」の回数, moves: [[札…]…] } か null（取りきれない）
+  function solve(stage, from, budget = Infinity, cfg = Game.config) {
+    const items = stage.items, gems = [];
+    items.forEach((it, i) => { if (it.kind === 'gem') gems.push(i); });
+    const t0 = from ? from.t : stage.start;
+    let m0 = 0;
+    gems.forEach((gi, b) => { if (from && from.taken[gi]) m0 |= 1 << b; });
+    const full = (1 << gems.length) - 1;
+    const goal = (t, m) => (stage.lock != null ? t === stage.lock : m === full);
+    if (stage.lock == null && m0 === full) return { cost: 0, pulls: 0, moves: [] };  // 鍵は、止まって初めて開く（始まりが合っていても 0 枚にはならない）
+    const S = sums(stage.cards, cfg.queueMax);
+    const ds = Object.keys(S).map(Number).sort((a, b) => a - b), cost = ds.map((d) => S[d].length);
+    // 時刻ごとの表: 罠に止まるか、止まると取れる宝の組
+    const trapAt = new Uint8Array(K.DAY), gemAt = new Uint8Array(K.DAY);
+    for (let t = 0; t < K.DAY; t++) {
+      for (const it of items) if (it.kind === 'trap' && (it.ring === 'in' ? t === it.pos : t % 12 === it.pos)) trapAt[t] = 1;
+      gems.forEach((gi, b) => { const it = items[gi]; if (it.ring === 'in' ? t === it.pos : t % 12 === it.pos) gemAt[t] |= 1 << b; });
+    }
+    const P = 64, W = full + 1, dist = new Int32Array(K.DAY * W).fill(-1), prevK = new Int32Array(K.DAY * W).fill(-1), prevD = new Uint8Array(K.DAY * W);
+    dist[t0 * W + m0] = 0;
+    // 道の重さ = 枚数 × P + 回数（枚数が少ないほうが先、同じなら回数が少ないほう）。重さごとの列を順に見ていく
+    const buckets = [[t0 * W + m0]];
+    for (let c = 0; c < buckets.length && c <= budget * P + P - 1; c++) {
+      for (const k0 of buckets[c] || []) {
+        if (dist[k0] !== c) continue;
+        const t = (k0 / W) | 0, m = k0 % W;
+        if (c > 0 && goal(t, m)) {
+          const moves = [];
+          for (let k = k0, n = c % P; n > 0; k = prevK[k], n--) moves.unshift(S[prevD[k]]);
+          return { cost: (c / P) | 0, pulls: c % P, moves };
+        }
+        const toWall = stage.wall == null ? Infinity : K.wrap(stage.wall - t) || K.DAY;
+        for (let i = 0; i < ds.length; i++) {
+          const d = ds[i];
+          if (d >= toWall) break;
+          const nc = c + cost[i] * P + 1;
+          if (cost[i] + ((c / P) | 0) > budget || nc % P === 0) continue;
+          const nt = (t + d) % K.DAY;
+          if (trapAt[nt]) continue;
+          const k = nt * W + (m | gemAt[nt]);
+          if (dist[k] >= 0 && dist[k] <= nc) continue;
+          dist[k] = nc; prevK[k] = k0; prevD[k] = d;
+          (buckets[nc] = buckets[nc] || []).push(k);
+        }
+      }
+    }
+    return null;
+  }
+
+  // いちばん少ない枚数（解けないときは Infinity）
+  const par = (stage, cfg = Game.config, budget = Infinity) => { const r = solve(stage, null, budget, cfg); return r ? r.cost : Infinity; };
+  // きょうの残りの枚数で取りきれるか
+  const canClear = (s, cfg = Game.config) => s.done || !!solve(s.stage, { t: s.t, taken: s.taken }, s.stage.N - s.used, cfg);
+
+  Game.solver = { sums, solve, par, canClear };
+})();
+</script>
+<script>
+// ステージを作る: 型（stages.js）と種から、1 回ぶんの数字を決める（設計書 3.4）。DOM・Canvas・言語に触らない。
+//   make(def, seed, prevSeed) → できたステージ（形は stages.js の頭）
+// 数字を乱数で決め、解き手で par を出し、型の決める範囲に入るか確かめる。だめなら決め直し、config.gen.tries 回でだめなら一例の数字（fallback: true）。
+// prevSeed を渡すと、その種で作ったステージと同じ数字にはしない
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const K = Game.clock;
+  const GRAIN = { sharp: 12, half: 6, quarter: 3, any: 1, between: 1 };
+
+  // 数字を 1 回決める。だめなら null（決め直し）
+  function roll(def, o, cfg) {
+    const R = Game.rng, G = def.gen;
+    const g0 = GRAIN[G.start], start = R.int(o, K.DAY / g0) * g0, items = [];
+    const span = (G.span || 3) * 12;
+    let lock = null, wall = null, far = 0;          // far: 短針が行く必要のある、いちばん先（始まりからの数）
+    const inOffs = [];                               // 内の輪の物（宝・罠）の、始まりからの数
+    const inner = (kind, g) => {
+      const off = (1 + R.int(o, span / g)) * g;
+      if (inOffs.some((d) => Math.abs(d - off) < cfg.gen.inGap)) return false;
+      // 罠の対の印（赤）を、宝の対の印（黄）と同じ「何分」に置かない
+      if (kind === 'trap' && items.some((it) => it.ring === 'in' && it.pos % 12 === K.wrap(start + off) % 12)) return false;
+      inOffs.push(off);
+      if (kind === 'gem') far = Math.max(far, off);
+      items.push({ ring: 'in', pos: K.wrap(start + off), kind });
+      return true;
+    };
+    for (let i = 0; i < (G.in || 0); i++) if (!inner('gem', GRAIN[G.inAt || 'any'])) return null;
+    if (G.inAt === 'half' && !items.some((it) => it.pos % 12 === 6)) return null;   // 「何時半」が 1 つは要る
+    if (G.inAt === 'between' && !items.some((it) => it.pos % 12 !== 0)) return null; // 数字の間の宝が 1 つは要る
+    for (let i = 0; i < (G.trapIn || 0); i++) if (!inner('trap', 1)) return null;
+    if (G.lock) {
+      const off = 1 + R.int(o, span);
+      lock = K.wrap(start + off); far = off;
+      const m = lock % 12;
+      if (G.lock === 'half' ? m !== 6 : m === 0 || m === 6) return null;
+    }
+    // 外の輪: 始まりの長針の位置、対の印の位置、ほかの物の位置を避ける（鍵の時刻の「何分」に罠を置かない）
+    const taken = new Set([K.long(start)]);
+    for (const it of items) taken.add(it.pos % 12);
+    if (lock != null) taken.add(lock % 12);
+    const outer = (kind, step) => {
+      const pos = (K.long(start) + (1 + R.int(o, 12 / step - 1)) * step) % 12;
+      if (taken.has(pos)) return false;
+      taken.add(pos); items.push({ ring: 'out', pos, kind });
+      return true;
+    };
+    for (let i = 0; i < (G.out || 0); i++) if (!outer('gem', G.outStep || 1)) return null;
+    for (let i = 0; i < (G.trapOut || 0); i++) if (!outer('trap', 1)) return null;
+    // 壁: 短針が行く必要のある所より先。罠の帯と重ならない
+    if (G.wall) {
+      const off = Math.max(far, 3) + 1 + R.int(o, 18);
+      if (inOffs.some((d) => d >= off - 2 && d <= off + 12)) return null;
+      wall = K.wrap(start + off);
+    }
+    // 宝は「取る順」ではなく、輪と位置の順に並べる（同じ盤は同じ形になる）
+    items.sort((x, y) => (x.kind === y.kind ? (x.ring === y.ring ? x.pos - y.pos : x.ring < y.ring ? -1 : 1) : x.kind === 'gem' ? -1 : 1));
+    return { start, items, lock, wall };
+  }
+
+  // でたらめに札を並べて（枚数もでたらめ）、1 日のうちにクリアできる割合
+  function luck(st, o, cfg) {
+    const R = Game.rng, RU = Game.rules, n = cfg.gen.luckRuns;
+    let ok = 0;
+    for (let i = 0; i < n; i++) {
+      const s = RU.start(st);
+      while (!s.done && !s.night) {
+        const k = 1 + R.int(o, RU.room(s, 0, cfg)), cards = [];
+        for (let j = 0; j < k; j++) cards.push(R.pick(o, st.cards));
+        RU.advance(s, cards, cfg, false);
+      }
+      if (s.done) ok++;
+    }
+    return ok / n;
+  }
+  // 壁が効いているか: 針は戻れないので、壁は「進める合計」の上限になる。
+  // いちばん少ない道の合計から壁までの残りが 1 時間より短ければ、行きすぎたときに長針をもう 1 周させられない（先読みが要る）
+  function wallMatters(st, cfg) {
+    const r = Game.solver.solve(st, null, st.par, cfg);
+    const total = r.moves.reduce((a, m) => a + m.reduce((x, y) => x + y, 0), 0);
+    return (K.wrap(st.wall - st.start) || K.DAY) - total <= cfg.gen.wallRoom;
+  }
+
+  function build(def, raw, cfg) {
+    const st = { id: def.id, area: def.area, door: !!def.door, cards: def.cards, hints: def.hints, start: raw.start, items: raw.items, wall: raw.wall == null ? null : raw.wall, lock: raw.lock == null ? null : raw.lock };
+    const best = Game.solver.solve(st, null, def.gen.par[1], cfg);
+    st.par = best ? best.cost : Infinity; st.pulls = best ? best.pulls : null;   // 型の範囲より多い枚数は探さない（解けない盤も Infinity）
+    const slack = cfg.gen.slack[def.area];
+    st.N = st.par + slack; st.noonAt = st.par + Math.floor(slack / 2);
+    return st;
+  }
+  const same = (a, b) => JSON.stringify([a.start, a.items, a.lock, a.wall]) === JSON.stringify([b.start, b.items, b.lock, b.wall]);
+
+  function make(def, seed, prevSeed, cfg = Game.config) {
+    const prev = prevSeed == null || prevSeed === seed ? null : make(def, prevSeed, null, cfg);
+    const o = { rng: seed | 0 };
+    for (let i = 0; i < cfg.gen.tries; i++) {
+      const raw = roll(def, o, cfg);
+      if (!raw) continue;
+      const st = build(def, raw, cfg);
+      if (st.par < def.gen.par[0] || st.par > def.gen.par[1]) continue;
+      if (prev && same(prev, st)) continue;
+      if (st.wall != null && !wallMatters(st, cfg)) continue;
+      // batch: 1 枚ずつ「すすめる」だけでは par で取れない盤（途中の位置に罠があり、まとめて並べる必要がある）
+      if (def.gen.batch && Game.solver.par(st, Object.assign({}, cfg, { queueMax: 1 }), st.par) <= st.par) continue;
+      // エリア 3 から先: 当てずっぽうで通れる盤は出さない
+      if (def.area >= cfg.gen.luckFrom && luck(st, { rng: (seed ^ 0x5bd1e995) + i }, cfg) > cfg.gen.luckMax) continue;
+      return Object.assign(st, { seed, fallback: false });
+    }
+    return Object.assign(build(def, def.sample, cfg), { seed, fallback: true });
+  }
+  // 型を書くときの道具: 一例の数字を作る（stages.js の sample に写す）
+  function sample(def, seed, cfg = Game.config) {
+    const st = make(Object.assign({}, def, { sample: { start: 0, items: [] } }), seed, null, cfg);
+    return st.fallback ? null : { start: st.start, items: st.items, lock: st.lock, wall: st.wall };
+  }
+
+  Game.gen = { make, sample, luck };
+})();
+</script>
+<script>
+// 記録: 開いたステージ、ステージごとのごほうび（3 つ）と足あと、前に遊んだ種。DOM・Canvas・言語に触らない。
+// 保存の形: { v, stages: { '1-1': { gems: [bool, bool, bool], stamp: bool, star: bool, seed: 整数 } } }
+// 前に取ったごほうびと足あとは消えない（遊び直して、取れていない分だけを足せる）
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  const fresh = (cfg = Game.config) => ({ v: cfg.save.version, stages: {} });
+  const blank = () => ({ gems: [false, false, false], stamp: false, star: false, seed: null });
+  const of = (p, id) => p.stages[id] || blank();
+
+  // 壊れたデータは、読めるところだけ使う。だめなら最初から
+  function parse(raw, cfg = Game.config, defs = Game.stages) {
+    let d = null;
+    try { if (typeof raw === 'string') d = JSON.parse(raw); } catch (e) { return fresh(cfg); }
+    const p = fresh(cfg);
+    if (!d || d.v !== cfg.save.version || !d.stages || typeof d.stages !== 'object') return p;
+    for (const def of defs) {
+      const s = d.stages[def.id];
+      if (!s || typeof s !== 'object') continue;
+      const e = blank();
+      if (Array.isArray(s.gems)) for (let i = 0; i < 3; i++) e.gems[i] = s.gems[i] === true;
+      e.stamp = s.stamp === true; e.star = s.star === true;
+      if (Number.isInteger(s.seed)) e.seed = s.seed;
+      p.stages[def.id] = e;
+    }
+    return p;
+  }
+
+  // クリアしたか（1 つめのごほうび）
+  const cleared = (p, id) => of(p, id).gems[0];
+  // 開いているか: エリアは最初から全部選べる。エリアの中は順番（最初のステージか、同じエリアの 1 つ前をクリアしている）
+  function open(p, id, defs = Game.stages) {
+    const i = defs.findIndex((d) => d.id === id);
+    if (i < 0) return false;
+    return i === 0 || defs[i - 1].area !== defs[i].area || cleared(p, defs[i - 1].id);
+  }
+  // 同じエリアの次のステージ（なければ null）
+  function next(id, defs = Game.stages) {
+    const i = defs.findIndex((d) => d.id === id);
+    return i >= 0 && defs[i + 1] && defs[i + 1].area === defs[i].area ? defs[i + 1].id : null;
+  }
+  // ステージに入るときの種を覚える（次に入るとき、同じ数字にしないため）
+  function enter(p, id, seed) {
+    const e = (p.stages[id] = of(p, id));
+    const prev = e.seed;
+    e.seed = seed;
+    return prev;
+  }
+  // 結果を足す。返り値: 今回はじめて取れたもの { gems: [bool×3], stamp }
+  function record(p, id, outcome) {
+    const e = (p.stages[id] = of(p, id));
+    const got = { gems: [false, false, false], stamp: false, star: false };
+    for (let i = 0; i < 3; i++) if (outcome.gems[i] && !e.gems[i]) { e.gems[i] = true; got.gems[i] = true; }
+    if (outcome.stamp && !e.stamp) { e.stamp = true; got.stamp = true; }
+    if (outcome.star && !e.star) { e.star = true; got.star = true; }
+    return got;
+  }
+  // エリアの合計 { gems, stamps, stages }
+  function total(p, area, defs = Game.stages) {
+    const t = { gems: 0, stamps: 0, stars: 0, stages: 0 };
+    for (const d of defs) if (d.area === area) { const e = of(p, d.id); t.stages++; t.gems += e.gems.filter(Boolean).length; if (e.stamp) t.stamps++; if (e.star) t.stars++; }
+    return t;
+  }
+
+  Game.progress = { fresh, parse, of, cleared, open, next, enter, record, total };
+})();
+</script>
+<script>
+// 保存データの読み書き（localStorage）。記録（hoppe-clock.progress、検め方は progress.parse）、設定（hoppe-clock.settings）、手本を見たか（hoppe-clock.tips）。
+// 読めない・壊れているときは最初の状態から始める。書けない（容量・プライベートモード）ときは黙って続ける
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  function read(key) { try { return localStorage.getItem(key); } catch (e) { return null; } }
+  function write(key, data) { try { localStorage.setItem(key, JSON.stringify(data)); return true; } catch (e) { return false; } }
+  const json = (raw) => { try { return typeof raw === 'string' ? JSON.parse(raw) : null; } catch (e) { return null; } };
+
+  // 設定 { sound: bool }
+  function parseSettings(raw) { const d = json(raw); return { sound: !(d && d.sound === false) }; }
+  // 手本 { seen: { count: true, … } }（できたものだけ）
+  function parseTips(raw, cfg = Game.config) {
+    const d = json(raw), t = { seen: {} };
+    if (d && d.seen && typeof d.seen === 'object') for (const id of cfg.tips) if (d.seen[id] === true) t.seen[id] = true;
+    return t;
+  }
+
+  Game.save = {
+    parseSettings, parseTips,
+    loadProgress: (cfg = Game.config) => Game.progress.parse(read(cfg.save.progress), cfg),
+    storeProgress: (p, cfg = Game.config) => write(cfg.save.progress, p),
+    loadSettings: (cfg = Game.config) => parseSettings(read(cfg.save.settings)),
+    storeSettings: (s, cfg = Game.config) => write(cfg.save.settings, s),
+    loadTips: (cfg = Game.config) => parseTips(read(cfg.save.tips), cfg),
+    storeTips: (t, cfg = Game.config) => write(cfg.save.tips, t),
+  };
+})();
+</script>
+<script>
+// 5×7 の自作ドット文字。1文字 = 7行×5桁の文字列（'#' が点）。濁点・半濁点は bake.js で重ねる
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  const G = {};
+  // 7行を1行に並べて書く（' ' 区切り）
+  const def = (ch, rows) => { G[ch] = rows.split(' '); };
+
+  // 数字
+  def('0', '.###. #...# #..## #.#.# ##..# #...# .###.');
+  def('1', '..#.. .##.. ..#.. ..#.. ..#.. ..#.. .###.');
+  def('2', '.###. #...# ....# ...#. ..#.. .#... #####');
+  def('3', '##### ...#. ..#.. ...#. ....# #...# .###.');
+  def('4', '...#. ..##. .#.#. #..#. ##### ...#. ...#.');
+  def('5', '##### #.... ####. ....# ....# #...# .###.');
+  def('6', '..##. .#... #.... ####. #...# #...# .###.');
+  def('7', '##### ....# ...#. ..#.. .#... .#... .#...');
+  def('8', '.###. #...# #...# .###. #...# #...# .###.');
+  def('9', '.###. #...# #...# .#### ....# ...#. .##..');
+
+  // 英字（大文字）
+  def('A', '.###. #...# #...# ##### #...# #...# #...#');
+  def('B', '####. #...# #...# ####. #...# #...# ####.');
+  def('C', '.###. #...# #.... #.... #.... #...# .###.');
+  def('D', '###.. #..#. #...# #...# #...# #..#. ###..');
+  def('E', '##### #.... #.... ####. #.... #.... #####');
+  def('F', '##### #.... #.... ####. #.... #.... #....');
+  def('G', '.###. #...# #.... #.### #...# #...# .####');
+  def('H', '#...# #...# #...# ##### #...# #...# #...#');
+  def('I', '.###. ..#.. ..#.. ..#.. ..#.. ..#.. .###.');
+  def('J', '..### ...#. ...#. ...#. ...#. #..#. .##..');
+  def('K', '#...# #..#. #.#.. ##... #.#.. #..#. #...#');
+  def('L', '#.... #.... #.... #.... #.... #.... #####');
+  def('M', '#...# ##.## #.#.# #.#.# #...# #...# #...#');
+  def('N', '#...# #...# ##..# #.#.# #..## #...# #...#');
+  def('O', '.###. #...# #...# #...# #...# #...# .###.');
+  def('P', '####. #...# #...# ####. #.... #.... #....');
+  def('Q', '.###. #...# #...# #...# #.#.# #..#. .##.#');
+  def('R', '####. #...# #...# ####. #.#.. #..#. #...#');
+  def('S', '.#### #.... #.... .###. ....# ....# ####.');
+  def('T', '##### ..#.. ..#.. ..#.. ..#.. ..#.. ..#..');
+  def('U', '#...# #...# #...# #...# #...# #...# .###.');
+  def('V', '#...# #...# #...# #...# #...# .#.#. ..#..');
+  def('W', '#...# #...# #...# #.#.# #.#.# #.#.# .#.#.');
+  def('X', '#...# #...# .#.#. ..#.. .#.#. #...# #...#');
+  def('Y', '#...# #...# .#.#. ..#.. ..#.. ..#.. ..#..');
+  def('Z', '##### ....# ...#. ..#.. .#... #.... #####');
+
+  // 英小文字（英語の文）。幅は字ごとに変わる（行の長さ＝字の幅、送り＝幅＋1）。x の高さは 2〜6 行。
+  // g j p q y は 8 行（本体 4 行＋下 2 行で、7 行目＝並びの下の線より 1 行下へ出る。数字の 9 と見分けるため）。
+  // 下へ出る分は、英語のときの文の置き場所（config.textBox の en）で空ける。x は記号の x（幅 5、倍率の x1.25）を使う
+  def('a', '.... .... .##. ...# .### #..# .###');
+  def('b', '#... #... ###. #..# #..# #..# ###.');
+  def('c', '.... .... .### #... #... #... .###');
+  def('d', '...# ...# .### #..# #..# #..# .###');
+  def('e', '.... .... .##. #..# #### #... .###');
+  def('f', '.## #.. ### #.. #.. #.. #..');
+  def('g', '.... .... .### #..# #..# .### ...# ###.');
+  def('h', '#... #... ###. #..# #..# #..# #..#');
+  def('i', '# . # # # # #');
+  def('j', '..# ... ..# ..# ..# ..# ..# ##.');
+  def('k', '#... #... #..# #.#. ##.. #.#. #..#');
+  def('l', '#. #. #. #. #. #. .#');
+  def('m', '..... ..... ##.#. #.#.# #.#.# #.#.# #.#.#');
+  def('n', '.... .... ###. #..# #..# #..# #..#');
+  def('o', '.... .... .##. #..# #..# #..# .##.');
+  def('p', '.... .... ###. #..# #..# ###. #... #...');
+  def('q', '.... .... .### #..# #..# .### ...# ...#');
+  def('r', '.... .... #.## ##.. #... #... #...');
+  def('s', '.... .... .### #... .##. ...# ###.');
+  def('t', '.#. .#. ### .#. .#. .#. ..#');
+  def('u', '.... .... #..# #..# #..# #..# .###');
+  def('v', '..... ..... #...# #...# #...# .#.#. ..#..');
+  def('w', '..... ..... #...# #...# #.#.# #.#.# .#.#.');
+  def('y', '.... .... #..# #..# #..# .### ...# ###.');
+  def('z', '.... .... #### ..#. .#.. #... ####');
+  def("'", '# # . . . . .');
+  def(',', '.. .. .. .. .# .# #.');
+
+  // 記号
+  def(' ', '..... ..... ..... ..... ..... ..... .....');
+  def('!', '..#.. ..#.. ..#.. ..#.. ..#.. ..... ..#..');
+  // 矢印（あそびかたのキーの行）
+  def('←', '..... ..#.. .#... ##### .#... ..#.. .....');
+  def('→', '..... ..#.. ...#. ##### ...#. ..#.. .....');
+  def('↑', '..#.. .###. #.#.# ..#.. ..#.. ..#.. ..#..');
+  def('↓', '..#.. ..#.. ..#.. ..#.. #.#.# .###. ..#..');
+  def('…', '..... ..... ..... ..... ..... #.#.# .....');
+  def('?', '.###. #...# ....# ...#. ..#.. ..... ..#..');
+  def('.', '..... ..... ..... ..... ..... ..... ..#..');
+  def(':', '..... ..#.. ..... ..... ..... ..#.. .....');
+  def('-', '..... ..... ..... .###. ..... ..... .....');
+  def('+', '..... ..#.. ..#.. ##### ..#.. ..#.. .....');
+  def('%', '##... ##..# ...#. ..#.. .#... #..## ...##');
+  def('x', '..... ..... #...# .#.#. ..#.. .#.#. #...#');
+  def('/', '....# ....# ...#. ..#.. .#... #.... #....');
+  def('(', '...#. ..#.. .#... .#... .#... ..#.. ...#.');
+  def(')', '.#... ..#.. ...#. ...#. ...#. ..#.. .#...');
+  def('=', '..... ..... ##### ..... ##### ..... .....');
+  def('ー', '..... ..... ..... ##### ..... ..... .....');
+  def('〜', '..... ..... .#... #.#.# ...#. ..... .....');
+  def('。', '..... ..... ..... ..... .#... #.#.. .#...');
+  def('、', '..... ..... ..... ..... #.... .#... .....');
+  def('・', '..... ..... ..... ..#.. ..... ..... .....');
+  def('♪', '..##. ..#.# ..#.. ..#.. ###.. ###.. .....');
+
+  // ひらがな
+  def('あ', '..#.. ##### ..#.. .####  #.#.# #.#.# .#.#.'.replace('  ', ' '));
+  def('い', '..... #...# #...# #...# #...# .#..# .....');
+  def('う', '.##.. ..... .###. #...# ....# ...#. .##..');
+  def('え', '.##.. ..... ####. ..#.. .##.. #.#.. #..##');
+  def('お', '.#... ####. .#.## .###. ##..# #...# .###.');
+  def('か', '.#... ####. .#.#. .#..# .#..# #...# #.##.');
+  def('き', '..#.. ####. ..#.. #####. ...#. .#... .###.'.replace('#####.', '#####'));
+  def('く', '...#. ..#.. .#... #.... .#... ..#.. ...#.');
+  def('け', '#..#. #.### #..#. #..#. #..#. #.#.. #....');
+  def('こ', '..... .###. ..... ..... ..... #.... .###.');
+  def('さ', '..#.. ##### ...#. .###. #.... #.... .###.');
+  def('し', '.#... .#... .#... .#... .#... .#..# ..##.');
+  def('す', '..#.. ##### ..#.. .##.. .##.. ..#.. .#...');
+  def('せ', '.#.#. ##### .#.#. .#.#. .#... .#... ..###');
+  def('そ', '####. ..#.. .#... ##### ..#.. .#... ..##.');
+  def('た', '.#... ####. .#... #.### #.... #.... #.###');
+  def('ち', '.#... ####. .#... .###. #...# ....# .###.');
+  def('つ', '..... ..... ####. ....# ....# ...#. ###..');
+  def('て', '..... ##### ..#.. .#... .#... .#... ..##.');
+  def('と', '.#... .#... .#.## .##.. #.... #.... .####');
+  def('な', '.#... ####. .#..# #..#. ...#. .###. #.##.');
+  def('に', '#.... #.### #.... #.... #.#.. #.#.. #..##');
+  def('ぬ', '.#.#. ##### #.#.# #.#.# #.### #..## .#.##');
+  def('ね', '.#... ####. .#.#. .##.# ##..# #.#.# #.#.#');
+  def('の', '..... .###. #.#.# #.#.# #.#.# #..#. .....');
+  def('は', '#..#. #.### #..#. #..#. #.##. #.#.# #.##.');
+  def('ひ', '..... ##.#. .#..# #...# #...# #...# .###.');
+  def('ふ', '..#.. ...#. ..#.. ..#.. #.#.# #...# .##..');
+  def('へ', '..... ..... .#... #.#.. ...#. ....# .....');
+  def('ほ', '#.### #..#. #.### #..#. #.##. #.#.# #.##.');
+  def('ま', '..#.. ##### ..#.. ##### ..#.. .###. #.#.#');
+  def('み', '###.. .#... .#.#. #####  .#.#. #..#. ..#..'.replace('  ', ' '));
+  def('む', '.#... ####. .#..# .#... ##... #.#.# .###.');
+  def('め', '.#.#. ..#.. ##### #.#.# ##..# #..#. .##..');
+  def('も', '..#.. .###. ..#.. .###. ..#.# ..#.# ...#.');
+  def('や', '.#... .#.#. ###.# .#.#. ..#.. ..#.. ..#..');
+  def('ゆ', '..#.. #.##. ##.## #.#.# #.##. ..#.. .#...');
+  def('よ', '...#. ...#. ...## ...#. .###. #..#. .##.#');
+  def('ら', '.##.. ...#. .#... #.... ####. ....# .###.');
+  def('り', '#..#. #...# #...# #...# ....# ...#. ..#..');
+  def('る', '####. ..#.. .#... ####. #...# .###. .##.#');
+  def('れ', '.#... ##.#. .##.# .#..# ##..# .#..# .#..#');
+  def('ろ', '####. ..#.. .#... ####. ....# ....# .###.');
+  def('わ', '.#... ###.. .#.#. .##.# ##..# .#..# .#.#.');
+  def('を', '.#... ####. ..#.. .#### ##... #.#.. .####');
+  def('ん', '..#.. ..#.. .#... .#... ##.#. #.#.# #..#.');
+  def('っ', '..... ..... ..... .###. ...#. ...#. .##..');
+  def('ゃ', '..... ..... .#... .###. ##.#. .#... .#...');
+  def('ゅ', '..... ..... .#... ####. ##.#. .#... .....');
+  def('ょ', '..... ..... ...#. ...#. .###. #..#. .###.');
+
+  // カタカナ
+  def('ア', '##### ....# ..##. ..#.. ..#.. .#... #....');
+  def('イ', '....# ...#. ..#.. .##.. #.#.. ..#.. ..#..');
+  def('ウ', '..#.. ##### #...# ....# ...#. ..#.. .#...');
+  def('エ', '..... ##### ..#.. ..#.. ..#.. ..#.. #####');
+  def('オ', '...#. ##### ...#. ..##. .#.#. #..#. ..##.');
+  def('カ', '..#.. ##### ..#.# ..#.# .#..# .#..# #..#.');
+  def('キ', '..#.. ##### ..#.. ##### ..#.. ..#.. ..#..');
+  def('ク', '.#... .#### #...# ....# ...#. ..#.. ##...');
+  def('ケ', '.#... .#### #..#. ...#. ...#. ..#.. .#...');
+  def('コ', '..... ##### ....# ....# ....# ....# #####');
+  def('サ', '.#.#. ##### .#.#. .#.#. ...#. ..#.. .#...');
+  def('シ', '#.... .#..# ....# ##..# ...#. ..#.. ##...');
+  def('ス', '##### ....# ...#. ..#.. .#.#. #...# .....');
+  def('セ', '.#... ##### .#..# .#.#. .#... .#... ..###');
+  def('ソ', '#...# #...# .#..# ....# ...#. ..#.. ##...');
+  def('タ', '.#... .#### #...# .##.# ...#. ..#.. ##...');
+  def('チ', '...## ###.. ..#.. ##### ..#.. ..#.. .#...');
+  def('ツ', '#.#.# #.#.# #.#.# ....# ...#. ..#.. ##...');
+  def('テ', '.###. ..... ##### ..#.. ..#.. ..#.. .#...');
+  def('ト', '.#... .#... .##.. .#.#. .#... .#... .#...');
+  def('ナ', '..#.. ##### ..#.. ..#.. ..#.. .#... #....');
+  def('ニ', '..... .###. ..... ..... ..... ..... #####');
+  def('ヌ', '##### ....# .#.#. ..#.. .#.#. #.... .....');
+  def('ネ', '..#.. ##### ...#. ..#.. .###. #.#.# ..#..');
+  def('ノ', '....# ....# ...#. ..#.. .#... #.... .....');
+  def('ハ', '..... .#.#. .#.#. #...# #...# #...# .....');
+  def('ヒ', '#.... #.... #..## ###.. #.... #.... .####');
+  def('フ', '##### ....# ....# ...#. ..#.. .#... #....');
+  def('ヘ', '..... .#... #.#.. ...#. ....# ..... .....');
+  def('ホ', '..#.. ##### ..#.. #.#.# #.#.# ..#.. ..#..');
+  def('マ', '##### ....# ...#. #.#.. .#... ..#.. .....');
+  def('ミ', '.###. ..... .###. ..... ..... .###. .....');
+  def('ム', '..#.. ..#.. .#... .#... .#..# ##### .....');
+  def('メ', '....# ...#. #.#.. .#... .##.. #..#. .....');
+  def('モ', '.###. ..#.. ##### ..#.. ..#.. ..#.. ..###');
+  def('ヤ', '.#... ##### .#..# .#.#. .#... .#... .#...');
+  def('ユ', '..... .###. ...#. ...#. ...#. ##### .....');
+  def('ヨ', '##### ....# ....# ##### ....# ....# #####');
+  def('ラ', '.###. ..... ##### ....# ...#. ..#.. ##...');
+  def('リ', '#...# #...# #...# ....# ...#. ..#.. .#...');
+  def('ル', '..#.. #.#.. #.#.. #.#.. #.#.# #.##. #.#..');
+  def('レ', '#.... #.... #.... #...# #..#. #.#.. ##...');
+  def('ロ', '..... ##### #...# #...# #...# ##### .....');
+  def('ワ', '##### #...# ....# ...#. ..#.. .#... #....');
+  def('ヲ', '##### ....# .###. ....# ...#. ..#.. ##...');
+  def('ン', '##... ....# ....# ...#. ..#.. .#... #....');
+  def('ッ', '..... ..... #.#.# #.#.# ...#. ..#.. .#...');
+  def('ャ', '..... ..... .#... ##### .#.#. .#... .#...');
+  def('ュ', '..... ..... ..... .##.. ..#.. .###. .....');
+  def('ョ', '..... ..... .###. ...#. .###. ...#. .###.');
+
+  // 濁点・半濁点の付いた字は、元の字に重ねて作る
+  const DAKU = { が: 'か', ぎ: 'き', ぐ: 'く', げ: 'け', ご: 'こ', ざ: 'さ', じ: 'し', ず: 'す', ぜ: 'せ', ぞ: 'そ', だ: 'た', ぢ: 'ち', づ: 'つ', で: 'て', ど: 'と', ば: 'は', び: 'ひ', ぶ: 'ふ', べ: 'へ', ぼ: 'ほ',
+    ガ: 'カ', ギ: 'キ', グ: 'ク', ゲ: 'ケ', ゴ: 'コ', ザ: 'サ', ジ: 'シ', ズ: 'ス', ゼ: 'セ', ゾ: 'ソ', ダ: 'タ', ヂ: 'チ', ヅ: 'ツ', デ: 'テ', ド: 'ト', バ: 'ハ', ビ: 'ヒ', ブ: 'フ', ベ: 'ヘ', ボ: 'ホ', ヴ: 'ウ' };
+  const HANDAKU = { ぱ: 'は', ぴ: 'ひ', ぷ: 'ふ', ぺ: 'へ', ぽ: 'ほ', パ: 'ハ', ピ: 'ヒ', プ: 'フ', ペ: 'ヘ', ポ: 'ホ' };
+
+  // 分数用の小さい数字（3×5）。横棒の上下に置く
+  const SMALL = {};
+  const sdef = (ch, rows) => { SMALL[ch] = rows.split(' '); };
+  sdef('0', '### #.# #.# #.# ###');
+  sdef('1', '.#. ##. .#. .#. ###');
+  sdef('2', '### ..# ### #.. ###');
+  sdef('3', '### ..# .## ..# ###');
+  sdef('4', '#.# #.# ### ..# ..#');
+  sdef('5', '### #.. ### ..# ###');
+  sdef('6', '### #.. ### #.# ###');
+  sdef('7', '### ..# ..# .#. .#.');
+  sdef('8', '### #.# ### #.# ###');
+  sdef('9', '### #.# ### ..# ###');
+
+  Game.font = { glyphs: G, small: SMALL, DAKU, HANDAKU, w: 5, h: 7, adv: 6 };
+})();
+</script>
+<script>
+// 画面の文は全部ここ（render / main に文をじかに書かない）。最初の版は日本語だけ
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  Game.text = {
+    ja: {
+      title: { name1: 'HOPPE', name2: 'CLOCK', tap: 'タップで はじめる' },
+      area: { 1: 'みじかい はり', 2: 'ながい はり', 3: 'ふたつの はり', 4: 'かべ', 5: 'しるしの ない ばん' },
+      // 時刻の呼び名。30 分は「はん」。「ふん・ぷん」は分ごとの表
+      time: {
+        sharp: '{h}じ', half: '{h}じ はん', min: '{h}じ {m}{u}',
+        unit: { 5: 'ふん', 10: 'ぷん', 15: 'ふん', 20: 'ぷん', 25: 'ふん', 35: 'ふん', 40: 'ぷん', 45: 'ふん', 50: 'ぷん', 55: 'ふん' },
+      },
+      clear: { title: 'クリア!', next: 'つぎへ', again: 'もういちど', back: 'もどる' },
+      stuck: 'きょうは もう ねよう',
+      help: 'てがかりを だす',
+      lock: { tip: 'とびらの じこくに あわせよう' },
+      // 擬音
+      fx: { ghost: 'ひゃあ', tick: 'カチ', door: 'ゴゴゴ', take: 'ピタッ', bounce: 'ガツン', put: 'コトン', lever: 'ガチャ', sleep: 'ぐう', dawn: 'あさ!' },
+      // 札
+      card: { 12: ['1', 'じかん'], 6: ['30', 'ぷん'], 3: ['15', 'ふん'], 2: ['10', 'ぷん'], 1: ['5', 'ふん'] },
+    },
+  };
+})();
+</script>
+<script>
+// 文の表（text.js）を引く t。最初の版は日本語だけ（表の形は HOPPE DIVE と同じなので、あとで言語を足せる）
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  const L = {
+    cur: 'ja',
+    // 'a.b.c' の道をたどる。vars があれば {x} を埋める。ないときは '?'
+    t(path, vars, lang = L.cur) {
+      let v = Game.text[lang];
+      for (const k of path.split('.')) { if (v == null) break; v = v[k]; }
+      if (v == null) return '?';
+      if (vars && typeof v === 'string') v = v.replace(/\{(\w+)\}/g, (m, k) => (vars[k] != null ? String(vars[k]) : m));
+      return v;
+    },
+    // 時刻 t の呼び名（「9じ 50ぷん」）
+    time(t) {
+      const n = Game.clock.name(t);
+      if (n.m === 0) return L.t('time.sharp', n);
+      if (n.m === 30) return L.t('time.half', n);
+      return L.t('time.min', { h: n.h, m: n.m, u: L.t('time.unit.' + n.m) });
+    },
+  };
+
+  Game.lang = L;
+})();
+</script>
+<script>
+// 絵（文字の格子）。色セットは Endesga 32。1文字 = 1色、'.' は透明。
+// ハムスターは「体」と「足」を分けて描き、bake.js でコマに組み立てる。探検家・たね・宝石は HOPPE DIVE から写したもの
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  // Endesga 32
+  const PAL = {
+    0: '#181425', 1: '#262b44', 2: '#3a4466', 3: '#5a6988', 4: '#8b9bb4', 5: '#c0cbdc', 6: '#ffffff',
+    a: '#be4a2f', b: '#d77643', c: '#ead4aa', d: '#e4a672', e: '#b86f50', f: '#733e39', g: '#3e2731',
+    h: '#a22633', i: '#e43b44', j: '#f77622', k: '#feae34', l: '#fee761',
+    m: '#63c74d', n: '#3e8948', o: '#265c42', p: '#193c3e',
+    q: '#124e89', r: '#0099db', s: '#2ce8f5',
+    t: '#ff0044', u: '#68386c', v: '#b55088', w: '#f6757a', x: '#e8b796', y: '#c28569',
+  };
+
+  const S = {};
+
+  // ---- ハムスター（右向き、16×16。体は 0〜14 行、足は 15 行） ----
+  S.hamBody = [
+    '................',
+    '................',
+    '......ggggg.....',
+    '.....gcccccg....',
+    '.....gccccccg...',
+    '....geeeeeeeeg..',
+    '...gdddddddddddg',
+    '..gfgbbbbbbb0bg.',
+    '.gfefgbbbbbbbbbg',
+    '.gfefgbbbbbbbbwg',
+    '.gffgbbbbbbcwwcg',
+    '..ggbbbbbbbccccg',
+    '...gbbbbbbcccccg',
+    '...gbbbbbbbcccg.',
+    '....ggbbbbbbgg..',
+  ];
+  // 足の位置（後ろ足 x、前足 x）と、体の上下（dy）。走りは6コマ
+  S.hamRun = [
+    { feet: [4, 11], dy: 0 },
+    { feet: [5, 10], dy: -1 },
+    { feet: [7, 9], dy: -1 },
+    { feet: [8, 8], dy: 0 },
+    { feet: [7, 9], dy: -1 },
+    { feet: [5, 10], dy: -1 },
+  ];
+  S.hamFoot = ['ww'];
+
+  S.gem = [
+    '..000..',
+    '.0s6s0.',
+    '0srssr0',
+    '0rrsrr0',
+    '.0qrq0.',
+    '..0q0..',
+    '...0...',
+  ];
+
+  S.finger = [
+    '.000000.',
+    '0xxxxxx0',
+    '0xyxyxx0',
+    '0xxxxxx0',
+    '.0xxxx0.',
+    '..0xx0..',
+    '..0xx0..',
+    '..0xx0..',
+    '..0xx0..',
+    '...00...',
+  ];
+
+  // 音の入り切り（スピーカー）
+  S.spkOn = ['...6..6.', '..66...6', '6666.6.6', '6666.6.6', '6666.6.6', '..66...6', '...6..6.'];
+  S.spkOff = ['...6....', '..66....', '6666.i.i', '6666..i.', '6666.i.i', '..66....', '...6....'];
+  // 足あと（助け舟を使わずにクリアした印）
+  S.foot = [
+    '.0.0.0.',
+    '0w0w0w0',
+    '.0.0.0.',
+    '.00000.',
+    '0wwwww0',
+    '0wwwww0',
+    '.00000.',
+  ];
+
+  Game.sprites = { PAL, S };
+})();
+</script>
+<script>
+// 文字の格子を、画面に出さない Canvas に焼く。左右反転・色の差し替え・白く光らせる版もここで作る
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const { PAL, S } = Game.sprites;
+  const F = Game.font;
+
+  const mk = (w, h) => { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; };
+
+  // rows: 文字列の配列。opt: { map: {文字: 色の文字}, white: 全部白, flip: 左右反転 }
+  function bake(rows, opt = {}) {
+    const h = rows.length, w = Math.max(...rows.map((r) => r.length));
+    const c = mk(w, h), g = c.getContext('2d');
+    for (let y = 0; y < h; y++) for (let x = 0; x < rows[y].length; x++) {
+      let ch = rows[y][x];
+      if (ch === '.' || ch === ' ') continue;
+      if (opt.map && opt.map[ch] != null) ch = opt.map[ch];
+      const col = opt.white ? '#ffffff' : PAL[ch];
+      if (!col) continue;
+      g.fillStyle = col;
+      g.fillRect(opt.flip ? w - 1 - x : x, y, 1, 1);
+    }
+    return c;
+  }
+
+  // ---- ハムスターのコマを組み立てる ----
+  // 体の行を dy だけずらし、足を置く。lean: 上半分を1ドット前へ
+  // たねの数（ほっぺの段階 0〜3）ごとに、ほっぺがふくらむ（8〜14 行を差し替える）。体の輪郭（16 ドット）の外、前へ張り出すので、
+  // コマは HW ドット幅で焼く（左端そろえ。描く位置は 16 ドットのときと同じ）
+  const HW = 20;
+  // ほっぺ: 目の下から後ろ（肩の方）へ広がるクリーム色の頬袋。前へは出さない（鼻先は小さいまま）。
+  // 下の縁を濃い色（y）で描き、お腹とのあいだにオレンジの帯を残して、お腹と分ける
+  const CHEEK = [null,
+    {
+      8: '.gfefgbbbxxcbbbg',
+      9: '.gfefgbbxccccbwg',
+      10: '.gffgbbbccccccbg',
+      11: '..ggbbbbyccccybg',
+      12: '...gbbbbbyyyybcg',
+    },
+    {
+      8: '.gfefgbbxxxcbbbg',
+      9: '.gfefgbxxcccccwg',
+      10: '.gffgbxcccccccccg',
+      11: '..ggbbcccccccccg',
+      12: '...gbbycccccccyg',
+      13: '...gbbbyyyyyyyg.',
+    },
+    // ぱんぱん（全部の谷でがっしり）: 頬袋が目の下いっぱいに広がり、前と下へ張り出す
+    {
+      8: '.gfefgbxxxxxcbbg',
+      9: '.gfefgxxccccccwg',
+      10: '.gffgxccccccccccg',
+      11: '..ggbcccccccccccg',
+      12: '...gbcccccccccccg',
+      13: '...gbyccccccccyg',
+      14: '....ggyyyyyyyyg.',
+    },
+  ];
+  const pad = (r) => (r + '.'.repeat(HW)).slice(0, HW);
+  function hamRows(o) {
+    let body = S.hamBody.map(pad);
+    const ch = CHEEK[o.cheek || 0];
+    if (ch) for (const y in ch) body[y] = pad(ch[y]);
+    if (o.lean) body = body.map((r, i) => (i < 8 ? '.' + r.slice(0, HW - 1) : r));
+    if (o.eyeClosed) body = body.map((r) => r.replace('0bg', 'gbg'));
+    const rows = [];
+    for (let y = 0; y < 16; y++) rows.push(pad(''));
+    const dy = o.dy || 0;
+    for (let y = 0; y < body.length; y++) {
+      const ty = y + dy;
+      if (ty >= 0 && ty < 16) rows[ty] = body[y];
+    }
+    const put = (x, y, s) => { if (y < 0 || y > 15) return; const r = rows[y].split(''); for (let i = 0; i < s.length; i++) if (s[i] !== '.' && x + i >= 0 && x + i < HW) r[x + i] = s[i]; rows[y] = r.join(''); };
+    for (const fx of o.feet || []) put(fx, o.feetY == null ? 15 : o.feetY, 'ww');
+    return rows;
+  }
+
+  const HAM = {
+    run: S.hamRun.map((f) => ({ feet: f.feet, dy: f.dy })),
+    lean: { feet: [5, 10], lean: true },
+    hit: { feet: [4, 11], eyeClosed: true },
+    fall: [{ feet: [3, 11], feetY: 13, dy: -1 }, { feet: [4, 10], feetY: 12, dy: -2 }],
+    hold: { feet: [5, 10], dy: 0 },
+  };
+
+  // ---- 文字 ----
+  function glyphRows(ch) {
+    const g = F.glyphs[ch];
+    if (g) return g;
+    const base = F.DAKU[ch] || F.HANDAKU[ch];
+    if (!base || !F.glyphs[base]) return null;
+    const rows = F.glyphs[base].map((r) => r + '.');
+    const put = (x, y) => { const r = rows[y].split(''); r[x] = '#'; rows[y] = r.join(''); };
+    if (F.DAKU[ch]) { put(4, 0); put(5, 1); }
+    else { put(4, 0); put(3, 1); put(5, 1); put(4, 2); }
+    return rows;
+  }
+  const hasGlyph = (ch) => !!glyphRows(ch);
+
+  const glyphCache = {};
+  function glyph(ch, color) {
+    const k = ch + color;
+    if (glyphCache[k]) return glyphCache[k];
+    const rows = glyphRows(ch) || glyphRows('?');
+    const c = mk(6, rows.length), g = c.getContext('2d'); // g j p q y は 8 行（下へ 1 行出る）
+    g.fillStyle = color;
+    for (let y = 0; y < rows.length; y++) for (let x = 0; x < rows[y].length; x++) if (rows[y][x] === '#') g.fillRect(x, y, 1, 1);
+    return (glyphCache[k] = c);
+  }
+
+  // 送り幅: 字の幅＋1（幅 5 の字と、濁点を重ねた幅 6 の字は 6）。空白は日本語 6・英語 4（分かち書きの間は今のまま）
+  const SPACE = { ja: F.adv, en: 4 };
+  function advOf(ch) {
+    if (ch === ' ') return SPACE[(Game.lang && Game.lang.cur) || 'ja'] || F.adv;
+    const rows = glyphRows(ch) || glyphRows('?');
+    return Math.min(rows[0].length, F.w) + 1;
+  }
+  // 字ごとの x（先頭からのずれ）
+  function layout(str) {
+    let x = 0;
+    return [...str].map((ch) => { const at = x; x += advOf(ch); return { ch, at }; });
+  }
+  const textW = (str) => [...str].reduce((w, ch) => w + advOf(ch), 0) - 1;
+
+  // 1行の文字。outline を渡すと1ドットの縁取り（擬音・見出し用）
+  function text(g, str, x, y, color, outline) {
+    x = Math.round(x); y = Math.round(y);
+    const chars = layout(str);
+    if (outline) {
+      for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]]) {
+        chars.forEach((c) => g.drawImage(glyph(c.ch, outline), x + c.at + ox, y + oy));
+      }
+    }
+    chars.forEach((c) => g.drawImage(glyph(c.ch, color), x + c.at, y));
+  }
+
+  // 幅（ドット）に収まるように、空白で折り返す。1 語が幅より長いときは、その語だけで 1 行
+  function wrap(str, maxPx) {
+    const words = str.split(' '), lines = [];
+    let cur = '';
+    for (const w of words) {
+      const next = cur ? cur + ' ' + w : w;
+      if (textW(next) > maxPx && cur) { lines.push(cur); cur = w; } else cur = next;
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  // ---- 小さい数字（3×5。分の数字 5・10…55 に使う） ----
+  const smallW = (n) => String(n).length * 4 - 1;
+  function small(g, n, x, y, color) {
+    g.fillStyle = color;
+    [...String(n)].forEach((ch, i) => { const rows = F.small[ch]; for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) if (rows[r][c] === '#') g.fillRect(x + i * 4 + c, y + r, 1, 1); });
+  }
+
+  // ---- 全部焼く ----
+  let baked = null;
+  function all() {
+    if (baked) return baked;
+    const b = {};
+    // hamG[ほっぺの段階 0〜3]
+    b.hamG = [0, 1, 2, 3].map((cheek) => {
+      const hamSet = (o) => { const r = hamRows(Object.assign({ cheek }, o)); return { n: bake(r) }; };
+      const set = { run: HAM.run.map(hamSet), fall: HAM.fall.map(hamSet) };
+      for (const k of ['lean', 'hit', 'hold']) set[k] = hamSet(HAM[k]);
+      // こけた姿: 目をつぶった絵を右へ 90 度たおす（頭が前、顔が下）
+      const r = hamRows(Object.assign({ cheek }, HAM.hit)), n = r.length;
+      set.down = { n: bake(r[0].split('').map((_, y) => r.map((_, x) => r[n - 1 - x][y]).join(''))) };
+      return set;
+    });
+    for (const k of ['gem', 'finger', 'foot', 'spkOn', 'spkOff']) b[k] = bake(S[k]);
+    b.gemOff = bake(S.gem, { map: { s: '3', r: '2', q: '1', 6: '3' } });
+    return (baked = b);
+  }
+
+  Game.bake = { bake, hamRows, HAM, HW, all, text, textW, advOf, wrap, glyph, glyphRows, hasGlyph, mk, small, smallW };
+})();
+</script>
+<script>
+// 文字盤（床）と針の絵。真上から見た真円。状態は読むだけ。
+// 針は絵を回さず、中心から先まで 1 ドットずつ線を引く。先には光の玉。
+// 止まる位置（外の輪 12 か所・内の輪 144 か所）のドット座標は表にして、宝・罠・壁も同じ座標に置く（「先が宝に重なる」がドット単位でずれない）
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const B = Game.bake;
+  const INK = '#181425';
+  const C = {
+    ground: '#265c42', stone: '#8b9bb4', stoneEdge: '#5a6988', stoneLit: '#c0cbdc', moss: '#3e8948',
+    zoneA: '#ead4aa', zoneB: '#c0cbdc', tick: '#262b44', num: '#181425', min: '#fee761',
+    long: '#feae34', short: '#e43b44', orb: '#ffffff', wall: '#3e2731', wallLit: '#733e39',
+    gem: '#2ce8f5', gemDark: '#0099db', trap: '#a22633',
+  };
+
+  // 中心から半径 r、1 周のうち frac（0〜1。0 が真上、時計回り）の点
+  function at(r, frac, D = Game.config.dial) {
+    const a = frac * 2 * Math.PI - Math.PI / 2;
+    return { x: D.cx + Math.round(r * Math.cos(a)), y: D.cy + Math.round(r * Math.sin(a)) };
+  }
+  let table = null;
+  function pts() {
+    if (table) return table;
+    const D = Game.config.dial;
+    table = { out: [], in: [] };
+    for (let i = 0; i < 12; i++) table.out.push(at(D.outR, i / 12));
+    for (let i = 0; i < 144; i++) table.in.push(at(D.inR, i / 144));
+    return table;
+  }
+  // 1 周のうちのどこか（0〜1。真上が 0）
+  const fracOf = (dx, dy) => { const f = Math.atan2(dy, dx) / (2 * Math.PI) + 0.25; return f < 0 ? f + 1 : f; };
+
+  // ---- 床（手がかりごとに 1 回だけ焼く） ----
+  // hints: { nums: 'all' | 'quarter' | 'none', mins, zones, ticks }
+  const floors = {};
+  function floor(hints) {
+    const key = [hints.nums, +!!hints.mins, +!!hints.zones, +!!hints.ticks].join();
+    if (floors[key]) return floors[key];
+    const V = Game.config.view, D = Game.config.dial;
+    const c = B.mk(V.w, V.h), g = c.getContext('2d');
+    const R = D.floorR;
+    for (let y = -R - 1; y <= R + 1; y++) for (let x = -R - 1; x <= R + 1; x++) {
+      const d = Math.hypot(x, y);
+      if (d > R + 0.5) continue;
+      let col = C.stone;
+      if (d > R - 1.5) col = C.stoneEdge;
+      else if (d > R - 2.5) col = C.stoneLit;
+      else if (hints.zones && d >= D.zoneR0 && d <= D.zoneR1) col = Math.floor(fracOf(x, y) * 12) % 2 ? C.zoneB : C.zoneA;
+      else if ((x * 7 + y * 13 + ((x * y) >> 2)) % 23 === 0) col = C.stoneLit; // 石のむら
+      g.fillStyle = col;
+      g.fillRect(D.cx + x, D.cy + y, 1, 1);
+    }
+    // 苔（縁のあたりに少し）
+    g.fillStyle = C.moss;
+    for (let i = 0; i < 40; i++) { const p = at(R - 1 - (i % 3), (i * 0.137) % 1); g.fillRect(p.x, p.y, 1, 1); }
+    if (hints.ticks) {
+      g.fillStyle = C.tick;
+      for (let i = 0; i < 12; i++) {
+        const r0 = i % 3 === 0 ? D.tickR0 - 2 : D.tickR0;
+        for (let r = r0; r <= D.tickR1; r++) { const p = at(r, i / 12); g.fillRect(p.x, p.y, 1, 1); if (i % 3 === 0) { const q = at(r, i / 12 + 0.004); g.fillRect(q.x, q.y, 1, 1); } }
+      }
+    }
+    if (hints.nums !== 'none') {
+      for (let n = 1; n <= 12; n++) {
+        if (hints.nums === 'quarter' && n % 3) continue;
+        const s = String(n), p = at(D.numR, n / 12);
+        B.text(g, s, Math.round(p.x - (B.textW(s) - 1) / 2), p.y - 3, C.num);
+      }
+    }
+    if (hints.mins) {
+      for (let i = 1; i < 12; i++) {
+        const p = at(D.minR, i / 12), w = B.smallW(i * 5);
+        const x = Math.max(0, Math.min(V.w - w, Math.round(p.x - (w - 1) / 2)));
+        g.fillStyle = INK; g.fillRect(x - 1, p.y - 3, w + 2, 7);
+        B.small(g, i * 5, x, p.y - 2, C.min);
+      }
+    }
+    return (floors[key] = c);
+  }
+
+  // ---- 針 ----
+  function line(g, x0, y0, x1, y1, w, color) {
+    g.fillStyle = color;
+    const o = Math.floor(w / 2), dx = Math.abs(x1 - x0), dy = Math.abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+    let err = dx - dy, x = x0, y = y0;
+    for (;;) {
+      g.fillRect(x - o, y - o, w, w);
+      if (x === x1 && y === y1) break;
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; x += sx; }
+      if (e2 < dx) { err += dx; y += sy; }
+    }
+  }
+  function hand(g, tip, w, color) {
+    const D = Game.config.dial;
+    line(g, D.cx, D.cy, tip.x, tip.y, w + 2, INK);
+    line(g, D.cx, D.cy, tip.x, tip.y, w, color);
+  }
+  function orb(g, p, color) {
+    g.fillStyle = INK; g.fillRect(p.x - 2, p.y - 1, 5, 3); g.fillRect(p.x - 1, p.y - 2, 3, 5);
+    g.fillStyle = color; g.fillRect(p.x - 1, p.y - 1, 3, 3);
+    g.fillStyle = C.orb; g.fillRect(p.x, p.y, 1, 1);
+  }
+
+  // ---- 宝・罠・壁 ----
+  // 外の輪の宝（長針だけで取れる）は大きな宝石。内の輪の宝（時刻で取れる）は、内の輪にひし形、外の輪の「何分」の位置の少し外に、小さな「対の印」。
+  // 対の印は宝も罠も同じ色（宝と罠の印が同じ位置に重なっても、色で読み違えない。どの印がどれの対かは、短針の位置から読む）。
+  // 短針の先は隣の位置と 1〜2 ドットしか違わないので、ぴったりかどうかは長針と対の印で見分ける（短針で何時台か、長針で何分か）
+  const GEM = ['..0..', '.0a0.', '0a6b0', '.0b0.', '..0..'];
+  const TRAP = ['0...0', '0a.a0', '.0a0.', '0a.a0', '0...0'];
+  // 対の印は控えめに: 縁取りのない小さな十字（3×3 のうち 5 ドット）を、外の輪より少し外（pairR）に置く。長針の宝（輪の上の大きな宝石）と取り違えない。
+  // 2×2 の点は中心が半ドットずれ、12 の位置で針の軸から左へ寄って見えた（2026-11-13 の実機の感想）。奇数の大きさで、中心のドットにそろえる
+  const PAIR = ['.a.', 'aaa', '.a.'];
+  // 長針の宝は、HOPPE の宝石の絵（7×7）
+  const BIG = ['..000..', '.0a6a0.', '0abaab0', '0bbabb0', '.0cbc0.', '..0c0..', '...0...'];
+  // 対の印の色: 宝は黄色、罠は赤（同じ黄色だと、どれが罠の印か分からず難しすぎた。2026-11-13 の実機の感想）。
+  // 宝と罠の印が同じ位置に重ならないよう、ステージ作りで「何分」をずらす。重なったときは宝の印を上に描く
+  const TONE = { pairTrap: ['#e43b44'], out: [C.gem, C.gemDark, '#124e89'], trap: [C.trap, C.trap], in: ['#fee761', '#feae34'] };
+  function mark(g, rows, p, tone) {
+    const col = { 0: INK, a: tone[0], b: tone[1], c: tone[2], 6: '#ffffff' }, n = rows.length, o = n >> 1;
+    for (let y = 0; y < n; y++) for (let x = 0; x < n; x++) { const ch = rows[y][x]; if (ch === '.') continue; g.fillStyle = col[ch]; g.fillRect(p.x - o + x, p.y - o + y, 1, 1); }
+  }
+  // ring: 'out' = 外の輪の物と対の印（針の下）、'in' = 内の輪の物（針の上。長針の線に隠れて見逃さないように）
+  function items(g, o, ring) {
+    const P = pts();
+    (o.items || []).forEach((it, i) => {
+      const trap = it.kind === 'trap';
+      const tone = trap ? TONE.trap : it.ring === 'out' ? TONE.out : TONE.in;
+      if (o.taken && o.taken[i]) return;
+      if (it.ring === 'out') { if (ring === 'out') mark(g, trap ? TRAP : BIG, P.out[it.pos], tone); return; }
+      if (ring === 'in') mark(g, trap ? TRAP : GEM, P.in[it.pos], tone);
+      else if (ring === (trap ? 'pairTrap' : 'pairGem')) mark(g, PAIR, at(Game.config.dial.pairR, (it.pos % 12) / 12), trap ? TONE.pairTrap : TONE.in);
+    });
+  }
+  // 壁: 内の輪の位置 w から先へ 1 時間ぶんの帯
+  function wall(g, w) {
+    const D = Game.config.dial, R = D.inR + D.wallHalf, f0 = w / 144, f1 = (w + 12) / 144;
+    for (let y = -R; y <= R; y++) for (let x = -R; x <= R; x++) {
+      const d = Math.hypot(x, y);
+      if (d < D.inR - D.wallHalf || d > R) continue;
+      let f = fracOf(x, y); if (f < f0) f += 1;
+      if (f > f1) continue;
+      g.fillStyle = f - f0 < 0.006 || (x + y) % 3 === 0 ? C.wall : C.wallLit;
+      g.fillRect(D.cx + x, D.cy + y, 1, 1);
+    }
+  }
+
+  // o: { ghostT: 予告の時刻（整数。なければ出さない）, ghostA: その濃さ, t（途中の動きは小数でよい）, hints, items: [{ ring: 'out' | 'in', pos, kind: 'gem' | 'trap' }], taken: [bool], wall: null | 位置 }
+  function draw(g, o) {
+    const D = Game.config.dial, P = pts();
+    g.drawImage(floor(o.hints), 0, 0);
+    if (o.wall != null) wall(g, o.wall);
+    items(g, o, 'out'); items(g, o, 'pairTrap'); items(g, o, 'pairGem');
+    // 助け舟の予告: いま並べている札で止まる時刻に、2 本の針のうすい影（本物の針の下）
+    if (o.ghostT != null) {
+      const gs = P.in[Game.clock.short(o.ghostT)], gl = P.out[Game.clock.long(o.ghostT)];
+      g.globalAlpha = o.ghostA == null ? 0.45 : o.ghostA;
+      hand(g, gs, D.shortW, '#ffffff'); hand(g, gl, D.longW, '#ffffff'); orb(g, gs, '#ffffff'); orb(g, gl, '#ffffff');
+      g.globalAlpha = 1;
+    }
+    const whole = Number.isInteger(o.t);
+    const sTip = whole ? P.in[Game.clock.short(o.t)] : at(D.inR, o.t / 144);
+    const lTip = whole ? P.out[Game.clock.long(o.t)] : at(D.outR, (o.t % 12) / 12);
+    hand(g, sTip, D.shortW, C.short);
+    hand(g, lTip, D.longW, C.long);
+    items(g, o, 'in');
+    orb(g, sTip, C.short);
+    orb(g, lTip, C.long);
+    g.fillStyle = INK; g.fillRect(D.cx - 2, D.cy - 2, 5, 5);
+    g.fillStyle = C.stoneLit; g.fillRect(D.cx - 1, D.cy - 1, 3, 3);
+  }
+
+  Game.dial = { C, at, pts, floor, draw, line };
+})();
+</script>
+<script>
+// Web Audio の合成音。ファイルは使わない。最初に触るまでは鳴らせない（ブラウザの制約）。
+// 音の出口（AudioContext）はページを開いたときに作っておき、最初の操作では「再開」だけをする（作るところから始めると、鳴り出すまでが遅い）。
+// タッチでは、指を離したときに初めて再開が許される。だから main は指を置いたとき・離したときの両方で unlock を呼ぶ
+// HOPPE BRIDGE の audio.js から写したもの（unlock / env / tone / noise と、次の部品）:
+//   click  … カチ: ごく短い雑音（帯域通過）＋短い三角波
+//   knock  … コトン・トン: 短い雑音の「叩き」＋木の棒の響き（倍音がきれいに並ばないいくつかの高さ。すぐ消える）
+//   rumble … ゴゴゴ: 石がずれる音。四角い波の低いうなり＋ざらついた雑音を、同じ刻みでうねらせる（石うすの録音を測り、まんがの音へ寄せた）
+// 効果音の作り（どの部品をどの数字で鳴らすか）は config.audio.sfx に置く。dev/sounds.html で聞いて決める
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  function create(cfg) {
+    let ac = null, master = null, out = null, noiseBuf = null, hidden = false;
+    // 再開が済むまでは鳴らさない（ためておくと、再開したときにまとめて鳴ってしまう）
+    const enabled = () => cfg.audio.enabled && ac && !hidden && ac.state === 'running';
+
+    function init() {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (ac || !AC) return;
+      try {
+        ac = new AC({ latencyHint: 'interactive' });
+        const comp = ac.createDynamicsCompressor();
+        comp.threshold.value = -14; comp.ratio.value = 6;
+        master = ac.createGain();
+        master.gain.value = cfg.audio.volume;
+        master.connect(comp).connect(ac.destination);
+        noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
+        const d = noiseBuf.getChannelData(0);
+        for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+        // 出力を起こしたままにする、聞こえない低い音。無音が続くと端末やイヤホンが出力を休ませ、
+        // 次の音の頭（0.1 秒ほど）が欠けて、カチ・コトンのような短い音が丸ごと消えるため
+        const K = cfg.audio.keepAlive;
+        if (K && K.vol > 0) { const o = ac.createOscillator(), v = ac.createGain(); o.frequency.value = K.hz; v.gain.value = K.vol; o.connect(v).connect(ac.destination); o.start(); }
+      } catch (e) { ac = null; }
+    }
+    function unlock() {
+      init();
+      return ac && !hidden && ac.state !== 'running' ? ac.resume() : Promise.resolve();
+    }
+    init();
+
+    function env(node, t, a, peak, dec) {
+      node.gain.setValueAtTime(0.0001, t);
+      node.gain.exponentialRampToValueAtTime(Math.max(0.0002, peak), t + a);
+      node.gain.exponentialRampToValueAtTime(0.0001, t + a + dec);
+    }
+    function tone(t, { f = 440, type = 'square', vol = 0.15, a = 0.003, dec = 0.1, slide = 0, up = 0 }, vars) {
+      if (up && vars && vars.step) f *= Math.pow(up, vars.step); // up: 段（vars.step）が 1 つ上がるごとの高さの倍率
+      const o = ac.createOscillator(), v = ac.createGain();
+      o.type = type; o.frequency.setValueAtTime(f, t);
+      if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(20, f * slide), t + a + dec);
+      env(v, t, a, vol, dec);
+      o.connect(v).connect(out);
+      o.start(t); o.stop(t + a + dec + 0.05);
+    }
+    function noiseSrc(t, dur) {
+      const src = ac.createBufferSource(); src.buffer = noiseBuf;
+      src.start(t, Math.random() * 0.5); src.stop(t + dur + 0.05);
+      return src;
+    }
+    // a: 立ち上がりの秒（長くすると、ふわっと入る風のような音になる）
+    function noise(t, { vol = 0.2, a = 0.002, dec = 0.15, f = 2000, q = 1, type = 'bandpass', sweep = 0 }) {
+      const flt = ac.createBiquadFilter(); flt.type = type; flt.frequency.setValueAtTime(f, t); flt.Q.value = q;
+      if (sweep) flt.frequency.exponentialRampToValueAtTime(Math.max(30, f * sweep), t + a + dec);
+      const v = ac.createGain(); env(v, t, a, vol, dec);
+      noiseSrc(t, a + dec).connect(flt).connect(v).connect(out);
+    }
+
+    // カチ。step: 何回めの刻みか（段が上がるほど高い）
+    function click(t, p, vars) {
+      const k = Math.pow(p.stepUp, vars.step || 0);
+      noise(t, { vol: p.noiseVol, dec: p.noiseMs / 1000, f: p.noiseHz * k, q: p.q });
+      tone(t, { f: p.toneHz * k, type: 'triangle', vol: p.toneVol, a: 0.001, dec: p.toneMs / 1000 });
+    }
+    // 石と木の打音。pitch: 高さの倍率、gain: 大きさの倍率
+    function knock(t, p, vars) {
+      const gain = vars.gain == null ? 1 : vars.gain, base = p.baseHz * (vars.pitch || 1);
+      noise(t, { vol: p.noiseVol * gain, dec: p.noiseMs / 1000, f: p.noiseHz, q: 0.8 });
+      [[1, 1, 1], [p.r2, 0.45, 0.55], [p.r3, 0.2, 0.3]].forEach(([r, amp, d]) => {
+        if (base * r < 12000) tone(t, { f: base * r, type: 'sine', vol: p.vol * amp * gain, a: 0.001, dec: p.dec * d });
+      });
+    }
+
+    // 石がずれる音（ゴゴゴ）。石うすの録音（ウィキメディア・コモンズの WWS Quern-stones.ogg と Stone age mill.ogg）を測った形を土台にする
+    //   録音から: 低いうなり（40〜130Hz、いちばん強いのは 90Hz あたり）と、ざらつき（500〜700Hz と 2kHz あたりの雑音）の重なり。
+    //            大きさは 1〜4Hz でゆっくりうねり、不規則にざらつく（ゆれの深さ 0.6〜0.8）
+    //   デフォルメ: うなりを四角い波にして（小さいスピーカーでも倍音で聞こえる）、ゆっくり下げる（hz → hzTo）。
+    //              うねりを速くはっきり刻んで「ゴ・ゴ・ゴ」にする（pulseHz、depth）。ざらつきは同じ刻みに乗せる
+    function rumble(t, p) {
+      const dur = p.ms / 1000, n = Math.max(1, Math.round(dur * p.pulseHz)), one = dur / n;
+      const pulse = (g, vol) => {
+        g.gain.setValueAtTime(0.0001, t);
+        for (let i = 0; i < n; i++) {
+          const t0 = t + i * one, fade = i === n - 1 ? 0.6 : 1; // 終わりは少し小さく
+          g.gain.linearRampToValueAtTime(vol * fade, t0 + one * 0.2);
+          g.gain.linearRampToValueAtTime(vol * fade * (1 - p.depth), t0 + one);
+        }
+        g.gain.linearRampToValueAtTime(0.0001, t + dur + 0.04);
+      };
+      const o = ac.createOscillator(); o.type = 'square';
+      o.frequency.setValueAtTime(p.hz, t); o.frequency.linearRampToValueAtTime(p.hzTo, t + dur);
+      const lp = ac.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = p.lowpass;
+      const v = ac.createGain(); pulse(v, p.vol);
+      o.connect(lp).connect(v).connect(out);
+      o.start(t); o.stop(t + dur + 0.1);
+      for (const [f, vol] of [[p.gritHz, p.gritVol], [p.hissHz, p.hissVol]]) {
+        if (!vol) continue;
+        const flt = ac.createBiquadFilter(); flt.type = 'bandpass'; flt.frequency.value = f; flt.Q.value = p.q;
+        const g = ac.createGain(); pulse(g, vol);
+        // 不規則なざらつき
+        const grit = ac.createGain(), k = Math.max(2, Math.round(dur * p.roughHz));
+        grit.gain.setValueAtTime(1, t);
+        for (let i = 1; i <= k; i++) grit.gain.linearRampToValueAtTime(1 - Math.random() * p.rough, t + (i * dur) / k);
+        noiseSrc(t, dur + 0.05).connect(flt).connect(g).connect(grit).connect(out);
+      }
+    }
+
+    const PART = { tone, noise, click, knock, rumble };
+    // 効果音 1 つ（config.audio.sfx[name] の部品を順に鳴らす）。vars: 長さ・段・高さなど、その場で変わるもの
+    // 音ごとの大きさ（config.audio.level）は、部品の数字とは別に、ここでまとめてかける
+    function play(name, vars = {}) {
+      if (!enabled()) return;
+      const layers = cfg.audio.sfx[name];
+      if (!layers) return;
+      out = ac.createGain(); out.gain.value = cfg.audio.level[name] == null ? 1 : cfg.audio.level[name];
+      out.connect(master);
+      for (const p of layers) PART[p.k](ac.currentTime + (p.delay || 0) + (vars.delay || 0), p, vars);
+    }
+
+    // 出来事 → 効果音（ルールの出来事と、main が演出の節目で出す出来事）
+    const CARD_PITCH = { 12: 0.7, 6: 0.85, 3: 1, 2: 1.12, 1: 1.26 };
+    function on(e) {
+      if (!enabled()) return;
+      switch (e.type) {
+        case 'put': play('put', { pitch: CARD_PITCH[e.n] }); break;
+        case 'unput': play('put', { pitch: CARD_PITCH[e.n], gain: 0.5 }); break;
+        case 'full': play('deny'); break;
+        case 'lever': play('lever'); break;
+        case 'tick': play('tick', { step: e.k % 12 }); break;
+        case 'hour': play('hour'); break;
+        case 'take': play('fit'); break;
+        case 'bounce': play('gatsun'); break;
+        case 'back': play('back'); break;
+        case 'night': play('night'); break;
+        case 'ghost': play('ghost'); break;
+        case 'day': play('dawn'); break;
+        case 'door': play('door'); break;
+        case 'clear': play('clear', { delay: e.delay || 0 }); break;
+        case 'gem': play('gem', { step: e.i }); break;
+      }
+    }
+
+    return {
+      unlock, on, play,
+      setHidden(h) { hidden = h; if (!ac) return; if (h) ac.suspend(); else ac.resume(); },
+      running: () => !!ac && ac.state === 'running',
+    };
+  }
+
+  Game.audio = { create };
+})();
+</script>
+<script>
+// 演出: 出来事から、擬音（マンガの描き文字ふう）を出す。ルールの状態は書き換えない。
+// HOPPE BRIDGE の fx.js の擬音の仕組みを写したもの。大きさは 3 段階: S（1 倍）/ M（2 倍）/ L（3 倍、トゲトゲのフキダシ付きで震える）。
+// 1 文字ずつハンコのように押されて出て（1 段大きく出てから落ち着く）、斜め上へ並ぶ。消えるときは、下からすっと消える（速い点滅は使わない）
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const B = Game.bake;
+  const lt = (path) => Game.lang.t(path);
+
+  const INK = '#181425';
+  const TIER = {
+    S: { scale: 1, life: 0.5, stagger: 0.03, slant: 1 },
+    M: { scale: 2, life: 0.7, stagger: 0.04, slant: 1 },
+    L: { scale: 3, life: 1.0, stagger: 0.05, slant: 1, burst: true, tremble: 0.25 },
+  };
+
+  function create(cfg) {
+    let pops = [], seq = 0;
+    const charCache = {}, burstCache = {};
+
+    // 1 文字を「縁取りだけ」と「中身だけ」に分けて焼く（縁取りを全部描いてから中身を描くと、隣の字にかぶらない）
+    function charImg(ch, color) {
+      const k = ch + color;
+      if (charCache[k]) return charCache[k];
+      const line = B.mk(8, 9), fill = B.mk(8, 9);
+      B.text(line.getContext('2d'), ch, 1, 1, INK, INK);
+      B.text(fill.getContext('2d'), ch, 1, 1, color);
+      return (charCache[k] = { line, fill });
+    }
+    // トゲトゲのフキダシ（ドット単位で塗る。縁は墨色）
+    function burst(w, h) {
+      const k = w + 'x' + h;
+      if (burstCache[k]) return burstCache[k];
+      const c = B.mk(w, h), g = c.getContext('2d');
+      const cx = w / 2, cy = h / 2, spikes = 14;
+      const R = (a) => 0.72 + 0.28 * Math.abs(((a / (2 * Math.PI)) * spikes) % 1 * 2 - 1);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+        const dx = (x + 0.5 - cx) / cx, dy = (y + 0.5 - cy) / cy;
+        const d = Math.hypot(dx, dy), r = R(Math.atan2(dy, dx) + Math.PI);
+        if (d >= r) continue;
+        g.fillStyle = d > r - 0.12 ? INK : '#ffffff';
+        g.fillRect(x, y, 1, 1);
+      }
+      return (burstCache[k] = c);
+    }
+
+    // (x, y) を真ん中にして出す。窓からはみ出さないように寄せる
+    function pop(word, color, x, y, tier) {
+      const T = TIER[tier];
+      const chars = [...word].map((ch) => charImg(ch, color));
+      const w = chars.length * 6 * T.scale + 2 * T.scale, h = 9 * T.scale + (chars.length - 1) * T.slant * T.scale;
+      const V = cfg.view, m = T.burst ? 9 : 1;
+      const left = Math.max(m, Math.min(V.w - w - m, Math.round(x - w / 2)));
+      const top = Math.max(m, Math.min(V.h - h - m, Math.round(y - h / 2)));
+      pops.push({ chars, T, x: left, y: top, w, h, t: 0, bg: T.burst ? burst(w + 16, h + 14) : null });
+      if (pops.length > 8) pops.shift();
+    }
+
+    // 出来事 → 擬音。場所は main が決めて渡す（e.x, e.y）
+    const WORD = {
+      card: ['fx.tick', '#c0cbdc', 'S'], door: ['fx.door', '#ead4aa', 'M'], take: ['fx.take', '#ffffff', 'M'], bounce: ['fx.bounce', '#e43b44', 'M'],
+      put: ['fx.put', '#ead4aa', 'S'], lever: ['fx.lever', '#c0cbdc', 'S'], night: ['fx.sleep', '#c0cbdc', 'M'], ghost: ['fx.ghost', '#ffffff', 'M'], day: ['fx.dawn', '#fee761', 'M'],
+    };
+    function on(e) {
+      const w = WORD[e.type];
+      if (w && e.x != null) pop(lt(w[0]), w[1], e.x, e.y, w[2]);
+    }
+
+    function update(dt) {
+      for (const p of pops) p.t += dt;
+      pops = pops.filter((p) => p.t < p.T.life);
+      seq++;
+    }
+
+    function draw(g) {
+      for (const p of pops) {
+        const T = p.T;
+        let ox = 0, oy = 0;
+        if (T.tremble && p.t < T.tremble) { ox = (seq % 2) ? 1 : -1; oy = (seq % 3) - 1; }
+        // 消えるとき: 最後の 0.15 秒で、上へ 2 ドット上がりながら薄くなる
+        const out = Math.max(0, (p.t - (T.life - 0.15)) / 0.15);
+        g.globalAlpha = 1 - out; oy -= Math.round(out * 2);
+        if (p.bg) g.drawImage(p.bg, p.x - 8 + ox, p.y - 7 + oy);
+        for (const layer of ['line', 'fill']) {
+          p.chars.forEach((c, i) => {
+            const local = p.t - i * T.stagger;
+            if (local < 0) return;
+            const sc = T.scale + (local < 0.06 ? 1 : 0);  // ハンコ: 1 段大きく出てから落ち着く
+            const n = p.chars.length - 1 - i;
+            const cx = p.x + i * 6 * T.scale + ox, cy = p.y + n * T.slant * T.scale + oy;
+            const d = (sc - T.scale) * 4;
+            g.drawImage(c[layer], cx - d, cy - d, 8 * sc, 9 * sc);
+          });
+        }
+        g.globalAlpha = 1;
+      }
+    }
+
+    return { on, pop, update, draw, clear() { pops = []; } };
+  }
+
+  Game.fx = { create };
+})();
+</script>
+<script>
+// 指の動きを、窓の中のドット座標にして渡すだけ。何をつまんだかは main が置き場所（render.layout）で決める
+// 出すもの: { type: 'down' | 'move' | 'up' | 'cancel', x, y }（ドット）
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  function create(target, emit) {
+    let id = null;
+    const at = (e) => Game.render.toField(e.clientX, e.clientY);
+    target.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (id != null) return;
+      id = e.pointerId;
+      try { target.setPointerCapture(id); } catch (err) { /* 古い端末 */ }
+      emit(Object.assign({ type: 'down' }, at(e)));
+    });
+    target.addEventListener('pointermove', (e) => {
+      if (e.pointerId !== id) return;
+      emit(Object.assign({ type: 'move' }, at(e)));
+    });
+    target.addEventListener('pointerup', (e) => {
+      if (e.pointerId !== id) return;
+      id = null;
+      emit(Object.assign({ type: 'up' }, at(e)));
+    });
+    target.addEventListener('pointercancel', (e) => {
+      if (e.pointerId !== id) return;
+      id = null;
+      emit({ type: 'cancel', x: 0, y: 0 });
+    });
+  }
+
+  Game.input = { create };
+})();
+</script>
+<script>
+// 描画。画面全体を「ドット」単位の小さな Canvas に描き、整数倍 k で実際の画素へ拡大する（拡大は CSS の image-rendering: pixelated）。
+// 遊ぶ窓（135×240）はその中の整数の位置に置く。状態は読むだけ。init / toField / toCss は HOPPE BRIDGE から写したもの。
+// 置き場所は hand / queue / lever / onDial が返し、main の当たり（何をつまんだか）にも同じものを使う。
+// 上の帯は空と木々（正面から見た絵）、床は真上から見た真円（dial.js）、探検家は床の手前の縁
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const B = Game.bake;
+  const lt = (path, vars) => Game.lang.t(path, vars);
+  const INK = '#181425';
+  const K0 = 121;   // タイトルの針の始まり（10 時 5 分）
+  const CARD = { paper: '#ead4aa', edge: '#c28569', hour: '#feae34', hourEdge: '#f77622', slot: '#193c3e' };
+
+  // 色を混ぜる（#rrggbb）
+  const rgb = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const mix = (a, b, u) => { const A = rgb(a), Bc = rgb(b); return '#' + A.map((v, i) => Math.round(v + (Bc[i] - v) * u).toString(16).padStart(2, '0')).join(''); };
+
+  // 木々の形: 丸い木立を重ねた、列ごとの高さ（1 回だけ作る）
+  let J = null;
+  function jungle() {
+    if (J) return J;
+    const V = Game.config.view;
+    const cols = (bumps, min) => { const a = new Array(V.w).fill(min); for (const [cx, r, base] of bumps) for (let x = Math.max(0, cx - r); x <= Math.min(V.w - 1, cx + r); x++) a[x] = Math.max(a[x], Math.round(base + Math.sqrt(r * r - (x - cx) * (x - cx)))); return a; };
+    const far = [], near = [], roof = [];
+    for (let i = 0; i < 12; i++) far.push([i * 12 + ((i * 37) % 9) - 2, 7 + ((i * 5) % 5), 12 + ((i * 7) % 7)]);
+    for (let i = 0; i < 14; i++) near.push([i * 10 + ((i * 23) % 7) - 1, 5 + ((i * 3) % 4), 3 + ((i * 11) % 5)]);
+    for (const [cx, r, h] of [[2, 12, -4], [22, 7, -3], [121, 9, -4], [134, 10, -2], [70, 6, -4]]) roof.push([cx, r, h]);
+    J = { far: cols(far, 10), near: cols(near, 4), roof: cols(roof, 0), trunks: [[26, 4, 20], [64, 3, 17], [96, 4, 22]], vines: [[9, 22, 1], [33, 13, 1], [57, 17, 2], [88, 11, 1]] };
+    return J;
+  }
+
+  const R = {
+    canvas: null, g: null,
+    k: 1, Lw: 0, Lh: 0, fx: 0, fy: 0, cssK: 1,
+
+    init(canvas) {
+      R.canvas = canvas;
+      R.g = canvas.getContext('2d');
+      const resize = () => {
+        const V = Game.config.view;
+        const dpr = window.devicePixelRatio || 1;
+        const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
+        R.k = Math.max(1, Math.floor(Math.min(w / V.w, h / V.h)));
+        R.Lw = Math.ceil(w / R.k); R.Lh = Math.ceil(h / R.k);
+        // 表示の大きさ: 1 ドットがちょうど k 画素。端数の dpr では Canvas を右と下へ数ドット足して、丸めの要らない大きさにする（HOPPE DIVE と同じ）
+        const fit = (n) => { for (let p = 0; p < 64; p++) { const v = ((n + p) * R.k * 64) / dpr; if (Math.abs(v - Math.round(v)) < 1e-6) return n + p; } return n; };
+        const cw = fit(R.Lw), ch = fit(R.Lh);
+        canvas.width = cw; canvas.height = ch;
+        canvas.style.width = (cw * R.k) / dpr + 'px';
+        canvas.style.height = (ch * R.k) / dpr + 'px';
+        R.fx = Math.floor((R.Lw - V.w) / 2);
+        R.fy = Math.floor((R.Lh - V.h) * 0.6); // 余った縦は上に多めに回す（ボタンを親指の近くに）
+        R.cssK = R.k / dpr;
+      };
+      addEventListener('resize', resize);
+      resize();
+    },
+
+    // CSS px → 窓の中のドット座標
+    toField(cx, cy) { return { x: cx / R.cssK - R.fx, y: cy / R.cssK - R.fy }; },
+    // 窓の中のドット座標 → CSS px（テスト用）
+    toCss(x, y) { return { x: (x + R.fx + 0.5) * R.cssK, y: (y + R.fy + 0.5) * R.cssK }; },
+
+    // ---- 置き場所 ----
+    // 手元の札（そのステージで使える種類。大きい順に左から）
+    hand(stage) { const H = Game.config.layout.hand; return stage.cards.map((n, i) => ({ n, x: H.x + i * (H.w + H.gap), y: H.y, w: H.w, h: H.h })); },
+    // 並べた札の列（左から）
+    // off: その左にある、いま使っている札（針が回っている間）の枚数
+    queue(queue, off = 0) { const Q = Game.config.layout.queue; return queue.map((n, i) => ({ i, n, x: Q.x + (i + off) * (Q.w + Q.gap), y: Q.y, w: Q.w, h: Q.h })); },
+    lever() { return Game.config.layout.lever; },
+    // 札を離すと並ぶ所（盤の上か、並べた札の列）
+    onDrop(x, y) {
+      const D = Game.config.dial, L = Game.config.layout;
+      return Math.hypot(x - D.cx, y - D.cy) <= L.dropR || (y >= L.queue.y - 3 && y < L.hand.y - 3);
+    },
+    // 針の先・物の場所（擬音を出す所）
+    longTip(t) { return Game.dial.at(Game.config.dial.outR, (t % 12) / 12); },
+    shortTip(t) { return Game.dial.at(Game.config.dial.inR, t / 144); },
+    itemAt(it) { const P = Game.dial.pts(); return it.ring === 'out' ? P.out[it.pos] : P.in[it.pos]; },
+
+    // ---- 部品 ----
+    skyColor(p) {
+      const K = Game.config.sky.keys;
+      for (let i = 1; i < K.length; i++) if (p <= K[i][0]) return mix(K[i - 1][1], K[i][1], (p - K[i - 1][0]) / (K[i][0] - K[i - 1][0]));
+      return K[K.length - 1][1];
+    },
+    // 上の帯: 空と雲、ジャングルの木々（奥の丸い木立、幹、手前の濃い茂み）、上から下がる葉とつる。p: 1 日の進み（0〜1）
+    top(g, p) {
+      const V = Game.config.view, H = Game.config.layout.topH, sky = R.skyColor(p), T = jungle();
+      for (let i = 0; i < 4; i++) { g.fillStyle = mix(sky, '#ffffff', 0.36 - i * 0.12); g.fillRect(0, Math.round((H * i) / 4), V.w, Math.ceil(H / 4)); }
+      // 雲（空の色になじませる）
+      g.fillStyle = mix(sky, '#ffffff', 0.6);
+      for (const [x, y, w] of [[18, 9, 14], [62, 5, 18], [84, 14, 11]]) { g.fillRect(x, y, w, 2); g.fillRect(x + 2, y - 1, w - 5, 1); g.fillRect(x + 3, y + 2, w - 7, 1); }
+      const far = mix('#3e8948', sky, 0.4), farLit = mix('#63c74d', sky, 0.45);
+      for (let x = 0; x < V.w; x++) { const h = T.far[x]; g.fillStyle = far; g.fillRect(x, H - h, 1, h); g.fillStyle = farLit; g.fillRect(x, H - h, 1, 1 + (T.far[x - 1] < h || T.far[x + 1] < h ? 0 : 1)); }
+      // 幹
+      for (const [x, w, top0] of T.trunks) {
+        const top = Math.min(top0, T.far[x] - 4, T.far[x + w - 1] - 4);   // 幹は奥の木立の中に収める
+        g.fillStyle = '#3e2731'; g.fillRect(x, H - top, w, top);
+        g.fillStyle = '#733e39'; g.fillRect(x + 1, H - top, w - 2, top);
+        g.fillStyle = '#3e2731'; for (let y = H - top + 3; y < H; y += 5) g.fillRect(x + 1, y, 1, 1);
+      }
+      for (let x = 0; x < V.w; x++) {
+        const h = T.near[x];
+        g.fillStyle = '#265c42'; g.fillRect(x, H - h, 1, h);
+        g.fillStyle = '#3e8948'; g.fillRect(x, H - h, 1, 1);
+        if ((x * 7 + h * 3) % 5 === 0) g.fillRect(x, H - h + 2, 1, 1);
+        if ((x * 5 + h) % 4 === 0 && h > 5) { g.fillStyle = '#193c3e'; g.fillRect(x, H - h + 4 + (x % 3), 1, 2); }
+      }
+      // 上から下がる葉のかたまりと、つる
+      for (let x = 0; x < V.w; x++) {
+        const h = T.roof[x];
+        if (!h) continue;
+        g.fillStyle = '#193c3e'; g.fillRect(x, 0, 1, h);
+        g.fillStyle = '#265c42'; g.fillRect(x, 0, 1, Math.max(0, h - 2));
+        if ((x * 3 + h) % 4 === 0) { g.fillStyle = '#3e8948'; g.fillRect(x, Math.max(0, h - 4), 1, 1); }
+      }
+      for (const [x, len, sway] of T.vines) {
+        for (let y = 0; y < len; y++) {
+          const vx = x + Math.round(sway * Math.sin(y / 5));
+          g.fillStyle = '#193c3e'; g.fillRect(vx, y, 1, 1);
+          if (y % 5 === 3) { g.fillStyle = '#3e8948'; g.fillRect(vx + (y % 10 === 3 ? 1 : -2), y, 2, 1); }
+        }
+        const ex = x + Math.round(sway * Math.sin(len / 5));
+        g.fillStyle = '#3e8948'; g.fillRect(ex - 1, len, 3, 2); g.fillStyle = '#63c74d'; g.fillRect(ex, len, 1, 1);
+      }
+    },
+    // 地面（1 回だけ焼く）: 草むら、小石、小さな花。床のまわりに影
+    ground() {
+      if (R._ground) return R._ground;
+      const C = Game.config, V = C.view, D = C.dial, c = B.mk(V.w, V.h), g = c.getContext('2d');
+      g.fillStyle = Game.dial.C.ground; g.fillRect(0, 0, V.w, V.h);
+      let seed = 12345; const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+      const free = (x, y) => Math.hypot(x - D.cx, y - D.cy) > D.floorR + 4;
+      for (let i = 0; i < 260; i++) {
+        const x = Math.floor(rnd() * V.w), y = C.layout.topH + Math.floor(rnd() * (C.layout.queue.y - 4 - C.layout.topH)), k = rnd();
+        if (!free(x, y)) continue;
+        if (k < 0.5) { g.fillStyle = '#2f6d4a'; g.fillRect(x, y, 2, 1); }                                   // 明るい草
+        else if (k < 0.78) { g.fillStyle = '#193c3e'; g.fillRect(x, y, 1, 1); g.fillRect(x + 1, y + 1, 1, 1); } // 影
+        else if (k < 0.92) { g.fillStyle = '#3e8948'; g.fillRect(x, y, 1, 2); g.fillRect(x + 2, y, 1, 2); g.fillRect(x + 1, y + 1, 1, 1); } // 草の株
+        else if (k < 0.97) { g.fillStyle = '#5a6988'; g.fillRect(x, y, 3, 2); g.fillStyle = '#8b9bb4'; g.fillRect(x, y, 2, 1); }            // 小石
+        else { g.fillStyle = k < 0.985 ? '#fee761' : '#f6757a'; g.fillRect(x, y, 1, 1); g.fillStyle = '#3e8948'; g.fillRect(x, y + 1, 1, 1); } // 花
+      }
+      // 床の影（右下へ少し）
+      g.fillStyle = '#193c3e';
+      for (let y = -D.floorR - 3; y <= D.floorR + 3; y++) for (let x = -D.floorR - 3; x <= D.floorR + 3; x++) { const d = Math.hypot(x - 1, y - 2); if (d <= D.floorR + 1.5 && d > D.floorR - 3) g.fillRect(D.cx + x, D.cy + y, 1, 1); }
+      return (R._ground = c);
+    },
+    // 日時計: 石の円盤。影は左（朝）から下を通って右（夜）へ。縁の色は朝（ごほうび 3）・昼（2）・夕方（1）の帯
+    sundial(g, stage, used) {
+      const S = Game.config.layout.sundial, N = stage.N, p = Math.min(1, used / N);
+      for (let y = -S.r - 1; y <= S.r + 2; y++) for (let x = -S.r - 1; x <= S.r + 1; x++) {
+        const d = Math.hypot(x, y);
+        let col = null;
+        if (d <= S.r + 0.5) {
+          col = (x * 5 + y * 3 + ((x * y) >> 1)) % 13 === 0 ? '#d7dfea' : '#c0cbdc';
+          if (d > S.r - 0.5) col = INK;
+          else if (d > S.r - 3.5) {
+            if (y <= 0) col = y < -S.r * 0.5 && x < 0 ? '#a3b1c7' : '#8b9bb4';
+            else { const f = (Math.PI - Math.atan2(y, x)) / Math.PI; col = f <= stage.par / N ? '#fee761' : f <= stage.noonAt / N ? '#ffffff' : '#f77622'; }
+          } else if (d > S.r - 4.5) col = '#8b9bb4';
+        } else if (Math.hypot(x, y - 2) <= S.r + 0.5) col = '#3a4466';   // 厚み（下の縁）
+        if (col) { g.fillStyle = col; g.fillRect(S.cx + x, S.cy + y, 1, 1); }
+      }
+      // 境目の刻み（朝 | 昼 | 夕方）
+      g.fillStyle = INK;
+      for (const k of [stage.par, stage.noonAt]) { const a = Math.PI - (Math.PI * k) / N; for (let r = S.r - 3; r <= S.r - 1; r++) g.fillRect(S.cx + Math.round(r * Math.cos(a)), S.cy + Math.round(r * Math.sin(a)), 1, 1); }
+      // 影と、まん中の柱
+      const a = Math.PI - Math.PI * p, r = S.r - 4;
+      g.fillStyle = '#262b44';
+      for (let i = 0; i <= r; i++) g.fillRect(S.cx + Math.round(i * Math.cos(a)), S.cy + Math.round(i * Math.sin(a)), 2, 2);
+      g.fillStyle = INK; g.fillRect(S.cx - 2, S.cy - 3, 5, 5);
+      g.fillStyle = '#feae34'; g.fillRect(S.cx - 1, S.cy - 2, 3, 3);
+      g.fillStyle = '#fee761'; g.fillRect(S.cx - 1, S.cy - 2, 1, 1);
+    },
+    // 札: 石の板に貼った紙。small: 並べた札（数字だけ）。「1 じかん」は金色。
+    // 大きい札の下には、その時間ぶんだけ塗った小さな文字盤（長針が回る量。1 じかんは 1 周）
+    card(g, n, x, y, w, h, small) {
+      const hour = n === 12, T = lt('card.' + n);
+      const paper = hour ? CARD.hour : CARD.paper, edge = hour ? CARD.hourEdge : CARD.edge, lit = hour ? '#fee761' : '#f4e6c8';
+      g.fillStyle = INK; g.fillRect(x + 1, y, w - 2, h); g.fillRect(x, y + 1, w, h - 2);
+      g.fillStyle = edge; g.fillRect(x + 1, y + 1, w - 2, h - 2);
+      g.fillStyle = paper; g.fillRect(x + 1, y + 1, w - 2, h - 3);
+      g.fillStyle = lit; g.fillRect(x + 2, y + 1, w - 4, 1); g.fillRect(x + 1, y + 2, 1, h - 5);
+      if (small) { B.text(g, T[0], x + Math.round((w - B.textW(T[0])) / 2), y + 4, INK); return; }
+      B.text(g, T[0], x + Math.round((w - B.textW(T[0])) / 2), y + 2, INK);
+      B.text(g, T[1], x + Math.round((w - B.textW(T[1])) / 2), y + 10, INK);
+      // 小さな文字盤（直径 7）: 12 の位置から、時間ぶんだけ塗る
+      const cx = x + (w >> 1), cy = y + 23, f = n / 12;
+      for (let j = -3; j <= 3; j++) for (let i = -3; i <= 3; i++) {
+        const d = Math.hypot(i, j);
+        if (d > 3.4) continue;
+        let fr = Math.atan2(j, i + 0.01) / (2 * Math.PI) + 0.25; if (fr < 0) fr += 1;
+        g.fillStyle = d > 2.4 ? INK : f >= 1 || fr < f ? (hour ? '#e43b44' : '#f77622') : '#ffffff';
+        g.fillRect(cx + i, cy + j, 1, 1);
+      }
+    },
+    // レバー: 苔むした石の台と、付け根で回る棒。pull（0〜1）で左上から右へ倒れる。ready のとき、にぎりの玉が赤い
+    leverArt(g, pull, ready) {
+      const L = Game.config.layout.lever, a = L.a0 + (L.a1 - L.a0) * pull;
+      const kx = L.px + Math.round(L.len * Math.sin(a)), ky = L.py - Math.round(L.len * Math.cos(a));
+      Game.dial.line(g, L.px, L.py, kx, ky, 4, INK);
+      Game.dial.line(g, L.px, L.py, kx, ky, 2, '#c28569');
+      Game.dial.line(g, L.px, L.py - 1, kx, ky - 1, 1, '#ead4aa');
+      // 台（台形の石）
+      g.fillStyle = INK; g.fillRect(L.px - 9, L.py - 1, 18, 7); g.fillRect(L.px - 7, L.py - 3, 14, 2);
+      g.fillStyle = '#5a6988'; g.fillRect(L.px - 8, L.py, 16, 5); g.fillRect(L.px - 6, L.py - 2, 12, 2);
+      g.fillStyle = '#8b9bb4'; g.fillRect(L.px - 6, L.py - 2, 12, 1); g.fillRect(L.px - 8, L.py, 2, 1); g.fillRect(L.px + 6, L.py, 2, 1);
+      g.fillStyle = '#3a4466'; g.fillRect(L.px - 8, L.py + 4, 16, 1);
+      g.fillStyle = '#3e8948'; g.fillRect(L.px - 8, L.py + 3, 3, 1); g.fillRect(L.px + 4, L.py + 4, 3, 1); g.fillRect(L.px - 5, L.py - 2, 2, 1);
+      g.fillStyle = INK; g.fillRect(L.px - 2, L.py - 2, 4, 2);     // 棒が出ている溝
+      // にぎりの玉（7×7 の丸）
+      const BALL = ['..000..', '.0aaa0.', '0a6aab0', '0aaaab0', '0aaabb0', '.0bbb0.', '..000..'];
+      const tone = ready ? { a: '#e43b44', b: '#a22633' } : { a: '#8b9bb4', b: '#5a6988' };
+      BALL.forEach((row, j) => [...row].forEach((ch, i) => { if (ch === '.') return; g.fillStyle = ch === '0' ? INK : ch === '6' ? '#ffffff' : tone[ch]; g.fillRect(kx - 3 + i, ky - 3 + j, 1, 1); }));
+    },
+    // 石の扉（鍵のステージ）。1 枚の石の板に、合わせる時刻が彫ってある。open（0〜1）で横へずれて開き、中の宝の光が見える
+    door(g, t, open) {
+      const D = Game.config.layout.door, slide = Math.round(open * (D.w - 5));
+      g.fillStyle = INK; g.fillRect(D.x - 3, D.y - 3, D.w + 6, D.h + 3);
+      g.fillStyle = '#5a6988'; g.fillRect(D.x - 2, D.y - 2, D.w + 4, D.h + 2);          // 枠
+      g.fillStyle = '#8b9bb4'; g.fillRect(D.x - 2, D.y - 2, D.w + 4, 1);
+      g.fillStyle = INK; g.fillRect(D.x, D.y, D.w, D.h);                                // 中
+      if (slide > 0) {
+        g.fillStyle = '#feae34'; g.fillRect(D.x, D.y + 5, Math.min(slide, D.w), D.h - 5);
+        g.fillStyle = '#fee761'; g.fillRect(D.x, D.y + 11, Math.max(0, Math.min(slide, D.w) - 4), D.h - 11);
+      }
+      // 板（枠の内側だけに切って、右へずらす）
+      g.save(); g.beginPath(); g.rect(D.x, D.y, D.w, D.h); g.clip();
+      const x0 = D.x + slide;
+      g.fillStyle = '#8b9bb4'; g.fillRect(x0, D.y, D.w, D.h);
+      g.fillStyle = '#c0cbdc'; g.fillRect(x0, D.y, D.w, 1); g.fillRect(x0, D.y, 1, D.h);
+      g.fillStyle = INK; g.fillRect(x0 - 1, D.y, 1, D.h);
+      g.fillStyle = '#5a6988'; for (let i = 0; i < 9; i++) g.fillRect(x0 + ((i * 17) % (D.w - 3)), D.y + ((i * 11) % D.h), 3, 1);
+      g.fillStyle = '#3e8948'; for (let i = 0; i < 6; i++) g.fillRect(x0 + ((i * 23 + 4) % (D.w - 2)), D.y + D.h - 2 - (i % 2), 2, 2);
+      const full = Game.lang.time(t), parts = full.split(' ');
+      const lines = B.textW(full) <= D.w - 6 || parts.length < 2 ? [full] : [parts[0], parts.slice(1).join(' ')];
+      lines.forEach((str, i) => { const y = D.y + Math.round(D.h / 2 - lines.length * 5 + i * 10) + 1, x = x0 + Math.round((D.w - B.textW(str)) / 2); B.text(g, str, x, y + 1, '#c0cbdc'); B.text(g, str, x, y, INK); });
+      g.restore();
+    },
+
+    // ---- 小さなボタン・札・手本 ----
+    // メニュー（三本線）と、寝る（三日月）。glow（0〜1）で、ゆっくり明るくなる
+    btnArt(g, r, kind, on, glow) {
+      g.fillStyle = INK; g.fillRect(r.x, r.y, r.w, r.h);
+      g.fillStyle = on ? mix('#3a4466', '#feae34', glow || 0) : '#262b44'; g.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+      const c = on ? '#ffffff' : '#5a6988';
+      if (kind === 'help') { B.text(g, '?', r.x + 4, r.y + 3, on ? '#fee761' : c); return; }
+      if (kind === 'menu') { g.fillStyle = c; for (let i = 0; i < 3; i++) g.fillRect(r.x + 3, r.y + 3 + i * 3, r.w - 6, 1); return; }
+      const MOON = ['..666..', '.66....', '66.....', '66.....', '66.....', '.66...6', '..6666.'];
+      g.fillStyle = on ? '#fee761' : c;
+      MOON.forEach((row, y) => [...row].forEach((ch, x) => { if (ch === '6') g.fillRect(r.x + 3 + x, r.y + 3 + y, 1, 1); }));
+    },
+    // 知らせの札（並べる所の上）。main の当たりにも使う
+    notice(str) { const V = Game.config.view, w = B.textW(str) + 10; return { x: Math.round((V.w - w) / 2), y: Game.config.layout.queue.y, w, h: 15 }; },
+    noticeArt(g, str, alpha, color) {
+      const r = R.notice(str);
+      g.globalAlpha = alpha;
+      g.fillStyle = INK; g.fillRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2);
+      g.fillStyle = color || CARD.paper; g.fillRect(r.x, r.y, r.w, r.h);
+      B.text(g, str, r.x + 5, r.y + 4, INK);
+      g.globalAlpha = 1;
+    },
+    // ふつうのボタン（文字つき）
+    textBtn(g, r, str) {
+      g.fillStyle = INK; g.fillRect(r.x, r.y, r.w, r.h);
+      g.fillStyle = CARD.hourEdge; g.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2);
+      g.fillStyle = CARD.hour; g.fillRect(r.x + 1, r.y + 1, r.w - 2, r.h - 3);
+      B.text(g, str, r.x + Math.round((r.w - B.textW(str)) / 2), r.y + 4, INK);
+    },
+    // クリアの札の中のボタン（次があれば「つぎへ」と「もういちど」、なければ「もどる」と「もういちど」）
+    clearBtns(app) {
+      const C = Game.config.layout.clear, y = C.y + C.btnY, id = app.rules.stage.id;
+      const next = app.def ? Game.progress.next(id) : id;
+      return [{ id: 'again', x: C.x + 5, y, w: C.btnW, h: C.btnH }, { id: next ? 'next' : 'back', x: C.x + C.w - 5 - C.btnW, y, w: C.btnW, h: C.btnH }];
+    },
+    // 星（いちばん少ない枚数を、いちばん少ないレバーの回数で）。on でないときは暗い形だけ
+    star(g, x, y, on) {
+      const ROWS = ['...0...', '..0a0..', '000a000', '0aaaaa0', '.0aaa0.', '0aa0aa0', '000.000'];
+      ROWS.forEach((row, j) => [...row].forEach((ch, i) => { if (ch === '.') return; g.fillStyle = ch === '0' ? (on ? INK : '#c28569') : on ? '#fee761' : '#d9bd8f'; g.fillRect(x + i, y + j, 1, 1); }));
+    },
+    // お化け（ふわふわ浮く）
+    ghost(g, x, y, t = 0) {
+      const ROWS = ['...0000000...', '..066666660..', '.06666666660.', '0666666666660', '0660066600660', '0660066600660', '0666666666660', '0666600066660', '0666600066660', '0666666666660', '0666666666660', '0666666666660'];
+      const HEM = [['0660666066060', '0600660060060', '.0..00..0..0.'], ['0606660666060', '0600600660060', '.0..0..00..0.']][Math.floor(t * 2) % 2];
+      ROWS.concat(HEM).forEach((row, j) => [...row].forEach((ch, i) => { if (ch === '.') return; g.fillStyle = ch === '0' ? INK : j > 9 ? '#c0cbdc' : '#ffffff'; g.fillRect(x + i, y + j, 1, 1); }));
+    },
+    // 手本: 指の絵が、札を盤へ運ぶ／レバーを引く（最初の 1 回だけ。ゆっくりくり返す）
+    demo(g, app) {
+      const C = Game.config, L = C.layout, A = B.all(), seen = app.tips.seen;
+      if (app.mode !== 'play' || app.anim || app.drag || app.leverDrag || app.stuckTip || app.helpTip || app.tipT > 0) return;
+      const u = Math.min(1, ((app.time % C.anim.demo) / C.anim.demo) / 0.7), e = u * u * (3 - 2 * u);
+      if (!seen.put && !app.queue.length) {
+        // 運ぶ札は、解き手の道の最初の 1 枚（いつも「1 じかん」だと、まねをして失敗する盤がある）
+        const H = R.hand(app.rules.stage), h = H.find((c) => c.n === app.demoCard) || H[0], x0 = h.x + h.w / 2, y0 = h.y + h.h / 2, x1 = C.dial.cx, y1 = C.dial.cy + 22;
+        const x = Math.round(x0 + (x1 - x0) * e), y = Math.round(y0 + (y1 - y0) * e);
+        g.globalAlpha = 0.75; R.card(g, h.n, x - (h.w >> 1), y - (h.h >> 1) - 6, h.w, h.h, false); g.globalAlpha = 1;
+        g.drawImage(A.finger, x - 4, y - 2);
+      } else if (!seen.lever && app.queue.length) {
+        const a = L.lever.a0, kx = L.lever.px + Math.round(L.lever.len * Math.sin(a)), ky = L.lever.py - Math.round(L.lever.len * Math.cos(a));
+        g.drawImage(A.finger, kx - 4 + Math.round(6 * e), ky - 12 + Math.round(12 * e));
+      }
+    },
+
+    // ---- タイトル ----
+    big(g, str, cx, y, k, color) {
+      const w = B.textW(str) + 2, c = B.mk(w, 9), cg = c.getContext('2d');
+      B.text(cg, str, 1, 1, color, INK);
+      g.drawImage(c, Math.round(cx - (w * k) / 2), y, w * k, 9 * k);
+    },
+    title(g, app) {
+      const C = Game.config, V = C.view, L = C.layout, A = B.all();
+      g.drawImage(R.ground(), 0, 0);
+      R.top(g, 0.1);
+      // 針がゆっくり回る床
+      Game.dial.draw(g, { t: (K0 + app.time * 1.5) % 144, hints: { nums: 'all', ticks: true }, items: [], taken: [], wall: null });
+      g.drawImage(A.hamG[0].hold.n, L.ham.x, L.ham.y);
+      R.leverArt(g, 0, false);
+      g.fillStyle = INK; g.fillRect(0, L.queue.y - 3, V.w, V.h - L.queue.y + 3);
+      R.big(g, lt('title.name1'), V.w / 2, 3, 2, '#fee761');
+      R.big(g, lt('title.name2'), V.w / 2, 20, 3, '#feae34');
+      const tap = lt('title.tap');
+      g.globalAlpha = 0.55 + 0.45 * (0.5 - 0.5 * Math.cos((app.time * 2 * Math.PI) / 1.8));
+      B.text(g, tap, Math.round((V.w - B.textW(tap)) / 2), 208, '#ffffff');
+      g.globalAlpha = 1;
+    },
+
+    // ---- ステージ選び ----
+    // エリアごとに 1 行。返り値: [{ id, area, door, n, open, x, y, w, h }]
+    tiles(app) {
+      const S = Game.config.layout.select, P = Game.progress, out = [], areas = [];
+      for (const d of Game.stages) if (!areas.includes(d.area)) areas.push(d.area);
+      for (const d of Game.stages) {
+        const row = areas.indexOf(d.area), n = Game.stages.filter((e) => e.area === d.area).indexOf(d);
+        out.push({ id: d.id, area: d.area, door: !!d.door, n: n + 1, first: n === 0, open: P.open(app.progress, d.id), x: S.x + n * (S.tile.w + S.tile.gap), y: S.top + row * S.rowH + 13, w: S.tile.w, h: S.tile.h });
+      }
+      return out;
+    },
+    select(g, app) {
+      const C = Game.config, V = C.view, S = C.layout.select, P = Game.progress, A = B.all();
+      g.fillStyle = '#193c3e'; g.fillRect(0, 0, V.w, V.h);
+      for (const t of R.tiles(app)) {
+        if (t.first) {
+          const tot = P.total(app.progress, t.area), name = t.area + ' ' + lt('area.' + t.area), cnt = tot.gems + '/' + tot.stages * 3;
+          B.text(g, name, S.x, t.y - 11, '#ffffff');
+          B.text(g, cnt, V.w - S.x - B.textW(cnt), t.y - 11, '#2ce8f5');
+        }
+        const e = P.of(app.progress, t.id);
+        g.fillStyle = INK; g.fillRect(t.x, t.y, t.w, t.h);
+        g.fillStyle = t.open ? (e.gems[0] ? CARD.paper : '#c0cbdc') : '#262b44'; g.fillRect(t.x + 1, t.y + 1, t.w - 2, t.h - 2);
+        const ink = t.open ? INK : '#3a4466';
+        if (t.door) {
+          // 扉: 小さな石の門
+          g.fillStyle = ink; g.fillRect(t.x + 4, t.y + 4, 9, 10); g.fillRect(t.x + 5, t.y + 3, 7, 1);
+          g.fillStyle = t.open ? (e.gems[0] ? '#feae34' : '#8b9bb4') : '#262b44'; g.fillRect(t.x + 6, t.y + 6, 5, 8);
+        } else { const str = String(t.n); B.text(g, str, t.x + Math.round((t.w - B.textW(str)) / 2), t.y + 5, ink); }
+        // ごほうび 3 つ（小さなひし形）と、足あと
+        for (let i = 0; i < 3; i++) {
+          const x = t.x + 3 + i * 4, y = t.y + 17;
+          g.fillStyle = e.gems[i] ? '#0099db' : t.open ? '#8b9bb4' : '#3a4466';
+          g.fillRect(x + 1, y, 1, 3); g.fillRect(x, y + 1, 3, 1);
+          if (e.gems[i]) { g.fillStyle = '#2ce8f5'; g.fillRect(x + 1, y + 1, 1, 1); }
+        }
+        if (e.star) { g.fillStyle = INK; g.fillRect(t.x + 1, t.y + 1, 5, 5); g.fillStyle = '#fee761'; g.fillRect(t.x + 3, t.y + 2, 1, 3); g.fillRect(t.x + 2, t.y + 3, 3, 1); }
+        if (e.stamp) { g.fillStyle = '#f77622'; g.fillRect(t.x + t.w - 5, t.y + 2, 3, 3); g.fillStyle = '#feae34'; g.fillRect(t.x + t.w - 4, t.y + 3, 1, 1); }
+      }
+      g.drawImage(app.settings.sound ? A.spkOn : A.spkOff, S.sound.x + 2, S.sound.y + 3);
+    },
+
+    // app: main.js の app
+    draw(app) {
+      const g = R.g, C = Game.config, V = C.view, L = C.layout;
+      g.imageSmoothingEnabled = false;   // 拡大して描く字（タイトル、擬音）をぼかさない
+      g.fillStyle = INK; g.fillRect(0, 0, R.canvas.width, R.canvas.height);
+      g.save();
+      g.translate(R.fx, R.fy);
+      g.beginPath(); g.rect(0, 0, V.w, V.h); g.clip();
+      if (app.screen === 'title') R.title(g, app);
+      else if (app.screen === 'select') R.select(g, app);
+      else R.play(g, app);
+      g.restore();
+    },
+    play(g, app) {
+      const C = Game.config, V = C.view, L = C.layout, s = app.rules, st = s.stage, vis = app.vis, A = B.all();
+      const slow = 0.5 - 0.5 * Math.cos((app.time * 2 * Math.PI) / 1.8);   // ゆっくりした明るさのゆれ
+      // 地面・空と木々・日時計・床
+      g.drawImage(R.ground(), 0, 0);
+      R.top(g, Math.min(1, vis.used / st.N));
+      R.sundial(g, st, vis.used);
+      if (st.lock != null) R.door(g, st.lock, app.doorOpen);
+      const hints = s.helpOn ? { nums: 'all', mins: true, zones: true, ticks: true, names: true } : st.hints;
+      // 助け舟: 並べている間、その並びで針が止まる所に、2 本の針のうすい影を見せる
+      const pre = s.helpOn && app.queue.length && !app.anim && app.mode === 'play';
+      Game.dial.draw(g, { t: vis.t, hints, items: st.items, taken: vis.taken, wall: st.wall, ghostT: pre ? Game.clock.wrap(s.t + app.queue.reduce((a, b) => a + b, 0)) : null, ghostA: 0.5 + 0.25 * slow });
+      // 探検家（夜は横になって寝る。お化けが出た夜は、目を回して気絶）
+      const ham = A.hamG[0];
+      // お化けの夜は、お化けが出てから 1 拍おいて倒れる（app.fainted）
+      if (app.ghost ? app.fainted : vis.night > 0.5) g.drawImage(ham.down.n, L.ham.x, L.ham.y + 2); else g.drawImage(ham.hold.n, L.ham.x, L.ham.y);
+      R.leverArt(g, app.leverPull, app.queue.length > 0 && !app.anim);
+      // 夜: 世界を暗くする（札は暗くしない）
+      if (vis.night > 0) { g.globalAlpha = vis.night * C.sky.nightDim; g.fillStyle = C.sky.night; g.fillRect(0, 0, V.w, L.queue.y - 3); g.globalAlpha = 1; }
+      if (app.ghost && vis.night > 0.3) { g.globalAlpha = Math.min(1, (vis.night - 0.3) * 3); R.ghost(g, L.ham.x + 13, L.ham.y - 20 + Math.round(2 * Math.sin(app.time * 3)), app.time); g.globalAlpha = 1; }
+      // 小さなボタン
+      R.btnArt(g, L.btn.menu, 'menu', true, 0);
+      if (app.mode === 'play') R.btnArt(g, L.btn.sleep, 'sleep', s.used > 0, s.stuck ? slow : 0);
+      if (app.mode === 'play' && Game.rules.canHelp(s) && !s.helpOn) R.btnArt(g, L.btn.help, 'help', true, slow);
+
+      // 止まったあとの時刻の名前
+      if (st.lock == null && app.nameT > 0 && hints.names && app.mode === 'play') B.text(g, Game.lang.time(s.t), L.sign.x + 1, L.sign.y + 3, '#ffffff', INK);
+      // 並べる所と手元
+      g.fillStyle = INK; g.fillRect(0, L.queue.y - 3, V.w, V.h - L.queue.y + 3);
+      // 針が回っている間: いま使っている札（左から順に消える）の右に、次のぶんを並べられる
+      const run = app.running.length, room = run + app.queue.length + Game.rules.room(s, app.queue.length);
+      for (let i = 0; i < C.queueMax; i++) {
+        const x = L.queue.x + i * (L.queue.w + L.queue.gap);
+        g.fillStyle = i < room ? CARD.slot : '#262b44'; g.fillRect(x, L.queue.y, L.queue.w, L.queue.h);
+      }
+      for (const q of R.queue(app.running.concat(app.queue)).slice(0, C.queueMax)) R.card(g, q.n, q.x, q.y - (q.i < run ? 2 : 0), q.w, q.h, true);
+      for (const h of R.hand(st)) R.card(g, h.n, h.x, h.y, h.w, h.h, false);
+      if (app.drag) { const H = L.hand; R.card(g, app.drag.n, Math.round(app.drag.x - H.w / 2), Math.round(app.drag.y - H.h / 2 - L.dragLift), H.w, H.h, false); }
+      // 鍵のステージの始まり: 何をする遊びかを知らせる札（さわると消える）。針を隠さないよう、まだ空いている「並べる所」の上に出す
+      if (st.lock != null && app.tipT > 0 && app.mode === 'play') R.noticeArt(g, lt('lock.tip'), Math.min(1, app.tipT / 0.3));
+      // きょうの残りの枚数では取りきれない: 寝るのをすすめる札（さわると寝る。ほかの所をさわると消える）
+      if (app.helpTip && !app.stuckTip && !app.anim && app.mode === 'play' && !s.helpOn) R.noticeArt(g, lt('help'), 1, mix('#2ce8f5', '#ffffff', slow));
+      if (app.stuckTip && !app.anim && app.mode === 'play') R.noticeArt(g, lt('stuck'), 1, mix('#fee761', '#ffffff', slow));
+      R.demo(g, app);
+      app.fx.draw(g);
+      // クリア
+      if (app.mode === 'clear' && app.clearT > app.clearWait) {
+        const P = L.clear, x = P.x, y = P.y;
+        g.fillStyle = INK; g.fillRect(x, y, P.w, P.h);
+        g.fillStyle = CARD.paper; g.fillRect(x + 1, y + 1, P.w - 2, P.h - 2);
+        const title = lt('clear.title'); B.text(g, title, x + Math.round((P.w - B.textW(title)) / 2), y + 7, INK);
+        for (let i = 0; i < 3; i++) g.drawImage(i < app.gemsShown ? A.gem : A.gemOff, x + 22 + i * 14, y + 21);
+        const res = Game.rules.result(s);
+        if (st.pulls != null) R.star(g, x + 22 + 3 * 14 + 4, y + 21, app.gemsShown >= s.gems && res.star);
+        // 足あと（「てがかりを だす」を使わずにクリア）
+        if (app.gemsShown >= s.gems && res.stamp) g.drawImage(A.foot, x + 45, y + 34);
+        if (app.gemsShown >= s.gems) for (const b of R.clearBtns(app)) R.textBtn(g, b, lt('clear.' + b.id));
+      }
+    },
+  };
+
+  Game.render = R;
+})();
+</script>
+<script>
+// つなぎ: 指の動きをルールの操作にし、ルールが返す出来事を演出（針が回る・擬音・音）に配る。
+// ルールは一瞬で進む。画面に見せる途中の姿（針の位置・取った宝・空の進み）は app.vis が持ち、出来事を 1 つずつ時間をかけて映す。
+// 確かめ用の URL: ?stage=1-3 / ?stage=t2（その盤から）、?seed=123（数字を決める種）、?nosave=1（保存しない）
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const cfg = Game.config, RU = Game.rules, K = Game.clock;
+  const q = new URLSearchParams(location.search);
+
+  const app = {
+    screen: 'title',    // 'title' | 'select' | 'play'
+    time: 0,
+    progress: null, settings: null, tips: null,
+    def: null,          // 遊んでいるステージの型（確かめ用の盤では null）
+    got: null,          // 今回はじめて取れたもの { gems, stamp }
+    stuckTip: false,    // 「きょうは もう ねよう」の札を出している
+    helpTip: false,     // 「てがかりを だす」の札を出している（2 回夜になった朝）
+    ghost: false,       // この夜はお化けが出た（見た目だけ）
+    fainted: false,     // お化けを見て倒れた（出てから 1 拍あと）
+    demoCard: null,     // 手本の指が運ぶ札（解き手の道の最初の 1 枚）
+    rules: null,
+    vis: null,          // { t（小数あり）, taken, used（空と日時計の進み。小数あり）, usedTo, night（0〜1）, nightTo }
+    queue: [],          // 並べた札（左から）。針が回っている間も、次のぶんを並べられる
+    running: [],        // いま使っている札（レバーを倒したぶん。左から順に消える）
+    drag: null,         // つまんでいる札 { n, x, y, from: 'hand' | 'queue', j }
+    leverDrag: null, leverPull: 0,
+    anim: null,         // 出来事を順に映している間 { ev, i, wait, move, k, cards }
+    mode: 'play', clearT: 0, clearWait: 0, gemsShown: 0, nameT: 0,
+    doorOpen: 0,        // 扉の開き具合（0〜1。鍵のステージ）
+    tipT: 0,            // 鍵のステージの始まりの札を出す残りの秒
+    fx: null, audio: null, manual: false,
+  };
+  Game.app = app;
+
+  const nosave = q.get('nosave') === '1';
+  const store = (what) => { if (nosave) return; if (what === 'progress') Game.save.storeProgress(app.progress); else if (what === 'tips') Game.save.storeTips(app.tips); else Game.save.storeSettings(app.settings); };
+
+  // ステージに入る。型のあるステージは、入るたびに数字を決める（?seed= があればその種）
+  function enter(id) {
+    const def = Game.stages.find((d) => d.id === id);
+    let stage;
+    if (def) {
+      const fixed = q.has('seed');
+      const seed = fixed ? Game.rng.seedFrom(/^-?\d+$/.test(q.get('seed')) ? +q.get('seed') : q.get('seed')) : (Math.random() * 0x7fffffff) | 0;
+      const prev = Game.progress.enter(app.progress, id, seed);
+      store('progress');
+      stage = Game.gen.make(def, seed, fixed ? null : prev);
+    } else stage = Game.testStages.find((d) => d.id === id) || Game.testStages[0];
+    app.def = def || null;
+    begin(stage);
+  }
+  function begin(stage) {
+    const s = (app.rules = RU.start(stage));
+    app.screen = 'play';
+    app.vis = { t: s.t, taken: s.taken.slice(), used: 0, usedTo: 0, night: 0, nightTo: 0 };
+    app.queue = []; app.running = []; app.drag = null; app.leverDrag = null; app.leverPull = 0; app.anim = null;
+    app.mode = 'play'; app.clearT = 0; app.gemsShown = 0; app.nameT = 0; app.got = null;
+    app.stuckTip = false; app.helpTip = false; app.ghost = false; app.fainted = false;
+    const best = app.tips.seen.put ? null : Game.solver.solve(stage);
+    app.demoCard = best && best.moves.length ? best.moves[0][0] : null;
+    app.doorOpen = 0; app.tipT = s.stage.lock != null ? cfg.anim.lockTip : 0;
+    if (app.fx) app.fx.clear();
+  }
+  // クリアのあとの「つぎへ」: 同じエリアの次（確かめ用の盤は順に回る）。なければ null
+  function nextId() {
+    const id = app.rules.stage.id;
+    if (app.def) return Game.progress.next(id);
+    const T = Game.testStages; return T[(T.findIndex((d) => d.id === id) + 1) % T.length].id;
+  }
+
+  // 演出の出来事を、擬音と音に配る
+  function emit(e) { app.fx.on(e); app.audio.on(e); }
+
+  // ---- 出来事を順に映す ----
+  // wait: 最初の出来事までの間（レバーを倒してから 1 拍おいて、針が動き出す）
+  function play(ev, wait = 0) { app.anim = { ev: ev.slice(), i: 0, wait, move: null, k: 0, cards: 0 }; }
+  function moveTo(from, steps, dur) { app.anim.move = { from, steps, dur, t: 0 }; app.anim.wait = dur; }
+  function step(e) {
+    const A = cfg.anim, R = Game.render, s = app.rules, vis = app.vis, an = app.anim;
+    switch (e.type) {
+      case 'card': {
+        if (an.cards++ > 0) app.running.shift();   // 前の札を使い終えた
+        an.fast = e.n === 12; an.k = 0; vis.usedTo++;
+        const p = R.longTip(vis.t); emit({ type: 'card', x: p.x, y: p.y - 10 });
+        break;
+      }
+      case 'tick': emit({ type: 'tick', k: an.k++ }); moveTo(Math.round(vis.t), 1, an.fast ? A.tickHour : A.tick); break;
+      case 'hour': emit({ type: 'hour' }); break;   // 音だけ（やわらかい合図）。擬音は出さない: 長針が何かに当たったように見えるため
+      case 'take': {
+        vis.taken[e.item] = true;
+        const p = R.itemAt(s.stage.items[e.item]); emit({ type: 'take', x: p.x, y: p.y - 10 });
+        an.wait = A.take; break;
+      }
+      case 'bounce': {
+        app.running = []; vis.usedTo = s.used;
+        const p = e.why === 'wall' ? R.shortTip(s.stage.wall) : R.itemAt(s.stage.items[e.item]);
+        emit({ type: 'bounce', x: p.x, y: p.y - 10 });
+        an.ev.splice(an.i, 0, { type: '_back', back: e.back });
+        an.wait = A.bounceWait; break;
+      }
+      case '_back': emit({ type: 'back' }); moveTo(Math.round(vis.t), -K.wrap(Math.round(vis.t) - e.back), A.back); break;
+      case 'night': {
+        app.queue = []; app.running = []; vis.nightTo = 1; app.stuckTip = false;
+        // ときどきお化けが出て、気絶する（見た目だけの違い）
+        app.ghost = app.forceGhost != null ? app.forceGhost : Math.random() * cfg.ghostEvery < 1;
+        app.fainted = false;
+        an.ev.splice(an.i, 0, { type: '_day' });
+        // お化け: 暗くなってお化けが出て、1 拍おいてから「ひゃあ」と倒れる
+        if (app.ghost) { an.ev.splice(an.i, 0, { type: '_faint' }); an.wait = A.ghostWait; break; }
+        emit({ type: 'night', x: cfg.layout.ham.x + 26, y: cfg.layout.ham.y - 6 });
+        an.wait = A.night; break;
+      }
+      case '_faint': app.fainted = true; emit({ type: 'ghost', x: cfg.layout.ham.x + 30, y: cfg.layout.ham.y - 36 }); an.wait = A.night; break;   // 字はお化けの上に出す（お化けを隠さない）
+      case '_day': {
+        RU.sleep(s); app.ghost = false; app.fainted = false;
+        vis.t = s.t; vis.taken = s.taken.slice(); vis.used = 0; vis.usedTo = 0; vis.nightTo = 0;
+        emit({ type: 'day', x: cfg.view.w / 2, y: 60 });
+        if (RU.canHelp(s) && !s.helpOn) app.helpTip = true;   // 2 回夜になった: 助け舟をすすめる
+        an.wait = A.dusk; break;
+      }
+      case 'clear': {
+        app.queue = []; app.running = []; vis.usedTo = s.used; app.mode = 'clear'; app.clearT = 0; app.gemsShown = 0; app.stuckTip = false;
+        if (app.def) { app.got = Game.progress.record(app.progress, s.stage.id, RU.result(s)); store('progress'); }
+        // 鍵のステージ: 先に石の扉がゆっくり開く。クリアの札と音はそのあと
+        const lock = s.stage.lock != null, D = cfg.layout.door;
+        app.clearWait = A.clearWait + (lock ? A.door : 0);
+        if (lock) emit({ type: 'door', x: D.x + D.w + 18, y: D.y + 14 });
+        emit({ type: 'clear', delay: lock ? A.door : 0 });
+        break;
+      }
+      case 'stuck': app.stuckTip = true; break;   // きょうの残りの枚数では取りきれない → 「きょうは もう ねよう」をすすめる
+    }
+  }
+  function tickAnim(dt) {
+    const an = app.anim, vis = app.vis;
+    if (an.move) {
+      const m = an.move;
+      m.t = Math.min(m.dur, m.t + dt);
+      vis.t = K.wrap(m.from + m.steps * (m.t / m.dur));
+      if (m.t >= m.dur) { vis.t = K.wrap(m.from + m.steps); an.move = null; }
+    }
+    an.wait -= dt;
+    while (an.wait <= 0 && !an.move && an.i < an.ev.length) step(an.ev[an.i++]);
+    if (an.wait <= 0 && !an.move && an.i >= an.ev.length) {
+      app.anim = null; app.running = []; vis.t = app.rules.t; vis.usedTo = app.rules.used;
+      if (app.mode === 'play') app.nameT = cfg.anim.name;
+    }
+  }
+
+  // ---- 指 ----
+  const inRect = (r, x, y, m = 0) => x >= r.x - m && x < r.x + r.w + m && y >= r.y - m && y < r.y + r.h + m;
+  function pull() {
+    const ev = RU.advance(app.rules, app.queue.slice());
+    if (!ev.length) { emit({ type: 'full' }); return; }
+    const L = cfg.layout.lever;
+    emit({ type: 'lever', x: L.x + 8, y: L.y - 4 });
+    app.nameT = 0; app.stuckTip = false;
+    app.running = app.queue; app.queue = [];
+    if (!app.tips.seen.lever) { app.tips.seen.lever = true; store('tips'); }
+    play(ev, cfg.anim.leverWait);
+  }
+  // 自分から寝る（次の日へ。同じ盤を朝から）
+  function goSleep() {
+    if (app.anim || app.mode !== 'play') return;
+    app.queue = []; app.running = []; app.nameT = 0;
+    play([{ type: 'night' }]);
+  }
+  function onInput(e) {
+    const R = Game.render, s = app.rules, L = cfg.layout;
+    if (app.screen === 'title') { if (e.type === 'down') app.screen = 'select'; return; }
+    if (app.screen === 'select') {
+      if (e.type !== 'down') return;
+      if (inRect(L.select.sound, e.x, e.y, 2)) { app.settings.sound = !app.settings.sound; cfg.audio.enabled = app.settings.sound; store('settings'); emit({ type: 'put', n: 3 }); return; }
+      const tile = R.tiles(app).find((c) => inRect(c, e.x, e.y));
+      if (tile && tile.open) { emit({ type: 'put', n: 2 }); enter(tile.id); } else if (tile) emit({ type: 'full' });
+      return;
+    }
+    if (e.type === 'down') {
+      app.tipT = Math.min(app.tipT, 0.3);
+      if (inRect(L.btn.menu, e.x, e.y, 2)) { app.anim = null; app.drag = null; app.screen = 'select'; app.fx.clear(); return; }
+      if (app.mode === 'clear') {
+        if (app.anim || app.gemsShown < s.gems || app.clearT <= app.clearWait + 0.3) return;
+        const b = R.clearBtns(app).find((c) => inRect(c, e.x, e.y, 1));
+        if (!b) return;
+        emit({ type: 'put', n: 2 });
+        if (b.id === 'next') enter(nextId()); else if (b.id === 'again') enter(s.stage.id); else { app.screen = 'select'; app.fx.clear(); }
+        return;
+      }
+      // 針が回っている間: レバーと寝るボタンは受けない。札は、次のぶんとして並べられる（テンポよく続けられる）
+      if (!app.anim) {
+        const canHelp = RU.canHelp(s) && !s.helpOn;
+        if (canHelp && (inRect(L.btn.help, e.x, e.y, 2) || (app.helpTip && inRect(R.notice(Game.lang.t('help')), e.x, e.y, 2)))) { RU.help(s); app.helpTip = false; emit({ type: 'take' }); return; }
+        app.helpTip = false;
+        if (app.stuckTip) { const hit = inRect(R.notice(Game.lang.t('stuck')), e.x, e.y, 2); app.stuckTip = false; if (hit) { goSleep(); return; } }
+        if (inRect(L.btn.sleep, e.x, e.y, 2)) { if (s.used > 0) goSleep(); else emit({ type: 'full' }); return; }
+        if (inRect(R.lever(), e.x, e.y)) { app.leverDrag = { x0: e.x, y0: e.y }; return; }
+      }
+      const qc = R.queue(app.queue, app.running.length).find((c) => inRect(c, e.x, e.y, 1));
+      if (qc) { app.queue.splice(qc.i, 1); app.drag = { n: qc.n, x: e.x, y: e.y, from: 'queue', j: qc.i }; return; }
+      const hc = R.hand(s.stage).find((c) => inRect(c, e.x, e.y));
+      if (hc) app.drag = { n: hc.n, x: e.x, y: e.y, from: 'hand' };
+    } else if (e.type === 'move') {
+      if (app.drag) { app.drag.x = e.x; app.drag.y = e.y; }
+      if (app.leverDrag) {
+        app.leverPull = Math.max(0, Math.min(1, Math.max(e.y - app.leverDrag.y0, e.x - app.leverDrag.x0) / L.lever.pull));
+        if (app.leverPull >= 1) { app.leverDrag = null; if (app.queue.length) pull(); }
+      }
+    } else if (e.type === 'up' || e.type === 'cancel') {
+      app.leverDrag = null;
+      const d = app.drag;
+      if (!d) return;
+      app.drag = null;
+      const slot = (i) => { const Q = L.queue; return { x: Q.x + (i + app.running.length) * (Q.w + Q.gap) + Q.w / 2, y: Q.y - 2 }; };
+      if (d.from === 'hand') {
+        if (e.type !== 'up' || !R.onDrop(d.x, d.y - L.dragLift)) return;
+        if (app.mode !== 'play') return;
+        if (RU.room(s, app.queue.length) <= 0) { if (!app.anim || !(s.done || s.night)) emit({ type: 'full' }); return; }   // 回っている間は、結果（クリア・夜）を音で先に知らせない
+        app.queue.push(d.n);
+        if (!app.tips.seen.put) { app.tips.seen.put = true; store('tips'); }
+        emit(Object.assign({ type: 'put', n: d.n }, slot(app.queue.length - 1)));
+      } else if (e.type === 'up' && d.y - L.dragLift >= L.hand.y - 6) emit({ type: 'unput', n: d.n }); // 手元で離した: 取り消す
+      else if (app.mode === 'play' && !s.night) app.queue.splice(Math.min(d.j, app.queue.length), 0, d.n);                                                             // それ以外: 元の所へ戻す
+    }
+  }
+
+  function update(dt) {
+    const vis = app.vis, A = cfg.anim;
+    app.time += dt;
+    if (app.screen !== 'play') { app.fx.update(dt); return; }
+    if (app.anim) tickAnim(dt);
+    else if (!app.leverDrag && app.leverPull > 0) app.leverPull = Math.max(0, app.leverPull - dt / A.leverBack);
+    if (vis.used < vis.usedTo) vis.used = Math.min(vis.usedTo, vis.used + dt * 4);
+    if (vis.night !== vis.nightTo) vis.night += Math.sign(vis.nightTo - vis.night) * Math.min(Math.abs(vis.nightTo - vis.night), dt / A.dusk);
+    if (app.nameT > 0) app.nameT -= dt;
+    if (app.tipT > 0) app.tipT -= dt;
+    if (app.mode === 'clear') {
+      app.clearT += dt;
+      if (app.rules.stage.lock != null) app.doorOpen = Math.min(1, app.clearT / A.door);
+      const n = Math.min(app.rules.gems, Math.floor((app.clearT - app.clearWait) / A.gemEvery) + 1);
+      if (app.clearT > app.clearWait && n > app.gemsShown) {
+        app.gemsShown = n; emit({ type: 'gem', i: n - 1 });
+        if (n >= app.rules.gems && RU.result(app.rules).star) { emit({ type: 'gem', i: 4 }); emit({ type: 'gem', i: 7 }); }   // 星: 高い音を重ねる
+      }
+    }
+    app.fx.update(dt);
+  }
+
+  function boot() {
+    const canvas = document.getElementById('c');
+    Game.render.init(canvas);
+    app.progress = nosave ? Game.progress.fresh() : Game.save.loadProgress();
+    app.settings = nosave ? { sound: true } : Game.save.loadSettings();
+    app.tips = nosave ? { seen: {} } : Game.save.loadTips();
+    cfg.audio.enabled = app.settings.sound;
+    app.audio = Game.audio.create(cfg);
+    app.fx = Game.fx.create(cfg);
+    Game.input.create(canvas, onInput);
+    // 音の再開。タッチは指を離したときに初めて許されるので、置いたとき・離したときの両方で試す
+    for (const ev of ['pointerdown', 'pointerup', 'touchend', 'keydown']) document.addEventListener(ev, () => { if (!app.audio.running()) app.audio.unlock(); }, true);
+    document.addEventListener('visibilitychange', () => app.audio.setHidden(document.hidden));
+    if (q.has('stage')) enter(q.get('stage'));
+    let last = performance.now();
+    const frame = (now) => {
+      const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
+      last = now;
+      if (!app.manual) update(dt);
+      Game.render.draw(app);
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  }
+
+  // テスト用: 実時間に関係なく進める
+  Game.debug = {
+    step(sec) { app.manual = true; for (let i = 0; i < Math.round(sec * 60); i++) update(1 / 60); Game.render.draw(app); },
+    enter, input: onInput,
+  };
+
+  boot();
+})();
+</script>
+</body>
+</html>
