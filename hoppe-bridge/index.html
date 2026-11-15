@@ -49,7 +49,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       pieces: { x: 7, y: 176, w: 120, rowH: 16, rowHL: 25 }, // 切れはしの置き場（rowHL: 切れはしの下に記号を付けるときの行の高さ）
       btn: { retry: { x: 70, y: 2, w: 49, h: 11 }, menu: { x: 121, y: 2, w: 12, h: 11 }, help: { x: 30, y: 224, w: 75, h: 13 } },
       mapY: 17,                 // 道の地図（残りの谷の小さな絵）
-      select: { x: 6, y: 53, w: 59, h: 44, gapX: 5, gapY: 6, cols: 2, sound: { x: 119, y: 2, w: 14, h: 13 }, story: { x: 2, y: 2, w: 36, h: 13 }, prev: { x: 24, y: 16, w: 11, h: 13 }, next: { x: 100, y: 16, w: 11, h: 13 } }, // ステージ選びの札の並び
+      select: { x: 6, y: 53, w: 59, h: 44, gapX: 5, gapY: 6, cols: 2, sound: { x: 119, y: 2, w: 14, h: 13 }, haptics: { x: 103, y: 2, w: 14, h: 13 }, story: { x: 2, y: 2, w: 36, h: 13 }, prev: { x: 24, y: 16, w: 11, h: 13 }, next: { x: 100, y: 16, w: 11, h: 13 } }, // ステージ選びの札の並び
       dragLift: 14,             // つまんだ切れはしを、指よりこれだけ上に描く
       slash: { reach: 20, min: 6, slop: 3 }, // 上から下へ板を横切るスワイプ: 板の上これだけの範囲から始められる／これだけ下へ動いて板の下へ抜けたら切る／縦か横かを決めるまでの遊び
       pieceSlop: 8,             // 切れはしをつまめる、絵の外の余裕（いちばん近い山を選ぶ）
@@ -114,6 +114,26 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         // これ以上置けない
         deny: [{ k: 'tone', f: 196, type: 'square', vol: 0.12, dec: 0.06 }],
       },
+    },
+
+    // 振動（navigator.vibrate の並び。ミリ秒。震える・止まる・震える…）。dev/haptics.html で実機の手触りを決めて写す
+    // 落ちる・こけるでは震わせない。cut の型は、前の振動を打ち切って出す（ほかは前の振動が終わってから minGap あける）
+    haptics: {
+      enabled: true,
+      minGap: 40,
+      cut: ['sturdy', 'rewardGems'],
+      click: [8],                            // カチ（蛇腹の目盛りが 1 段変わる）
+      saw: [30, 160, 30, 160, 30, 160, 30],  // ザクッ（のこぎりを 4 回引く音に合わせる）
+      place: [15],                           // コトン（置く）。振動をオンにしたときの確かめにも
+      take: [8],                             // 切れはしをつまみ上げる
+      route: [8],                            // 分かれ道で道を移る
+      step: [10],                            // トン（渡る一歩）
+      creak: [6, 20, 6, 20, 6],              // ギシギシ（1 回のきしみ）
+      fit: [12],                             // ピタッ
+      sturdy: [0, 100, 50],                  // がっしり！（先頭の 0, 100 は待ち。擬音は 1 字ずつ 0.05 秒おきに出るので、出そろう途中に合わせる）
+      gem: [12],                             // 宝石・足あとを 1 つ数える
+      rewardGems: [0, 600, 20, 480, 20, 480, 20], // ごほうび（宝石）: 走ってくる間（anim.reward.runIn）を待ち、3 回跳ねて着地するのに合わせる（anim.reward.hop）
+      stamp: [15],                           // ごほうび（足あと）: 足あとが 1 つ付くごと
     },
 
     // 演出の秒数（ルールは一瞬で進む。歩く・落ちるは main が持つ）
@@ -859,8 +879,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   function write(key, data) { try { localStorage.setItem(key, JSON.stringify(data)); return true; } catch (e) { return false; } }
   const json = (raw) => { try { return typeof raw === 'string' ? JSON.parse(raw) : null; } catch (e) { return null; } };
 
-  // 設定 { sound: bool }
-  function parseSettings(raw) { const d = json(raw); return { sound: !(d && d.sound === false) }; }
+  // 設定 { sound: bool, haptics: bool }（前の保存に haptics が無ければオン）
+  function parseSettings(raw) { const d = json(raw); return { sound: !(d && d.sound === false), haptics: !(d && d.haptics === false) }; }
   // 手本 { seen: { count: true, … } }（できたものだけ）
   function parseTips(raw, cfg = Game.config) {
     const d = json(raw), t = { seen: {} };
@@ -1132,6 +1152,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       demo: { route: 'はしを タップすると うつれるよ' },
       sign: { cut: '{d}つに きって {n}まい', and: 'と', wo: 'を', add: 'あわせた ながさ', from: 'から', sub: 'とった ながさ' },
       sound: { on: 'おと オン', off: 'おと オフ' },
+      haptics: { on: 'ぶるぶる オン', off: 'ぶるぶる オフ' },
       menu: { resume: 'つづける', restart: 'さいしょから', select: 'ステージえらび' },
       stuck: { gap: 'この たにから やりなおそう', start: 'さいしょから やりなおそう' },
       reward: { gems: 'ほうせき ぜんぶ そろった!', stamps: 'あしあと ぜんぶ そろった!' },
@@ -1249,6 +1270,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // 音の入り切り（スピーカー）
   S.spkOn = ['...6..6.', '..66...6', '6666.6.6', '6666.6.6', '6666.6.6', '..66...6', '...6..6.'];
   S.spkOff = ['...6....', '..66....', '6666.i.i', '6666..i.', '6666.i.i', '..66....', '...6....'];
+  // 振動の入り切り（震える線つきの電話。オフは線の代わりに ×）
+  S.vibOn = ['..6666..', '6.6..6.6', '6.6..6.6', '..6..6..', '6.6..6.6', '6.6..6.6', '..6666..'];
+  S.vibOff = ['6666....', '6..6....', '6..6.i.i', '6..6..i.', '6..6.i.i', '6..6....', '6666....'];
   // 吹き出し「？」（あれ？）
   S.qBubble = [
     '.0000000.',
@@ -1508,7 +1532,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       set.down = { n: bake(r[0].split('').map((_, y) => r.map((_, x) => r[n - 1 - x][y]).join(''))) };
       return set;
     });
-    for (const k of ['seed', 'gem', 'finger', 'arrowL', 'arrowR', 'arrowD', 'arrowGo', 'qBubble', 'skull', 'foot', 'boardIcon', 'spkOn', 'spkOff']) b[k] = bake(S[k]);
+    for (const k of ['seed', 'gem', 'finger', 'arrowL', 'arrowR', 'arrowD', 'arrowGo', 'qBubble', 'skull', 'foot', 'boardIcon', 'spkOn', 'spkOff', 'vibOn', 'vibOff']) b[k] = bake(S[k]);
     b.gemOff = bake(S.gem, { map: { s: '3', r: '2', q: '1', 6: '3' } });
     b.footOff = bake(S.foot, { map: { w: '2' } });
     b.sparkle = S.sparkle.map((r) => bake(r));
@@ -1848,6 +1872,52 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   Game.audio = { create };
+})();
+</script>
+<script>
+// 振動。navigator.vibrate に、config.haptics の型（ミリ秒の並び。震える・止まる・震える…）を渡すだけ。強さは選べない（Web の制約）。
+// HOPPE WALK の haptics.js を写したもの。前の振動が終わってから minGap ミリ秒は、次を出さない（重なると手触りがつぶれる）。
+// config.haptics.cut に名前がある型（がっしり！・ごほうび）だけは、前の振動を打ち切って出す。
+// 震わせるのは、操作の手応え・渡るとき・クリアとごほうび。落ちる・こけるでは震わせない（落ちても罰はない）。
+// ない端末・オフのときは何もしない。vibrate と now を差し替えられるので、単体テストでも動く
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  // 出来事 → 型の名前（無いものは震わせない）
+  const ON = {
+    cutn: 'click', cut: 'saw', place: 'place', take: 'take', route: 'route',
+    fx_step: 'step', fx_creak: 'creak', fx_fit: 'fit', fx_sturdy: 'sturdy', fx_gem: 'gem', fx_stamp: 'stamp',
+  };
+
+  function create(cfg, vibrate, now) {
+    if (vibrate === undefined) vibrate = typeof navigator !== 'undefined' && navigator.vibrate ? navigator.vibrate.bind(navigator) : null;
+    if (!now) now = () => performance.now();
+    let end = -Infinity; // 前の振動が終わる時刻
+
+    // kind: config.haptics の型の名前。出したら true
+    function play(kind) {
+      const H = cfg.haptics, p = H[kind];
+      if (!H.enabled || !vibrate || !Array.isArray(p) || !p.length) return false;
+      const t = now();
+      if (!H.cut.includes(kind) && t < end + H.minGap) return false;
+      try { vibrate(p); } catch (e) { return false; }
+      end = t + p.reduce((a, b) => a + b, 0);
+      return true;
+    }
+    function setEnabled(on) {
+      cfg.haptics.enabled = !!on;
+      if (!on && vibrate) { try { vibrate(0); } catch (e) { /* 止められなくてもよい */ } end = -Infinity; }
+    }
+    // 出来事（ルールの出来事と、main が演出の節目で出す fx_ の出来事）→ 振動
+    function on(e) {
+      if (e.type === 'fx_reward') return e.kind === 'gems' ? play('rewardGems') : false;
+      return ON[e.type] ? play(ON[e.type]) : false;
+    }
+
+    return { play, on, setEnabled, available: () => !!vibrate };
+  }
+
+  Game.haptics = { create };
 })();
 </script>
 <script>
@@ -2460,6 +2530,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (b.label) B.text(g, b.label, b.x + Math.round((b.w - B.textW(b.label)) / 2), b.y + Math.floor((b.h - 7) / 2), '#ffffff');
   }
   const soundLabel = (app) => lt(app.settings && app.settings.sound === false ? 'sound.off' : 'sound.on');
+  const hapticsLabel = (app) => lt(app.settings && app.settings.haptics === false ? 'haptics.off' : 'haptics.on');
   // 今の画面で押せるもの [{ id, x, y, w, h, label }]
   R.buttons = function (app) {
     const cfg = Game.config, V = cfg.view, L = cfg.layout, s = app.rules, out = [];
@@ -2473,10 +2544,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       if (app.area < areas) out.push(Object.assign({ id: 'areaNext' }, S.next));
       out.push(Object.assign({ id: 'story', label: lt('select.story') }, S.story));
       out.push(Object.assign({ id: 'sound' }, S.sound)); // 右上の小さな絵のボタン（下の真ん中に大きく置くと、はじめるボタンに見える）
+      out.push(Object.assign({ id: 'haptics' }, S.haptics)); // スピーカーの左に、振動の入り切り
       return out;
     }
     if (app.menu) {
-      ['resume', 'restart', 'sound', 'select'].forEach((id, i) => out.push({ id, x: 24, y: 62 + i * 17, w: 87, h: 13, label: id === 'sound' ? soundLabel(app) : lt('menu.' + id) }));
+      ['resume', 'restart', 'sound', 'haptics', 'select'].forEach((id, i) => out.push({ id, x: 24, y: 62 + i * 17, w: 87, h: 13, label: id === 'sound' ? soundLabel(app) : id === 'haptics' ? hapticsLabel(app) : lt('menu.' + id) }));
       return out;
     }
     if (app.mode === 'clear') {
@@ -2576,7 +2648,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
   function drawMenu(g, app) {
     g.fillStyle = 'rgba(24,20,37,0.6)'; g.fillRect(-R.fx, -R.fy, R.Lw, R.Lh);
-    panel(g, 16, 54, 103, 80);
+    panel(g, 16, 54, 103, 97);
     for (const b of R.buttons(app)) button(g, b, app);
   }
 
@@ -2664,7 +2736,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     g.drawImage(A.gem, 36, 41); B.text(g, t.gems + '/' + t.stages * 3, 46, 41, t.gems === t.stages * 3 ? '#fee761' : '#ffffff', INK);
     g.drawImage(A.foot, 80, 41); B.text(g, t.stamps + '/' + t.stages, 90, 41, t.stamps === t.stages ? '#fee761' : '#ffffff', INK);
     for (const b of R.buttons(app)) {
-      if (!b.def) { button(g, b, app); if (b.id === 'areaPrev' || b.id === 'areaNext') g.drawImage(b.id === 'areaPrev' ? A.arrowL : A.arrowR, b.x + 3, b.y + 3); if (b.id === 'sound') g.drawImage(app.settings && app.settings.sound === false ? A.spkOff : A.spkOn, b.x + 3, b.y + 3); continue; }
+      if (!b.def) { button(g, b, app); if (b.id === 'areaPrev' || b.id === 'areaNext') g.drawImage(b.id === 'areaPrev' ? A.arrowL : A.arrowR, b.x + 3, b.y + 3); if (b.id === 'sound') g.drawImage(app.settings && app.settings.sound === false ? A.spkOff : A.spkOn, b.x + 3, b.y + 3); if (b.id === 'haptics') g.drawImage(app.settings && app.settings.haptics === false ? A.vibOff : A.vibOn, b.x + 3, b.y + 3); continue; }
       const open = P.open(p, b.def.id), e = P.of(p, b.def.id), d = app.drag, on = d && d.kind === 'btn' && d.id === b.id;
       g.fillStyle = INK; g.fillRect(b.x, b.y, b.w, b.h);
       g.fillStyle = !open ? '#262b44' : on ? '#5a6988' : '#3a4466'; g.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2);
@@ -2820,7 +2892,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   // 演出の節目（歩く・落ちるの途中）で出す出来事。名前は fx_ で始める
   // app.fxLog: 直近の節目（通しテストが見る）
-  const emit = (e) => { (app.fxLog = app.fxLog || []).push(e.type); if (app.fxLog.length > 60) app.fxLog.shift(); if (app.audio) app.audio.on(e); if (app.fx) app.fx.on(e, app); };
+  const emit = (e) => { (app.fxLog = app.fxLog || []).push(e.type); if (app.fxLog.length > 60) app.fxLog.shift(); if (app.audio) app.audio.on(e); if (app.haptics) app.haptics.on(e); if (app.fx) app.fx.on(e, app); };
   // 出来事を演出（音・擬音）に配る
   function dispatch(events) {
     app.lastEvents = events;
@@ -3047,6 +3119,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     else if (b.id === 'page') { if (++app.page >= Game.lang.t('story.pages').length) { seenTip('story'); app.mode = 'select'; } }
     else if (b.id.startsWith('stage:')) { if (P.open(app.progress, b.def.id)) enter(b.def.id); else app.audio.play('deny'); }
     else if (b.id === 'sound') { app.settings.sound = !app.settings.sound; cfg.audio.enabled = app.settings.sound; if (!NOSAVE) SV.storeSettings(app.settings); app.audio.play('click', { step: 4 }); }
+    else if (b.id === 'haptics') { app.settings.haptics = !app.settings.haptics; app.haptics.setEnabled(app.settings.haptics); if (!NOSAVE) SV.storeSettings(app.settings); if (app.settings.haptics) app.haptics.play('place'); }
     else if (b.id === 'retry') dispatch(RU.retryGap(s));
     else if (b.id === 'help') dispatch(RU.help(s));
     else if (b.id === 'menu') app.menu = true;
@@ -3113,9 +3186,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     for (const ev of ['pointerdown', 'pointerup', 'touchend', 'keydown']) document.addEventListener(ev, () => { if (!app.audio.running()) app.audio.unlock(); }, true);
     document.addEventListener('visibilitychange', () => app.audio.setHidden(document.hidden));
     app.progress = NOSAVE ? P.fresh() : SV.loadProgress();
-    app.settings = NOSAVE ? { sound: true } : SV.loadSettings();
+    app.settings = NOSAVE ? { sound: true, haptics: true } : SV.loadSettings();
     app.tips = NOSAVE ? { seen: {} } : SV.loadTips();
     cfg.audio.enabled = app.settings.sound;
+    app.haptics = Game.haptics.create(cfg);
+    app.haptics.setEnabled(app.settings.haptics);
     if (OPEN) { for (const d of Game.stages) P.record(app.progress, d.id, { gems: [true, false, false], stamp: false }); app.tips.seen.story = true; }
     // ステージ選びは、開いているいちばん先のステージのエリアから
     for (const d of Game.stages) if (P.open(app.progress, d.id)) app.area = d.area;
