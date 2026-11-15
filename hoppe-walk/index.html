@@ -250,6 +250,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       wave: { every: 7, rise: 42 },     // はまの波: 来る間隔（秒。録音では 3〜6 秒。ゆったりめに）、なぞる地面のどこまで上がるか（ドット）
       waterEvery: 7,                    // 水面: なぞるこの距離（ドット）ごとに小さな波紋
       maxWords: 3,                      // 擬音を同時に出す数
+      // 空をこする: star ドットごとに虹色の星、note ドットごとに音階の音、cloud ドットごとに小さな雲（同時に maxClouds まで）
+      sky: { star: 4, note: 12, cloud: 70, starLife: 1.1, cloudLife: 4, maxClouds: 6 },
     },
 
   };
@@ -1922,7 +1924,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   function create(cfg) {
     const FX = cfg.fx;
-    let pops = [], ripples = [], dots = [], marks = [], seq = 0;
+    let pops = [], ripples = [], dots = [], marks = [], clouds = [], seq = 0;
+    // 1 ドット単位の楕円（塗り）
+    const ell = (g, cx, cy, rx, ry) => { for (let y = -ry; y <= ry; y++) { const w = Math.round(rx * Math.sqrt(Math.max(0, 1 - (y * y) / ((ry + 0.4) * (ry + 0.4))))); g.fillRect(Math.round(cx - w), Math.round(cy + y), w * 2 + 1, 1); } };
     const charCache = {}, burstCache = {};
 
     // ---- 擬音（BRIDGE から） ----
@@ -1972,6 +1976,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     function ripple(x, y, color = '#ffffff', r = FX.ripple.r, life = FX.ripple.life) { ripples.push({ x: Math.round(x), y: Math.round(y), t: 0, color, r, life }); if (ripples.length > 24) ripples.shift(); }
     // 光の粒の跡: なぞった指の後に、少し残る
     function trail(x, y, color = '#fee761') { dots.push({ x, y, vx: 0, vy: -4, t: 0, life: FX.trail.life, color }); }
+    // 空をこすったときの星: 十字に光って、少し上へただよい、またたいて消える
+    function star(x, y, color) { dots.push({ x: x + (Math.random() - 0.5) * 3, y: y + (Math.random() - 0.5) * 3, vx: (Math.random() - 0.5) * 6, vy: -6 - Math.random() * 4, t: 0, life: FX.sky.starLife, color, star: true }); }
+    // 空をこすって出る小さな雲: ふわっとふくらんで、ゆっくり流れて消える
+    function cloud(x, y) {
+      clouds.push({ x, y, t: 0, life: FX.sky.cloudLife, vx: -3 - Math.random() * 3, big: Math.random() < 0.5 ? 1 : 0 });
+      if (clouds.length > FX.sky.maxClouds) clouds.shift();
+    }
     // はらって飛ぶ粒: 指の向きに飛んで、ゆっくり落ちる
     function flick(x, y, vx, vy, color = '#c0cbdc') {
       const sp = Math.min(160, Math.hypot(vx, vy) * 1000 * 0.35);
@@ -2015,6 +2026,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       ripples = ripples.filter((r) => r.t < r.life);
       for (const d of dots) { d.t += dt; if (d.t < 0) continue; d.x += d.vx * dt; d.y += d.vy * dt; if (d.g) d.vy += d.g * dt; d.vx *= 1 - 1.5 * dt; }
       dots = dots.filter((d) => d.t < d.life);
+      for (const c of clouds) { c.t += dt; c.x += c.vx * dt; }
+      clouds = clouds.filter((c) => c.t < c.life);
       for (const m of marks) m.t += dt;
       marks = marks.filter((m) => m.t < m.life);
       seq++;
@@ -2050,6 +2063,15 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     }
     // 物より上に描く演出
     function draw(g) {
+      // 空をこすって出た雲（下に影）
+      for (const c of clouds) {
+        const grow = Math.min(1, c.t / 0.3), k = grow < 1 ? grow * (1.25 - 0.25 * grow) : 1, a = Math.min(1, (c.life - c.t) / 1.2);
+        const cx = Math.round(c.x), cy = Math.round(c.y), w = Math.round((7 + c.big * 2) * k), h = Math.max(1, Math.round(2 * k));
+        g.globalAlpha = a;
+        g.fillStyle = '#c0cbdc'; ell(g, cx, cy + 1, w, h + 1); ell(g, cx + 3, cy - 1, Math.round(4 * k), Math.round(3 * k));
+        g.fillStyle = '#ffffff'; ell(g, cx, cy, w, h); ell(g, cx - 3, cy - 1, Math.round(3 * k), Math.round(2 * k)); ell(g, cx + 3, cy - 2, Math.round(4 * k), Math.round(3 * k));
+      }
+      g.globalAlpha = 1;
       for (const r of ripples) {
         const u = r.t / r.life, ease = 1 - (1 - u) * (1 - u);
         const rr = Math.max(1, Math.round(2 + (r.r - 2) * ease));
@@ -2060,6 +2082,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       for (const d of dots) {
         if (d.t < 0) continue;
         g.globalAlpha = Math.min(1, 2 * (1 - d.t / d.life)); g.fillStyle = d.color;
+        if (d.star) {
+          // 十字の星（はじめは大きく、あとは小さくまたたく）
+          const X = Math.round(d.x), Y = Math.round(d.y), big = d.t < 0.25 || Math.sin(d.t * 18 + d.x) > 0.3;
+          g.fillRect(X, Y, 1, 1);
+          if (big) { g.fillRect(X - 1, Y, 3, 1); g.fillRect(X, Y - 1, 1, 3); if (d.t < 0.15) { g.fillRect(X - 2, Y, 5, 1); g.fillRect(X, Y - 2, 1, 5); } }
+          continue;
+        }
         g.fillRect(Math.round(d.x), Math.round(d.y), d.s || 1, d.s || 1);
       }
       g.globalAlpha = 1;
@@ -2086,7 +2115,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       }
     }
 
-    return { word, ripple, trail, flick, burstDots, mark, spray, guide, wash, update, draw, drawGround, ring, counts: () => ({ pops: pops.length, ripples: ripples.length, dots: dots.length, marks: marks.length }) };
+    return { word, ripple, trail, star, cloud, flick, burstDots, mark, spray, guide, wash, update, draw, drawGround, ring, counts: () => ({ pops: pops.length, ripples: ripples.length, dots: dots.length, marks: marks.length, clouds: clouds.length }) };
   }
 
   Game.fx = { create };
@@ -3732,26 +3761,28 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       if (!any) { drawScene(g, LA, d, t, x0, w, top, bottom); return; }
       const sea = (l) => l.far === 'sea', wet = (l) => l.scratch === 'water';
       const farEdge = sea(LA) !== sea(LB), soilEdge = wet(LA) !== wet(LB);
+      // 砂浜とほかの土地の間も、透かすと泥のように見えて不自然なので、岸の線で地面の帯から下を切り替える
+      const sandy = (l) => l.scratch === 'sand', sandEdge = sandy(LA) !== sandy(LB);
       const ex = (Math.floor((d + x0) / len) + 1) * len - blend / 2 - d; // 岸の画面の x（混ざり具合が半分の所。地面と一緒に流れる）
       const shore = (y) => ex + Math.round(3 * Math.sin(y * 0.19) + 2 * Math.sin(y * 0.47 + 1));
-      // B の part を、透かし（列ごとの濃さ）で重ねる。step なら、なぞる地面は岸から右を B にする
-      const overlay = (part, step) => {
+      // B の part を、透かし（列ごとの濃さ）で重ねる。step なら、from（初めはなぞる地面の上の端）から下は岸から右を B にする
+      const overlay = (part, step, from = L.groundY) => {
         const og = R.off.getContext('2d'), mg = R.mask.getContext('2d');
         og.setTransform(1, 0, 0, 1, 0, 0); og.globalCompositeOperation = 'source-over'; og.clearRect(0, 0, R.off.width, R.off.height);
         og.translate(R.fx, R.fy);
         drawScene(og, LB, d, t, x0, w, top, bottom, part);
         mg.setTransform(1, 0, 0, 1, 0, 0); mg.clearRect(0, 0, R.mask.width, R.mask.height); mg.translate(R.fx, R.fy);
-        const yEnd = step ? L.groundY : bottom;
+        const yEnd = step ? from : bottom;
         for (let i = 0; i < w; i++) {
           if (lv[i] <= 0.004) continue;
           mg.fillStyle = 'rgba(0,0,0,' + lv[i].toFixed(3) + ')'; mg.fillRect(x0 + i, top, 1, yEnd - top);
         }
-        if (step) { mg.fillStyle = '#000'; for (let y = L.groundY; y < bottom; y++) { const sx = Math.max(x0, shore(y)); if (sx < x0 + w) mg.fillRect(sx, y, x0 + w - sx, 1); } }
+        if (step) { mg.fillStyle = '#000'; for (let y = from; y < bottom; y++) { const sx = Math.max(x0, shore(y)); if (sx < x0 + w) mg.fillRect(sx, y, x0 + w - sx, 1); } }
         og.setTransform(1, 0, 0, 1, 0, 0); og.globalCompositeOperation = 'destination-in'; og.drawImage(R.mask, 0, 0);
         og.globalCompositeOperation = 'source-over';
         g.save(); g.setTransform(1, 0, 0, 1, 0, 0); g.drawImage(R.off, 0, 0); g.restore();
       };
-      if (!farEdge) { drawScene(g, LA, d, t, x0, w, top, bottom); overlay('all', soilEdge); }
+      if (!farEdge) { drawScene(g, LA, d, t, x0, w, top, bottom); overlay('all', soilEdge || sandEdge, sandEdge ? L.skyH : L.groundY); }
       else {
         drawScene(g, LA, d, t, x0, w, top, bottom, 'sky'); overlay('sky', false);
         const S = cfg.land.coast, sm = (v) => { v = Math.max(0, Math.min(1, v)); return v * v * (3 - 2 * v); };
@@ -3763,7 +3794,19 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         // 海を先に（岸の少し向こうまで）、陸の丘をその手前に。丘は岸へ向かって低くなる
         if (sea(LB)) { clip(Math.round(ex - S), x0 + w, LB, null); clip(x0, Math.round(ex), LA, (x) => sm((ex - x) / S)); }
         else { clip(x0, Math.round(ex + S), LA, null); clip(Math.round(ex), x0 + w, LB, (x) => sm((x - ex) / S)); }
-        drawScene(g, LA, d, t, x0, w, top, bottom, 'ground'); overlay('ground', soilEdge);
+        drawScene(g, LA, d, t, x0, w, top, bottom, 'ground'); overlay('ground', soilEdge || sandEdge, sandEdge ? L.skyH : L.groundY);
+      }
+      // 砂浜とほかの土地の境: 砂でない側に、草や落ち葉のふち（ところどころ株や葉が砂へはみ出す）
+      if (sandEdge) {
+        const land = sandy(LB) ? LA : LB, dir = sandy(LB) ? 1 : -1, C = land.colors;
+        const bits = land.scratch === 'leaves' ? [PAL.j, PAL.k, PAL.a] : [col(C.blade || C.groundLine)];
+        for (let y = L.skyH + 1; y < (soilEdge ? L.groundY : bottom); y++) { // 水辺の側（なぞる地面）は白い泡のふち
+          const fx = shore(y), Y = y + Math.floor(d / 3);
+          if (fx < x0 - 3 || fx > x0 + w + 3) continue;
+          g.fillStyle = col(C.groundLine); g.fillRect(fx - (dir > 0 ? 1 : 0), y, 1, 1);
+          if (hash(Y * 7) < 0.3) { g.fillStyle = bits[Math.floor(hash(Y * 3) * bits.length)]; g.fillRect(fx + dir * (1 + Math.floor(hash(Y) * 2)), y, 2, 1); }
+          if (hash(Y * 11) < 0.12) { g.fillStyle = col(C.groundLine); g.fillRect(fx + dir, y - 1, 1, 2); g.fillRect(fx + dir * 3, y - 1, 1, 2); g.fillRect(fx + dir * 2, y, 1, 2); }
+        }
       }
       // 岸の白い泡（水の側に。ゆっくり寄せては返す）
       if (soilEdge) {
@@ -3908,7 +3951,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const hamTop = () => L.footY - cfg.ham.h;
   const mouth = () => ({ x: L.hamX + 15, y: L.footY - 19 }); // 口（ham.js の絵に合わせる）
   const word = (k, color, x, y, tier = 'M') => app.fx.word(lt('fx.' + k), color, x, y, tier);
-  const feelOf = (id) => app.feel[id] || (app.feel[id] = { acc: 0, scr: 0, rus: 0, wat: 0 });
+  const feelOf = (id) => app.feel[id] || (app.feel[id] = { acc: 0, scr: 0, rus: 0, wat: 0, star: 0, note: 0, cloud: 0, hue: 0 });
+  const SKYC = ['#e43b44', '#feae34', '#fee761', '#63c74d', '#2ce8f5', '#b55088']; // 空をこすった星の色（順に）
 
   // 保存（設計書 5.6）
   function save(why) {
@@ -4032,6 +4076,15 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         break;
       case 'trail': {
         const f = feelOf(e.id);
+        if (e.y < L.skyH) {
+          // 空をこする: 虹色の星が指を追い、音階の音が上がっていき、ときどき小さな雲がふわっと出る
+          const SK = cfg.fx.sky;
+          f.star += e.d; f.note += e.d; f.cloud += e.d;
+          while (f.star >= SK.star) { f.star -= SK.star; F.star(e.x, e.y, SKYC[f.hue++ % SKYC.length]); }
+          if (f.note >= SK.note) { f.note %= SK.note; A.play('twinkle', { hz: hz(12), gain: 0.55 }); }
+          if (f.cloud >= SK.cloud) { f.cloud %= SK.cloud; F.cloud(e.x, Math.min(e.y, L.skyH - 10)); A.play('fwoosh', { gain: 0.7 }); word('fuwa', '#ffffff', e.x, e.y - 12, 'S'); }
+          break;
+        }
         f.acc += e.d;
         while (f.acc >= cfg.fx.trail.every) { f.acc -= cfg.fx.trail.every; F.trail(e.x + (Math.random() - 0.5) * 2, e.y + (Math.random() - 0.5) * 2); }
         break;
