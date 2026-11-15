@@ -297,6 +297,25 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     },
     lang: { key: 'hoppe-dive.lang' }, // 選んだ言語（ja / en）。ほかの保存とは別のキー
 
+    // 振動（navigator.vibrate の並び。ミリ秒、震える・止まる・震える…）。dev/haptics.html（dist/test-haptics.html）で実機の手触りを決めて写す。
+    // 先頭の 0, n は音が鳴り始めるのを待つ間（audio.js の delay に合わせる）。cut の型は前の振動を打ち切って出す。key: オン・オフの保存（ほかの保存とは別）
+    // 設計書: docs/specs/2026-11-15-hoppe-dive-haptics-design.md
+    haptics: {
+      enabled: true,
+      minGap: 40,
+      cut: ['hit', 'hitFatal', 'bite', 'thud', 'clear', 'rumble', 'escape', 'fanfare'],
+      jump: [8], land: [10], move: [8], near: [12, 30, 12],
+      seed: [6], gem: [15], big: [25], pup: [15, 40, 25], row: [10, 30, 10, 30, 10],
+      rock: [25], hit: [70], hitFatal: [150, 60, 250], bite: [40], give: [15, 40, 30],
+      crumble: [30, 40, 30, 40, 60], climb: [10, 80, 10, 80, 10, 80, 10], thud: [80], heave: [20], pick: [15],
+      clear: [0, 300, 40, 80, 40, 80, 40, 80, 120], rumble: [60, 160, 60, 160, 60, 160, 60],
+      escape: [0, 100, 40, 80, 40, 80, 40, 80, 120],
+      achieve: [15, 60, 25], rare: [10, 90, 10, 90, 10], allMax: [10, 30, 10, 30, 10, 30, 40],
+      fanfare: [0, 250, 30, 60, 30, 60, 30, 60, 120], rank: [0, 250, 15, 60, 25],
+      buy: [12], go: [20], coins: [30],
+      key: 'hoppe-dive.haptics',
+    },
+
     ui: { chooseLock: 0.5, fallSec: 0.6, landSec: 0.15, hitFreeze: 0.8, clearSec: 2.5, countdown: 3,
           extraIntroSec: 2.0, darkSec: 1.5, hintSec: 4, escapeSec: 3,
           howtoSec: 2.4 }, // あそびかたの見本の1場面の秒 // ④: 崩れ始めの演出 / 入れないときに暗くなるまで・ヒントを出したまま結果へ進むまで / 脱出成功の場面
@@ -2828,6 +2847,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     '..0xx0..',
     '...00...',
   ];
+  // 振動のオン・オフ（タイトルの JA EN の左）。HOPPE BRIDGE の絵を写す。震える線つきの電話、オフは線の代わりに ×。色は bake で付ける（オン 金・オフ 灰）
+  S.vibOn = ['..6666..', '6.6..6.6', '6.6..6.6', '..6..6..', '6.6..6.6', '6.6..6.6', '..6666..'];
+  S.vibOff = ['6666....', '6..6....', '6..6.i.i', '6..6..i.', '6..6.i.i', '6..6....', '6666....'];
   S.arrowL = ['...00', '..060', '.0660', '06660', '.0660', '..060', '...00'];
   S.arrowR = S.arrowL.map((r) => r.split('').reverse().join(''));
 
@@ -3116,6 +3138,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     b.ham = b.hamG[0];
     for (const k of ['shadow', 'shadowSmall', 'trap', 'rock', 'block', 'seed', 'gem', 'big', 'statue', 'crown', 'stalTip', 'stalStem', 'rockShadow', 'rockMark', 'pvTrap', 'pvStal', 'pvBlock', 'pvItem', 'tent', 'pile', 'arrowL', 'arrowR', 'finger', 'storyHam', 'storyGate', 'clover']) b[k] = bake(S[k]);
     b.fire = S.fire.map((r) => bake(r));
+    b.vibOn = bake(S.vibOn, { map: { 6: 'k' } }); // 振動オン: 選んだ JA/EN と同じ金
+    b.vibOff = bake(S.vibOff, { map: { 6: '4' } }); // オフ: 選んでいない側と同じ灰（× は赤）
+    b.vibInk = { on: bake(S.vibOn, { map: { 6: '0' } }), off: bake(S.vibOff, { map: { 6: '0', i: '0' } }) }; // 縁取り（文字と同じ INK で、まわり 8 方向に置く）
     // ③実績とシークレット
     for (const k of ['medalS', 'pup', 'batHang']) b[k] = bake(S[k]);
     b.medal = {};
@@ -3612,6 +3637,67 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   Game.audio = { create };
+})();
+</script>
+<script>
+// 振動。navigator.vibrate に、config.haptics の型（ミリ秒の並び。震える・止まる・震える…）を渡すだけ。強さは選べない（Web の制約）。
+// HOPPE BRIDGE の haptics.js を写したもの（もとは HOPPE WALK）。前の振動が終わってから minGap ミリ秒は、次を出さない（重なると手触りがつぶれる）。
+// config.haptics.cut に名前がある型（当たる・ドスン・クリアなど）だけは、前の振動を打ち切って出す。
+// 操作（跳ぶ・移る・着地）はごく短く、画面が揺れる所は手も強く揺らす。何十回も続くもの（障害物を通るたび・小石・数え上げ）は震わせない。
+// 設計書: docs/specs/2026-11-15-hoppe-dive-haptics-design.md。ない端末・オフのときは何もしない。vibrate と now を差し替えられるので、単体テストでも動く
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  // 出来事 → 型の名前（無いものは震わせない）。hit・pickup・levelup_start・levelup_land は on の中で分ける
+  const ON = {
+    jump: 'jump', land: 'land', move: 'move', near_miss: 'near', row_bonus: 'row', rock_land: 'rock',
+    mimic_bite: 'bite', mimic_give: 'give', fly_catch: 'give', levelup_pick: 'pick',
+    clear: 'clear', collapse: 'rumble', escape: 'escape',
+    achieve: 'achieve', rare_start: 'rare', all_max: 'allMax',
+    record_new: 'fanfare', unlock_new: 'fanfare', record_rank: 'rank',
+    camp_plus: 'buy', camp_minus: 'buy', camp_go: 'go', camp_count_end: 'coins',
+  };
+  const PICKUP = { seed: 'seed', big: 'big', statue: 'big', pup: 'pup' }; // ほかは gem
+
+  function create(cfg, vibrate, now) {
+    if (vibrate === undefined) vibrate = typeof navigator !== 'undefined' && navigator.vibrate ? navigator.vibrate.bind(navigator) : null;
+    if (!now) now = () => performance.now();
+    let end = -Infinity; // 前の振動が終わる時刻
+
+    // kind: config.haptics の型の名前。出したら true
+    function play(kind) {
+      const H = cfg.haptics, p = H[kind];
+      if (!H.enabled || !vibrate || !Array.isArray(p) || !p.length) return false;
+      const t = now();
+      if (!H.cut.includes(kind) && t < end + H.minGap) return false;
+      try { vibrate(p); } catch (e) { return false; }
+      end = t + p.reduce((a, b) => a + b, 0);
+      return true;
+    }
+    // 震えている途中なら止める（設定は変えない。画面が隠れたとき）
+    function stop() {
+      if (vibrate) { try { vibrate(0); } catch (e) { /* 止められなくてもよい */ } }
+      end = -Infinity;
+    }
+    function setEnabled(on) {
+      cfg.haptics.enabled = !!on;
+      if (!on) stop();
+    }
+    // 出来事（ルールの出来事と、main が出す演出の出来事）→ 振動
+    function on(e) {
+      switch (e.type) {
+        case 'hit': return play(e.fatal ? 'hitFatal' : 'hit');
+        case 'pickup': return play(PICKUP[e.k] || 'gem');
+        case 'levelup_start': return play(e.extra ? 'climb' : 'crumble');
+        case 'levelup_land': return play(e.extra ? 'heave' : 'thud');
+      }
+      return ON[e.type] ? play(ON[e.type]) : false;
+    }
+
+    return { play, on, stop, setEnabled, enabled: () => !!cfg.haptics.enabled, available: () => !!vibrate };
+  }
+
+  Game.haptics = { create };
 })();
 </script>
 <script>
@@ -4176,7 +4262,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   // タイトルの言語の切り替え（右下の JA EN）。box: タップの範囲、ja / en: 文字の位置
-  R.titleLayout = () => ({ lang: { x: 158, y: 93, w: 34, h: 15, ja: { x: 164, y: 99 }, en: { x: 179, y: 99 } } });
+  // haptics: 振動のオン・オフ（JA EN の左。電話の絵）。icon: 絵の位置
+  R.titleLayout = () => ({ lang: { x: 158, y: 93, w: 34, h: 15, ja: { x: 164, y: 99 }, en: { x: 179, y: 99 } }, haptics: { x: 143, y: 93, w: 15, h: 15, icon: { x: 148, y: 99 } } });
 
   // 位置（窓の中のドット）: 左に見本の枠、右に一覧（1行 8 ドット）
   R.howtoLayout = function () {
@@ -4495,6 +4582,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       const LB = R.titleLayout().lang, cur = Game.lang.cur;
       B.text(g, 'JA', LB.ja.x, LB.ja.y, cur === 'ja' ? GOLD : '#8b9bb4', INK);
       B.text(g, 'EN', LB.en.x, LB.en.y, cur === 'en' ? GOLD : '#8b9bb4', INK);
+      const HB = R.titleLayout().haptics.icon, hon = !app.haptics || app.haptics.enabled();
+      const ink = hon ? A.vibInk.on : A.vibInk.off;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (dx || dy) g.drawImage(ink, HB.x + dx, HB.y + dy);
+      g.drawImage(hon ? A.vibOn : A.vibOff, HB.x, HB.y);
       return;
     }
     if (!s) return;
@@ -4815,7 +4906,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 })();
 </script>
 <script>
-// 保存データの読み書き。②の恒久強化（hoppe-dive.meta、検め方は meta.parse）、③の実績（hoppe-dive.records、検め方は achieve.parse）、きろく（hoppe-dive.board、board.parse）、ヒントを見たか（hoppe-dive.tips、parseTips）、言語（hoppe-dive.lang、parseLang）。
+// 保存データの読み書き。②の恒久強化（hoppe-dive.meta、検め方は meta.parse）、③の実績（hoppe-dive.records、検め方は achieve.parse）、きろく（hoppe-dive.board、board.parse）、ヒントを見たか（hoppe-dive.tips、parseTips）、言語（hoppe-dive.lang、parseLang）、振動のオン・オフ（hoppe-dive.haptics、parseHaptics）。
 // 読めない・壊れている・版が違うときは最初の状態から始める。書けない（容量・プライベートモード）ときは黙って続ける
 (function () {
   const Game = (window.Game = window.Game || {});
@@ -4857,7 +4948,14 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const loadLang = (cfg = Game.config) => parseLang(read(cfg.lang.key));
   const storeLang = (lang, cfg = Game.config) => write(cfg.lang.key, lang);
 
-  Game.save = { load, store, loadRecords, storeRecords, loadBoard, storeBoard, freshTips, parseTips, loadTips, storeTips, parseLang, loadLang, storeLang };
+  // 振動のオン・オフ（hoppe-dive.haptics）。false のときだけオフ。無い・壊れているときはオン
+  function parseHaptics(raw) {
+    try { return typeof raw === 'string' ? JSON.parse(raw) !== false : true; } catch (e) { return true; }
+  }
+  const loadHaptics = (cfg = Game.config) => parseHaptics(read(cfg.haptics.key));
+  const storeHaptics = (on, cfg = Game.config) => write(cfg.haptics.key, !!on);
+
+  Game.save = { load, store, loadRecords, storeRecords, loadBoard, storeBoard, freshTips, parseTips, loadTips, storeTips, parseLang, loadLang, storeLang, parseHaptics, loadHaptics, storeHaptics };
 })();
 </script>
 <script>
@@ -4892,8 +4990,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     clearPath: null, escT: 0, // ④宝の間のあと: 'extra'（崩れ始める → エクストラ）| 'denied'（暗転とヒント → 結果）、脱出成功の場面の秒
     cmds: [], lastEvents: [],
     warm: null, warmKey: null, warmDone: false, // 次に出る型の公平さを前もって調べる（warmTick）
-    fx: null, audio: null,
+    fx: null, audio: null, haptics: null,
   });
+
+  // 効果音と振動へ配る（演出なので、ルールの状態は書き換えない）
+  const sfx = (e) => { app.audio.on(e, app); app.haptics.on(e); };
 
   function runOptions() {
     const o = Object.assign(Game.meta.runOptions(app.save, cfg), { seed: q.get('seed') != null ? +q.get('seed') : Math.floor(Math.random() * 1e9) });
@@ -4933,14 +5034,14 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (!queue.length || app.bot) return;
     app.tip = { queue, t: 0 };
     app.mode = 'tip';
-    app.audio.on({ type: 'camp_page' });
+    sfx({ type: 'camp_page' });
   }
   // 閉じる: 見たことを保存して次へ。全部閉じたら、3択のあとと同じくそのまま再開（ルールの時間は止まっていたので、着地の猶予は残っている）
   function tipInput(e) {
     if (!(e.type === 'tap' || e.type === 'key' || e.type === 'cmd' || e.type === 'esc') || app.tip.t < cfg.tips.closeSec) return;
     app.tips.seen[app.tip.queue.shift()] = true;
     if (!T.noStore) Game.save.storeTips(app.tips, cfg);
-    if (app.tip.queue.length) { app.tip.t = 0; app.audio.on({ type: 'camp_page' }); return; }
+    if (app.tip.queue.length) { app.tip.t = 0; sfx({ type: 'camp_page' }); return; }
     app.tip = null;
     app.mode = 'run';
   }
@@ -4974,8 +5075,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (!T.noStore) Game.save.storeBoard(app.board, cfg);
     app.result = { mult, final, gain, before, ach: app.runAch.slice(), rank, boost: s.assist.lootBoost || 0 };
     app.mode = 'result'; app.resultT = 0;
-    if (gain.unlocked.length) app.audio.on({ type: 'unlock_new' });
-    else if (rank) app.audio.on({ type: rank === 1 ? 'record_new' : 'record_rank' });
+    if (gain.unlocked.length) sfx({ type: 'unlock_new' });
+    else if (rank) sfx({ type: rank === 1 ? 'record_new' : 'record_rank' });
   }
 
   // 保存（確かめ用の HTML では保存しない）
@@ -4990,7 +5091,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     persistRec();
     if (quiet) return;
     app.achFlash = cfg.achieve.flashSec;
-    app.audio.on({ type: 'achieve' });
+    sfx({ type: 'achieve' });
   }
 
   // キャンプで満たした実績（強化を買った・アンロックを入れた・全部最大）。下の知らせと音
@@ -5001,7 +5102,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const ids = A.update(app.rec, { save: app.save }, cfg);
     if (!ids.length) return;
     persistRec();
-    app.audio.on({ type: 'achieve' });
+    sfx({ type: 'achieve' });
     app.camp.msg = { text: achMsg(ids), t: 4 };
   }
 
@@ -5011,7 +5112,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (!b) return false;
     app.batGone[b.i] = app.time;
     app.fx.on({ type: 'bat', x: b.x, y: b.y }, app);
-    app.audio.on({ type: 'bat' });
+    sfx({ type: 'bat' });
     if (A.grant(app.rec, 'bat')) gainAch(['bat'].concat(A.update(app.rec, {}, cfg))); // コウモリで全部そろったときのため
     return true;
   }
@@ -5049,7 +5150,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.mode = 'story';
     app.story = { page: 0, t: 0, from };
     app.fx.reset();
-    app.audio.on({ type: 'camp_page' });
+    sfx({ type: 'camp_page' });
   }
   const storyPages = () => Game.lang.t('story');
   const storyLen = (page) => storyPages()[page].reduce((n, l) => n + [...l].length, 0);
@@ -5059,7 +5160,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (st.t * cfg.story.cps < n) { st.t = n / cfg.story.cps; return; }
     if (st.page + 1 >= storyPages().length) return endStory();
     st.page++; st.t = 0;
-    app.audio.on({ type: 'camp_page' });
+    sfx({ type: 'camp_page' });
   }
   function endStory() {
     const from = app.story.from;
@@ -5090,14 +5191,14 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     leavePage();
     app.camp.page = (app.camp.page + d + n) % n;
     app.camp.howto = { scene: 0, t0: app.time }; // あそびかたは、開いたら場面 0 から
-    app.audio.on({ type: 'camp_page' });
+    sfx({ type: 'camp_page' });
   }
 
   function campGo() {
     app.camp.count = null;
     leavePage();
     persist();
-    app.audio.on({ type: 'camp_go' });
+    sfx({ type: 'camp_go' });
     start();
   }
 
@@ -5108,7 +5209,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (id === cfg.meta.speedStart.id) ok = M.setSpeedStart(save, save.speedStart + (plus ? 1 : -1), cfg); // さいしょの はやさ: ◀ ▶
     else if (cfg.meta.unlocks.some((u) => u.id === id)) ok = save.unlocked[id] && save.use[id] !== plus && M.toggleUnlock(save, id);
     else ok = plus ? M.buy(save, id, cfg) : M.refund(save, id, cfg);
-    app.audio.on({ type: ok ? (plus ? 'camp_plus' : 'camp_minus') : 'camp_deny' });
+    sfx({ type: ok ? (plus ? 'camp_plus' : 'camp_minus') : 'camp_deny' });
     if (ok) { persist(); campAch(); }
     return ok;
   }
@@ -5130,12 +5231,12 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     // あそびかた: 一覧の行をタップすると、その場面の見本にする
     if (app.camp.page === Game.render.howtoPage()) {
       if (inR(Game.render.storyLayout().replay)) return startStory('camp');
-      Game.render.howtoLayout().rows.forEach((r) => { if (r.scene != null && inR(r)) { app.camp.howto = { scene: r.scene, t0: app.time }; app.audio.on({ type: 'camp_page' }); } });
+      Game.render.howtoLayout().rows.forEach((r) => { if (r.scene != null && inR(r)) { app.camp.howto = { scene: r.scene, t0: app.time }; sfx({ type: 'camp_page' }); } });
       return;
     }
     const achIds = Game.render.achIds(app.camp.page);
     if (achIds.length) {
-      Game.render.achLayout(achIds.length).cells.forEach((c, i) => { if (inR(c)) { app.camp.sel = achIds[i]; app.audio.on({ type: 'camp_plus' }); } });
+      Game.render.achLayout(achIds.length).cells.forEach((c, i) => { if (inR(c)) { app.camp.sel = achIds[i]; sfx({ type: 'camp_plus' }); } });
       return;
     }
     L.cards.forEach((c, i) => { if (inR(c.minus)) campCard(ids[i], false); else if (inR(c.plus)) campCard(ids[i], true); });
@@ -5147,8 +5248,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (!c) return;
     c.t += dt;
     const k = Math.min(1, c.t / c.dur), every = 0.06;
-    while (c.n * every < Math.min(c.t, c.dur)) app.audio.on({ type: 'camp_count', i: c.n++ });
-    if (k >= 1) { app.camp.count = null; app.audio.on({ type: 'camp_count_end' }); app.fx.on({ type: 'camp_count_end' }, app); }
+    while (c.n * every < Math.min(c.t, c.dur)) sfx({ type: 'camp_count', i: c.n++ });
+    if (k >= 1) { app.camp.count = null; sfx({ type: 'camp_count_end' }); app.fx.on({ type: 'camp_count_end' }, app); }
   }
 
   function dispatch(events) {
@@ -5156,7 +5257,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       app.lastEvents.push(e);
       if (app.lastEvents.length > 300) app.lastEvents.shift();
       app.fx.on(e, app);
-      app.audio.on(e, app);
+      sfx(e);
       if (e.type === 'levelup_start') app.chooseT = 0;
       if (e.type === 'levelup_land' || e.type === 'land') app.landT = cfg.ui.landSec;
       if (e.type === 'hit') app.hitT = e.fatal ? cfg.ui.hitFreeze : 0.25;
@@ -5183,14 +5284,23 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   function toggleLang() {
     Game.lang.set(Game.lang.other());
     if (!T.noStore) Game.save.storeLang(Game.lang.cur, cfg);
-    app.audio.on({ type: 'camp_page' });
+    sfx({ type: 'camp_page' });
+  }
+  // 振動のオン・オフ（タイトルの JA EN の左）。端末に覚える。オンにしたときは確かめに 1 回短く震える
+  function toggleHaptics() {
+    const on = !app.haptics.enabled();
+    app.haptics.setEnabled(on);
+    if (!T.noStore) Game.save.storeHaptics(on, cfg);
+    sfx({ type: 'camp_page' });
+    if (on) app.haptics.play('buy');
   }
   function onInput(e) {
     if (e.type === 'down') app.audio.unlock();
     if (app.paused || app.mode === 'countdown') return;
     const s = app.rules;
     if (app.mode === 'title') {
-      // 右下の JA EN（キーは L）: 言語を切り替えて端末に覚える。ゲームは始めない
+      // 右下の JA EN（キーは L）: 言語を切り替えて端末に覚える。その左の電話の絵: 振動のオン・オフ。どちらもゲームは始めない
+      if (e.type === 'tap' && inRect(Game.render.toField(e.x, e.y), Game.render.titleLayout().haptics)) return toggleHaptics();
       if (e.type === 'lang' || (e.type === 'tap' && inRect(Game.render.toField(e.x, e.y), Game.render.titleLayout().lang))) return toggleLang();
       if (e.type === 'tap' || e.type === 'key') { if (isFresh()) startStory('title'); else enterCamp(); }
       return;
@@ -5259,7 +5369,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (app.landT > 0) app.landT -= dt;
     if (app.achFlash > 0) app.achFlash -= dt;
     // ④崩れる遺跡: 小石が床で砕ける音（演出は fx が時間から作る）
-    if ((s.extra && s.phase === 'run') || app.clearPath === 'extra') for (let n = app.fx.collapseTick(app, dt); n > 0; n--) app.audio.on({ type: 'pebble' });
+    if ((s.extra && s.phase === 'run') || app.clearPath === 'extra') for (let n = app.fx.collapseTick(app, dt); n > 0; n--) sfx({ type: 'pebble' });
     if (s.phase === 'run') {
       if (app.hitT > 0) { app.hitT -= dt; }
       app.acc = Math.min(app.acc + dt, 0.25);
@@ -5281,7 +5391,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       if (!app.clearPath && app.clearT >= U.clearSec) {
         app.clearPath = Game.meta.canEnterExtra(s.ranks) ? 'extra' : 'denied';
         const e = { type: app.clearPath === 'extra' ? 'collapse' : 'extra_denied' };
-        app.fx.on(e, app); app.audio.on(e, app);
+        app.fx.on(e, app); sfx(e);
       }
       if (app.clearPath === 'extra' && app.clearT >= U.clearSec + U.extraIntroSec) { app.acc = 0; dispatch(Game.rules.startExtra(s, cfg)); }
       else if (app.clearPath === 'denied' && app.clearT >= U.clearSec + U.darkSec + U.hintSec) finishRun();
@@ -5293,6 +5403,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   function setHidden(h) {
     app.audio.setHidden(h);
+    if (h) app.haptics.stop();
     if (h) { app.paused = true; return; }
     if (!app.paused) return;
     app.paused = false;
@@ -5334,6 +5445,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     setIcons();
     app.fx = Game.fx.create(cfg);
     app.audio = Game.audio.create(cfg);
+    app.haptics = Game.haptics.create(cfg);
+    app.haptics.setEnabled(T.noStore ? true : Game.save.loadHaptics(cfg));
     Game.input.create(cfg, canvas, onInput);
     // 音の再開。タッチでは指を離したときに初めて許されるので、離したときにも試す（置いたときだけだと、2 回目に触るまで鳴らない）
     for (const ev of ['pointerup', 'touchend']) document.addEventListener(ev, () => app.audio.unlock(), true);
