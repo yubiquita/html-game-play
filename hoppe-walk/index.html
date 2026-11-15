@@ -209,6 +209,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     //   集めた身なりの並べ方（巣の右上の地面に cols 列。最初の物の真ん中が巣から x, y。間 dx・dy）
     nest: { pile: [1, 6, 15, 30, 60], cols: 4, x: 28, y: -54, dx: 18, dy: 17 },
 
+    // 画面: 触ったら全画面にして、アドレスバーを隠す（子どもがアドレスバーに触らないように）
+    screen: { fullscreen: true },
+
     // 親の操作（設計書 6.4）: 右上の印を holdMs 押し続けると、左下に「おとな」のボタン。confirmMs 以内に押すと親の画面
     //   印は 端の帯と、上の端から 12 ドットを避けた所。ボタンは左下
     //   sleep: 「おとな」と同時に左上に出る目立たない所。押すと親の画面を開かずに、すぐおやすみ
@@ -4195,6 +4198,19 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     Game.input.create(canvas, onInput);
     // 音の再開。タッチは指を離したときに初めて許されるので、置いたとき・離したときの両方で試す
     for (const ev of ['pointerdown', 'pointerup', 'touchend', 'keydown']) document.addEventListener(ev, () => { if (!app.audio.running()) app.audio.unlock(); }, true);
+    // 全画面（設計書 6.5）: アドレスバーを隠す。指を離したとき（全画面に入れる操作）に、全画面でなければ入る。
+    //   「戻る」などで抜けても、次に触ったときにまた入る。入ったら縦向きに固定する
+    const fullscreen = () => {
+      const el = document.documentElement;
+      if (!cfg.screen.fullscreen || document.fullscreenElement || !el.requestFullscreen) return;
+      try {
+        el.requestFullscreen({ navigationUI: 'hide' }).then(() => {
+          note({ type: 'fullscreen' });
+          try { screen.orientation.lock('portrait').catch(() => {}); } catch (e) { /* 固定できない端末 */ }
+        }).catch(() => {});
+      } catch (e) { /* 全画面にできない */ }
+    };
+    document.addEventListener('pointerup', fullscreen, true);
     // 閉じないための工夫（設計書 6.5）: 最初のタッチのあと履歴を 1 つ積み、「戻る」が来たら積み直す
     let guarded = false;
     document.addEventListener('pointerdown', () => {
