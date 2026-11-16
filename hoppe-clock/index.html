@@ -26,10 +26,38 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     queueMax: 6,                // 一度に並べられる札の枚数
     help: { nights: 2 },
     // ステージ作り: 決め直す回数、エリアごとのゆとり（N = par + slack）、内の輪の宝どうしの間（位置の数）
-    gen: { tries: 600, slack: { 1: 6, 2: 6, 3: 4, 4: 4, 5: 4 }, inGap: 6, luckFrom: 3, luckMax: 0.2, luckRuns: 60, wallRoom: 11 },   // luck: エリア luckFrom から先は、でたらめな札でクリアできる割合が luckMax 以下の盤だけ
+    gen: { tries: 600, slack: { 1: 6, 2: 6, 3: 4, 4: 4, 5: 4, 9: 4 }, inGap: 6, luckFrom: 3, luckMax: 0.2, luckRuns: 60, wallRoom: 11 },   // luck: エリア luckFrom から先は、でたらめな札でクリアできる割合が luckMax 以下の盤だけ
+    // 編 2「ぼうけん」（山札づくりのラン）。設計書: docs/specs/2026-11-15-hoppe-clock-run-design.md
+    run: {
+      boards: 8,                 // 面の数
+      pulls: 5,                  // 1 日に引けるレバーの回数
+      hand: 5,                   // 手番の始めに、この枚数まで補充する（4 だと、ジャンプが 2 枚来たときに時間の札が足りず、自動で遊ぶ手はほぼクリアできなかった）
+      fires: 3,                  // 体力（火）。夜と、針に当たるたびに 1 つ消える
+      maxPulls: 3,               // 盤は、時間の札が自由に使えるならレバーこの回数以内で取りきれるものだけ
+      hamGap: 2,                 // 探検家は、始まりの長針の位置からこの数（5 分 = 1）以上先に置く
+      restAfter: [2, 5],         // この面（0 始まり）をクリアしたあとに「やすみば」
+      deck: ['t12', 't6', 't3', 't3', 't2', 't2', 't1', 't1', 'jump', 'jump'],   // 最初の山札
+      // 札を選ぶときの出やすさ
+      weights: { t12: 6, t6: 6, t3: 6, t2: 6, t1: 6, t4: 5, t9: 5, jump: 8, sharp: 4, half: 4, x2: 3, draw2: 3, swap: 3, nap: 1 },
+      hamR: 57,                  // 探検家の立つ所（盤の中心からの半径。外の輪の少し外）
+      jumpH: 13,                 // ジャンプの高さ（ドット）
+      watchSec: 1.8,             // クリア: 時計の形の宝が、扉から探検家の所へ飛ぶ秒
+      cardSec: 0.45,             // 札 1 枚ぶんの針の動きの秒（進む長さに関係なく同じ）
+    },
     tips: ['put', 'lever'],     // 最初の 1 回だけ指の絵で見せる手本
+    // 導入のおはなしとヒント。設計書: docs/specs/2026-11-15-hoppe-clock-intro-design.md
+    guide: {
+      tips: ['goal', 'dusk', 'reward', 'outer', 'pair', 'trap', 'wall', 'lock', 'hit', 'jump', 'draw', 'day', 'pick', 'rest'],   // はじめてのときに 1 回だけ出すヒント（あそびかたの並びも、この順）
+      charSec: 0.045,            // おはなしの字が 1 つ出る秒
+      fadeSec: 0.25,             // おはなしをめくるときの暗くなる秒
+      holdSec: 0.5,              // ヒントが出てから、閉じられるまでの秒（札を運んだ指が続けて当たらないように）
+      duskAt: 0.7,               // 編 1: 1 日のこの割合まで札を使ったら「ひが くれる」を出す
+      story: { artH: 150, textX: 8, textY: 163, lineH: 13, skip: { x: 105, y: 2, w: 28, h: 13 } },   // おはなし: 上が絵、下が文の帯
+      how: { x: 8, w: 119, storyY: 30, rowH: 19, tipY: 84, cellW: 58, cellH: 15, cellGap: 2 },   // あそびかた: おはなし 2 本の行と、ヒントのます（2 列）
+      tip: { x: 4, y: 12, w: 127, h: 216, art: { x: 4, y: 20, w: 119, h: 119 }, textY: 146, lineH: 12 },   // ヒントの札（art と textY は札の左上から）。見本の枠は、床がちょうど入る大きさ（床の半径 59 × 2 + 1）
+    },
     ghostEvery: 3,              // 夜、この回数に 1 回ほどお化けが出る（見た目だけ）        // 同じステージでこの回数夜になると「てがかりを だす」が出る
-    save: { progress: 'hoppe-clock.progress', settings: 'hoppe-clock.settings', tips: 'hoppe-clock.tips', version: 1 },
+    save: { progress: 'hoppe-clock.progress', settings: 'hoppe-clock.settings', tips: 'hoppe-clock.tips', run: 'hoppe-clock.run', version: 1 },
 
     // 置き場所（窓の中のドット）。render と main の当たりが同じものを使う
     layout: {
@@ -43,7 +71,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       hand: { x: 1, y: 209, w: 25, h: 28, gap: 2 },     // 手元の札（最大 5 種類）
       btn: { menu: { x: 2, y: 47, w: 13, h: 13 }, sleep: { x: 120, y: 47, w: 13, h: 13 }, help: { x: 2, y: 62, w: 13, h: 13 } },   // 小さなボタン（床の左上と右上のすみ）
       clear: { x: 19, y: 70, w: 97, h: 72, btnY: 50, btnW: 42, btnH: 16 },   // クリアの札と、その中のボタン
-      select: { x: 5, top: 8, rowH: 44, tile: { w: 17, h: 24, gap: 1 }, sound: { x: 119, y: 224, w: 13, h: 13 } },  // ステージ選び: エリアごとに 1 行（名前の下にステージ 6 つと扉）
+      runBtn: { x: 5, y: 222, w: 32, h: 16 },   // ステージ選びの「ぼうけん」（右に記録）
+      howBtn: { x: 66, y: 222, w: 36, h: 16 },  // ステージ選びの「あそびかた」（おはなしとヒントの見直し）
+      fires: { x: 62, y: 4, gap: 9 },           // 火（上の帯のまん中）。その下に面の進みと山札の残り
+      select: { x: 5, top: 8, rowH: 44, tile: { w: 17, h: 24, gap: 1 }, sound: { x: 119, y: 224, w: 13, h: 13 }, haptics: { x: 104, y: 224, w: 13, h: 13 } },  // ステージ選び: エリアごとに 1 行（名前の下にステージ 6 つと扉）
       dropR: 66,                                  // 盤の中心からこれより近くで離すと、並べる
       dragLift: 14,                               // つまんだ札を、指よりこれだけ上に描く
     },
@@ -59,7 +90,6 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       leverWait: 0.32,              // レバーを倒してから、針が動き出すまでの 1 拍
       leverBack: 0.25,              // レバーが戻る秒
       door: 1.5,                    // 扉がゆっくり開く秒（鍵のステージ）
-      lockTip: 4,                   // 鍵のステージの始まりに「あわせよう」を出す秒
       night: 1.8, dusk: 0.6, ghostWait: 0.85,  // ghostWait: お化けが出てから、倒れるまでの 1 拍（暗くなる秒を含む）
              // 夜のあいだ、暗くなる・明るくなる秒
       name: 1.6,                    // 止まったあと、時刻の名前を出す秒
@@ -71,7 +101,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     audio: {
       enabled: true, volume: 0.5,
       keepAlive: { hz: 40, vol: 0.004 }, // 出力を休ませないための、聞こえない低い音（無音が続くと短い音の頭が欠ける）
-      level: { ghost: 1, tick: 1.45, hour: 1, door: 1.6, put: 0.9, lever: 1.4, fit: 1.1, gatsun: 2, back: 0.65, night: 0.8, dawn: 1.2, clear: 1, gem: 1.1, deny: 3.2 },
+      level: { jump: 1.2, ghost: 1, tick: 1.45, hour: 1, door: 1.6, put: 0.9, lever: 1.4, fit: 1.1, gatsun: 2, back: 0.65, night: 0.8, dawn: 1.2, clear: 1, gem: 1.1, deny: 3.2 },
       sfx: {
         // カチ（針が 5 分進む。札の中で少しずつ高く）
         tick: [{ k: 'click', noiseHz: 3200, q: 1.2, noiseMs: 8, noiseVol: 0.6, toneHz: 1300, toneMs: 20, toneVol: 0.14, stepUp: 1.03 }],
@@ -91,6 +121,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         night: [{ k: 'tone', f: 392, type: 'triangle', vol: 0.12, a: 0.02, dec: 0.3 }, { k: 'tone', f: 330, type: 'triangle', vol: 0.12, a: 0.02, dec: 0.3, delay: 0.28 }, { k: 'tone', f: 262, type: 'triangle', vol: 0.12, a: 0.02, dec: 0.6, delay: 0.56 }],
         // お化け（ひゃあ）
         ghost: [{ k: 'tone', f: 740, type: 'sine', vol: 0.12, a: 0.03, dec: 0.5, slide: 0.45 }, { k: 'tone', f: 747, type: 'sine', vol: 0.08, a: 0.03, dec: 0.5, slide: 0.45, delay: 0.04 }],
+        // ピョン（ジャンプ）
+        jump: [{ k: 'tone', f: 520, type: 'triangle', vol: 0.13, a: 0.005, dec: 0.16, slide: 2 }],
         // 朝
         dawn: [{ k: 'tone', f: 523, type: 'triangle', vol: 0.1, dec: 0.1 }, { k: 'tone', f: 784, type: 'triangle', vol: 0.1, dec: 0.2, delay: 0.1 }],
         // クリア
@@ -106,6 +138,31 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         // これ以上並べられない
         deny: [{ k: 'tone', f: 196, type: 'square', vol: 0.12, dec: 0.06 }],
       },
+    },
+
+    // 振動（navigator.vibrate の並び。ミリ秒。震える・止まる・震える…）。実機の手触りで直す
+    // cut の型は、前の振動を打ち切って出す（ほかは前の振動が終わってから minGap あける）
+    // 音の始まりに合わせる: 操作の音はすぐ鳴るので、振動もすぐ。少し遅れて鳴る音（クリアは 0.25 秒後から 5 音、夜は 0.28 秒おきに 3 音、扉の「ズン」は 1.38 秒後）は、
+    // 型の頭に [0, 待ち] を入れて、振動も同じだけ遅らせる（BRIDGE の「がっしり！」「ごほうび」と同じやり方）
+    haptics: {
+      enabled: true,
+      minGap: 40,
+      cut: ['hit', 'door', 'clear', 'over', 'bounce'],
+      click: [5],                            // カチ（針が刻む）
+      hour: [12],                            // 長針が 1 周した合図
+      place: [15],                           // コトン（札を並べる）。振動をオンにしたときの確かめにも
+      take: [8],                             // 並べた札を戻す
+      deny: [25],                            // 置けない・引けない
+      lever: [22],                           // ガチャ
+      fit: [14],                             // ピタッ（宝を取る）
+      bounce: [45],                          // ガツン（罠・壁に弾かれる）
+      jump: [10],                            // ピョン
+      hit: [60, 40, 60],                     // ゴチン（針に当たる）
+      night: [30, 250, 25, 255, 35],         // 夜（下がっていく 3 音に合わせる）
+      over: [80, 80, 80, 80, 120],           // 火が全部消えた
+      door: [30, 95, 30, 95, 30, 95, 30, 95, 30, 95, 30, 95, 30, 95, 30, 95, 30, 95, 30, 95, 30, 95, 70],   // ゴゴゴ…ズン（1 秒に 8 回の刻みが 1.35 秒、そのあとズン）
+      clear: [0, 250, 20, 70, 20, 70, 20, 70, 20, 70, 45],   // クリア（0.25 秒待ってから、0.09 秒おきの 5 音に合わせる）
+      gem: [10],                             // ごほうびを 1 つ数える
     },
 
     // 文字盤（床）。真上から見た真円。半径はドット。中心は 1 ドット（直径は奇数）
@@ -235,6 +292,29 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     { id: '5-7', area: 5, door: true, cards: A5, hints: H5b, gen: { start: 'any', lock: 'min', wall: true, trapOut: 1, span: 3, par: [3, 5] }, sample: { start: 23, items: [{ ring: 'out', pos: 6, kind: 'trap' }], lock: 33, wall: 37 } },
   ];
 
+  // ---- 編 2「ぼうけん」の 8 面の型（数字は gen、探検家の位置は run が決める）。手がかりは全面で数字と目盛り ----
+  const g_ = (ring, pos, kind) => ({ ring, pos, kind });
+  const RS = {
+    r1: { start: 90, items: [g_('out', 0, 'gem'), g_('out', 7, 'gem')] },
+    r3: { start: 90, items: [g_('in', 91, 'gem'), g_('out', 0, 'gem'), g_('out', 5, 'gem')] },
+    r4: { start: 65, items: [g_('in', 83, 'gem'), g_('out', 7, 'gem'), g_('out', 10, 'gem'), g_('out', 8, 'trap')] },
+    r6: { start: 90, items: [g_('in', 91, 'gem'), g_('out', 0, 'gem'), g_('out', 5, 'gem')], wall: 111 },
+    r7: { start: 65, items: [g_('in', 102, 'gem'), g_('in', 113, 'gem'), g_('out', 2, 'gem'), g_('out', 8, 'gem'), g_('out', 7, 'trap')], wall: 119 },
+    r8: { start: 61, items: [g_('out', 7, 'trap')], lock: 97, wall: 106 },
+  };
+  RS.r2 = RS.r1; RS.r5 = RS.r4;
+  const R = (id, gen, door) => ({ id, area: 9, door: !!door, cards: A5, hints: H3, gen, sample: RS[id] });
+  Game.runStages = [
+    R('r1', { start: 'any', out: 2, par: [2, 4] }),
+    R('r2', { start: 'any', out: 2, par: [2, 4] }),
+    R('r3', { start: 'any', out: 2, in: 1, inAt: 'between', span: 3, par: [3, 6] }),
+    R('r4', { start: 'any', out: 2, in: 1, inAt: 'between', trapOut: 1, span: 3, par: [3, 6] }),
+    R('r5', { start: 'any', out: 2, in: 1, inAt: 'between', trapOut: 1, span: 3, par: [3, 6] }),
+    R('r6', { start: 'any', out: 2, in: 1, inAt: 'between', wall: true, span: 3, par: [3, 6] }),
+    Object.assign(R('r7', { start: 'any', out: 2, in: 2, inAt: 'between', wall: true, trapOut: 1, span: 4, par: [4, 7] }), { maxPulls: 4 }),   // 宝 4 個は、止まる所が 4 つ要ることがある
+    R('r8', { start: 'any', lock: 'min', wall: true, trapOut: 1, span: 3, par: [3, 5] }, true),
+  ];
+
   // 確かめ用の、手で決めた盤（?stage=t2。記録には残らない）
   Game.testStages = [
     // 2 時から。長針の宝（20 分）→ 3 時半の宝。10+10、60+10 で 4 枚
@@ -276,29 +356,35 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // 空: 'morning'（par まで）/ 'noon'（noonAt まで）/ 'evening'（N まで）
   const phaseAt = (stage, used) => (used <= stage.par ? 'morning' : used <= stage.noonAt ? 'noon' : 'evening');
   const phase = (s) => (s.night ? 'night' : phaseAt(s.stage, s.used));
-  const left = (s) => s.stage.N - s.used;
+  // 1 日の長さ: 編 1 は使った札の枚数、編 2（stage.limit === 'pulls'）はレバーの回数。extra: 「ひるね」で増えたぶん
+  const byPulls = (s) => s.stage.limit === 'pulls';
+  const left = (s) => s.stage.N + (s.extra || 0) - (byPulls(s) ? s.pulls : s.used);
   // いま、あと何枚並べられるか（すでに n 枚並べている）
-  const room = (s, n, cfg = Game.config) => (s.done || s.night ? 0 : Math.max(0, Math.min(cfg.queueMax, left(s)) - n));
+  const room = (s, n, cfg = Game.config) => (s.done || s.night || left(s) <= 0 ? 0 : Math.max(0, (byPulls(s) ? cfg.queueMax : Math.min(cfg.queueMax, left(s))) - n));
 
   // 止まる時刻 t で、その輪の針が物 it の上にあるか
   const on = (it, t) => (it.ring === 'in' ? K.short(t) === it.pos : K.long(t) === it.pos);
   const cleared = (s) => (s.stage.lock != null ? s.t === s.stage.lock : s.stage.items.every((it, i) => it.kind !== 'gem' || s.taken[i]));
 
-  // cards: 順に並んだ札（5 分 = 1 の数）
+  // cards: 順に並んだ札（5 分 = 1 の数。編 2 は { n, jump } の形も: jump = その札の間、探検家が針をよける）
+  // 探検家（stage.ham = 外の輪の位置）: 長針がそこに届く・通るたびに出来事 hit（よけたら dodge）。出ていくときは数えない。弾かれる手番でも、進んだぶんは数える
   // check: 取りきれるかを解き手で確かめる（ステージ作りのでたらめな試し遊びでは切る）
   function advance(s, cards, cfg = Game.config, check = true) {
     if (s.done || s.night || !cards.length || cards.length > room(s, 0, cfg)) return [];
-    const st = s.stage, ev = [], total = sum(cards), from = s.t;
+    cards = cards.map((c) => (typeof c === 'number' ? { n: c } : c));
+    const st = s.stage, ev = [], total = sum(cards.map((c) => c.n)), from = s.t;
     // 壁: 短針が届く・越えるなら、壁の手前まで進んで弾かれる
     const toWall = st.wall == null ? Infinity : K.wrap(st.wall - from) || K.DAY;
     const go = Math.min(total, toWall - 1);
     let at = from, done = 0;
-    cards.forEach((n, i) => {
+    cards.forEach((c, i) => {
+      const n = c.n;
       if (done >= go && total >= toWall) return;
-      ev.push({ type: 'card', i, n });
+      ev.push({ type: 'card', i, n, jump: !!c.jump });
       for (let k = 0; k < n && done < go; k++) {
         at = K.wrap(at + 1); done++;
         ev.push({ type: 'tick', t: at });
+        if (st.ham != null && at % 12 === st.ham) { ev.push({ type: c.jump ? 'dodge' : 'hit', t: at, i }); if (!c.jump) s.hits = (s.hits || 0) + 1; }
         if (at % 12 === 0) ev.push({ type: 'hour', t: at });
       }
     });
@@ -317,7 +403,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       ev.push({ type: 'clear', gems: s.gems });
       return ev;
     }
-    if (s.used >= st.N) { s.night = true; ev.push({ type: 'night' }); return ev; }
+    if (left(s) <= 0) { s.night = true; ev.push({ type: 'night' }); return ev; }
     if (phase(s) !== before) ev.push({ type: 'phase', phase: phase(s) });
     if (check && Game.solver) {
       const stuck = !Game.solver.canClear(s, cfg);
@@ -331,7 +417,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   function sleep(s) {
     if (s.done) return [];
     s.t = s.stage.start; s.taken = s.stage.items.map(() => false);
-    s.used = 0; s.pulls = 0; s.nights++; s.night = false; s.stuck = false;   // 助け舟（helpOn）は、そのステージの間ずっと続く
+    s.used = 0; s.pulls = 0; s.extra = 0; s.hits = 0; s.nights++; s.night = false; s.stuck = false;   // 助け舟（helpOn）は、そのステージの間ずっと続く
     return [{ type: 'day', nights: s.nights }];
   }
 
@@ -553,13 +639,246 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 })();
 </script>
 <script>
+// 編 2「ぼうけん」の札。DOM・Canvas・言語に触らない（名前と文は text.js）。
+//   kind: 'time'（長さの決まった時間の札）/ 'to'（長針が次の 12・6 に来るまで進む）/ 'jump' / 'x2' / 'draw2' / 'swap' / 'nap'
+//   2 ばい: 次の時間の札を 2 倍にし、その札の間は探検家が針をよける（ジャンプと組にしなくてよい）
+//   n: time の長さ（5 分 = 1）、to: 行き先の長針の位置（0 = ちょうど、6 = はん）、draw: 並べると引く枚数、once: 使うとランから消える
+// 進む札 = time と to。置ける条件は canPlace（決まりを覚えなくても、置けないことで分かるようにする）
+(function () {
+  const Game = (window.Game = window.Game || {});
+  // 30 ぷん以上の札は、並べると 2 枚引く（長い札ほど探検家をまたぎやすいぶんの見返り。引いた中にジャンプがあれば助かる）
+  const T = (n) => ({ kind: 'time', n, draw: n >= 6 ? 2 : 1 });
+  const all = {
+    t12: T(12), t6: T(6), t3: T(3), t2: T(2), t1: T(1), t4: T(4), t9: T(9),
+    sharp: { kind: 'to', to: 0, draw: 1 }, half: { kind: 'to', to: 6, draw: 1 },
+    jump: { kind: 'jump', draw: 0 },
+    x2: { kind: 'x2', draw: 0 },
+    draw2: { kind: 'draw2', draw: 2 },
+    swap: { kind: 'swap', draw: 0 },
+    nap: { kind: 'nap', draw: 0, once: true },
+  };
+  for (const id in all) all[id].id = id;
+  const of = (id) => all[id];
+  const moves = (id) => all[id].kind === 'time' || all[id].kind === 'to';
+
+  // 手札の i 枚めを、いま並べられるか。run: { hand, queue, s, phase }
+  function canPlace(run, i, cfg = Game.config) {
+    const c = all[run.hand[i]], q = run.queue, last = q.length ? all[q[q.length - 1]] : null;
+    if (!c || run.phase !== 'play' || Game.rules.room(run.s, 0, cfg) <= 0 || q.length >= cfg.queueMax) return false;
+    if (last && last.kind === 'x2') return c.kind === 'time';                       // 2 ばいのあとは、時間の札だけ
+    if (c.kind === 'jump') return !!last && moves(last.id);                         // ジャンプは、進む札のすぐあとだけ
+    if (c.kind === 'x2') return q.length <= cfg.queueMax - 2 && run.hand.some((id) => all[id].kind === 'time');   // 続きの時間の札を置ける
+    return true;
+  }
+  // 並びを、進む量の列にする（左から読む）。t: いまの時刻。返り値: [{ n, jump, from: 並びの中の位置 }]
+  function resolve(queue, t) {
+    const K = Game.clock, list = [];
+    let mult = 1, at = t;
+    queue.forEach((id, from) => {
+      const c = all[id];
+      if (c.kind === 'x2') mult = 2;
+      else if (c.kind === 'jump') { if (list.length) list[list.length - 1].jump = true; }
+      else if (moves(id)) {
+        const n = c.kind === 'time' ? c.n * mult : (c.to - K.long(at) + 12) % 12 || 12;
+        list.push({ n, jump: mult === 2, from });   // 2 ばいにした札は、その針もよける
+        mult = 1; at += n;
+      }
+    });
+    return list;
+  }
+
+  Game.cards = { all, of, moves, canPlace, resolve };
+})();
+</script>
+<script>
+// 編 2「ぼうけん」: ランの状態と操作。DOM・Canvas・言語に触らない。状態はただのデータ（そのまま保存できる）。
+// 操作は一瞬で進み、起きたことを出来事の列で返す（main が時間をかけて映す）。
+//   run = { v, seed, rng, board（0 始まり）, stage, s（rules の状態）, deck, hand, discard, queue（どれも札 id の列）, fires, days,
+//           phase: 'play' | 'pick' | 'rest' | 'over' | 'clear', picks: [札 id ×3] | null }
+// 1 日 = レバー cfg.run.pulls 回。手番の始めに手札を補充し、進む札は並べるとすぐ 1 枚引く。並べたら取り消せない
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const K = Game.clock, RU = Game.rules, C = Game.cards, RNG = Game.rng;
+
+  function shuffle(run, a) { for (let i = a.length - 1; i > 0; i--) { const j = RNG.int(run, i + 1); [a[i], a[j]] = [a[j], a[i]]; } return a; }
+
+  // この面の盤を作る: 型から数字を決め（レバー maxPulls 回以内で取りきれるもの）、探検家の位置を決める
+  function makeStage(run, cfg) {
+    const def = Game.runStages[run.board];
+    let st = null;
+    for (let i = 0; i < 40; i++) {
+      st = Game.gen.make(def, (RNG.next(run) * 0x7fffffff) | 0, null, cfg);
+      if (st.pulls != null && st.pulls <= (def.maxPulls || cfg.run.maxPulls)) break;
+    }
+    // 探検家: 始まりの長針から hamGap 以上先。外の輪の物、対の印、鍵の「何分」と重ねない
+    const taken = new Set(st.items.map((it) => it.pos % 12));
+    if (st.lock != null) taken.add(st.lock % 12);
+    const spots = [];
+    for (let d = cfg.run.hamGap; d < 12; d++) { const p = (K.long(st.start) + d) % 12; if (!taken.has(p)) spots.push(p); }
+    return Object.assign(st, { ham: RNG.pick(run, spots), limit: 'pulls', N: cfg.run.pulls });
+  }
+
+  const pool = (run) => run.deck.concat(run.hand, run.discard, run.queue);
+  // 山札から 1 枚引く。尽きたら捨て札を切り直す。引けなければ false
+  function draw1(run, ev) {
+    if (!run.deck.length) {
+      if (!run.discard.length) return false;
+      run.deck = shuffle(run, run.discard); run.discard = [];
+      ev.push({ type: 'shuffle' });
+    }
+    const id = run.deck.pop();
+    run.hand.push(id); ev.push({ type: 'draw', id });
+    return true;
+  }
+  const anyPlace = (run, cfg) => run.hand.some((_, i) => C.canPlace(run, i, cfg));
+  // 手番の始め: 手札を補充する。1 枚も並べられない手札（ジャンプだけ、など）は、捨てて引き直す
+  function refill(run, ev, cfg) {
+    for (let k = 0; k < 4; k++) {
+      while (run.hand.length < cfg.run.hand && draw1(run, ev));
+      if (anyPlace(run, cfg) || k === 3) return;
+      ev.push({ type: 'mulligan' });
+      run.discard.push(...run.hand); run.hand = [];
+    }
+  }
+  // 朝: 全部の札をまとめて切り直し、手札を引く
+  function morning(run, ev, cfg) {
+    run.deck = shuffle(run, pool(run).sort()); run.hand = []; run.discard = []; run.queue = [];
+    refill(run, ev, cfg);
+  }
+  function enter(run, ev, cfg) {
+    run.stage = makeStage(run, cfg); run.s = RU.start(run.stage); run.phase = 'play'; run.picks = null;
+    ev.push({ type: 'board', board: run.board });
+    morning(run, ev, cfg);
+  }
+
+  // board: 確かめ用（その面から、最初の山札で）
+  function start(seed, cfg = Game.config, board = 0) {
+    const run = { v: 1, seed, rng: seed | 0, board, stage: null, s: null, deck: cfg.run.deck.slice(), hand: [], discard: [], queue: [], fires: cfg.run.fires, days: 1, phase: 'play', picks: null };
+    enter(run, [], cfg);
+    return run;
+  }
+
+  // 手札の i 枚めを並べる
+  function place(run, i, cfg = Game.config) {
+    if (!C.canPlace(run, i, cfg)) return [{ type: 'deny', i }];
+    const id = run.hand.splice(i, 1)[0], c = C.of(id), ev = [{ type: 'place', id, at: run.queue.length }];
+    run.queue.push(id);
+    if (c.kind === 'swap') { const n = run.hand.length; run.discard.push(...run.hand); run.hand = []; ev.push({ type: 'swap' }); for (let k = 0; k < n; k++) draw1(run, ev); }
+    if (c.kind === 'nap') { run.s.extra = (run.s.extra || 0) + 1; ev.push({ type: 'nap' }); }
+    for (let k = 0; k < c.draw; k++) draw1(run, ev);
+    return ev;
+  }
+  // 並べた札を手札へ戻せるか: 引かない札（ジャンプ・2 ばい・ひるね）で、並びのいちばん右のものだけ。
+  // 取り消せないのは「引いた札を見てから、やめる」を防ぐため。引かない札は、戻しても何も分からない
+  function canTake(run) {
+    if (run.phase !== 'play' || !run.queue.length) return false;
+    const c = C.of(run.queue[run.queue.length - 1]);
+    return c.kind === 'jump' || c.kind === 'x2' || c.kind === 'nap';
+  }
+  function take(run) {
+    if (!canTake(run)) return [];
+    const id = run.queue.pop();
+    run.hand.push(id);
+    if (C.of(id).kind === 'nap') run.s.extra = Math.max(0, (run.s.extra || 0) - 1);
+    return [{ type: 'takeback', id }];
+  }
+  // レバーを引けるか: 1 枚は並べてあり、2 ばいの続きを待っていない
+  const canPull = (run) => run.phase === 'play' && run.queue.length > 0 && C.of(run.queue[run.queue.length - 1]).kind !== 'x2';
+
+  // 夜（回数を使いきった・自分から寝た）: 火が 1 つ消え、残っていれば同じ盤を朝から
+  function night(run, ev, cfg) {
+    run.fires--; ev.push({ type: 'night', fires: run.fires });
+    if (run.fires <= 0) { run.phase = 'over'; ev.push({ type: 'over' }); return; }
+    RU.sleep(run.s); run.days++;
+    ev.push({ type: 'day' });
+    morning(run, ev, cfg);
+  }
+  function pull(run, cfg = Game.config) {
+    if (!canPull(run)) return [];
+    const s = run.s, list = C.resolve(run.queue, s.t), ev = [{ type: 'pull', list }];
+    const fires0 = run.fires;
+    if (list.length) ev.push(...RU.advance(s, list, cfg, false));
+    else { s.pulls++; if (RU.left(s) <= 0) { s.night = true; ev.push({ type: 'night' }); } }   // 進む札がない: 回数だけ使う
+    for (const e of ev) if (e.type === 'hit') run.fires--;
+    // 使った札は捨て札へ（「ひるね」はランから消える）
+    for (const id of run.queue) if (!C.of(id).once) run.discard.push(id);
+    run.queue = [];
+    const i = ev.findIndex((e) => e.type === 'night');
+    if (i >= 0) ev.splice(i, 1);                       // 夜は、火を数えてからここで出す
+    if (run.fires <= 0) { run.phase = 'over'; ev.push({ type: 'over', hit: run.fires < fires0 }); return ev; }
+    if (s.done) {
+      run.deck = pool(run).sort(); run.hand = []; run.discard = [];
+      if (run.board >= cfg.run.boards - 1) { run.phase = 'clear'; ev.push({ type: 'win', days: run.days }); return ev; }
+      run.phase = 'pick'; run.picks = offer(run, cfg);
+      ev.push({ type: 'pick', picks: run.picks });
+      return ev;
+    }
+    if (s.night) { night(run, ev, cfg); return ev; }
+    refill(run, ev, cfg);
+    return ev;
+  }
+  // 自分から寝る
+  function sleep(run, cfg = Game.config) {
+    if (run.phase !== 'play') return [];
+    const ev = [];
+    run.discard.push(...run.queue.filter((id) => !C.of(id).once)); run.queue = [];
+    night(run, ev, cfg);
+    return ev;
+  }
+
+  // 札を選ぶ 3 枚（重ならない。出やすさは cfg.run.weights）
+  function offer(run, cfg) {
+    const items = Object.keys(cfg.run.weights).map((id) => ({ id, weight: cfg.run.weights[id] })), out = [];
+    while (out.length < 3) { const it = RNG.weighted(run, items); out.push(it.id); items.splice(items.indexOf(it), 1); }
+    return out;
+  }
+  function next(run, ev, cfg) { run.board++; run.days++; enter(run, ev, cfg); }
+  // i: 選ぶ札（0〜2）。null なら、えらばない
+  function pick(run, i, cfg = Game.config) {
+    if (run.phase !== 'pick') return [];
+    const ev = [];
+    if (i != null && run.picks[i]) { run.deck.push(run.picks[i]); ev.push({ type: 'add', id: run.picks[i] }); }
+    run.picks = null;
+    if (cfg.run.restAfter.includes(run.board)) { run.phase = 'rest'; ev.push({ type: 'rest' }); return ev; }
+    next(run, ev, cfg);
+    return ev;
+  }
+  const canFire = (run, cfg = Game.config) => run.fires < cfg.run.fires;
+  // やすみば: what = 'fire'（火を 1 つともす）か 'remove'（山札の i 枚めを抜く。deck はまとめて並べてある）
+  function rest(run, what, i, cfg = Game.config) {
+    if (run.phase !== 'rest') return [];
+    const ev = [];
+    if (what === 'fire') { if (!canFire(run, cfg)) return []; run.fires++; ev.push({ type: 'fire', fires: run.fires }); }
+    else { if (!(i >= 0 && i < run.deck.length)) return []; ev.push({ type: 'remove', id: run.deck.splice(i, 1)[0] }); }
+    next(run, ev, cfg);
+    return ev;
+  }
+
+  // 途中のランの保存（状態はただのデータ）。読めないものは null
+  const toSave = (run) => JSON.parse(JSON.stringify(run));
+  function fromSave(d, cfg = Game.config) {
+    try {
+      if (!d || d.v !== 1 || !d.stage || !d.s || !['play', 'pick', 'rest'].includes(d.phase)) return null;
+      for (const k of ['deck', 'hand', 'discard', 'queue']) if (!Array.isArray(d[k]) || d[k].some((id) => !C.of(id))) return null;
+      if (!(d.board >= 0 && d.board < cfg.run.boards) || !(d.fires > 0)) return null;
+      const run = JSON.parse(JSON.stringify(d));
+      run.s.stage = run.stage;
+      return run;
+    } catch (e) { return null; }
+  }
+
+  Game.run = { start, place, canTake, take, canPull, pull, sleep, pick, rest, canFire, pool, toSave, fromSave };
+})();
+</script>
+<script>
 // 記録: 開いたステージ、ステージごとのごほうび（3 つ）と足あと、前に遊んだ種。DOM・Canvas・言語に触らない。
 // 保存の形: { v, stages: { '1-1': { gems: [bool, bool, bool], stamp: bool, star: bool, seed: 整数 } } }
 // 前に取ったごほうびと足あとは消えない（遊び直して、取れていない分だけを足せる）
 (function () {
   const Game = (window.Game = window.Game || {});
 
-  const fresh = (cfg = Game.config) => ({ v: cfg.save.version, stages: {} });
+  // run: 編 2「ぼうけん」の記録 { best: いちばん先まで進んだ面の数（0〜8）, days: クリアしたときのいちばん少ない日数（まだなら null） }
+  const fresh = (cfg = Game.config) => ({ v: cfg.save.version, stages: {}, run: { best: 0, days: null } });
   const blank = () => ({ gems: [false, false, false], stamp: false, star: false, seed: null });
   const of = (p, id) => p.stages[id] || blank();
 
@@ -569,6 +888,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     try { if (typeof raw === 'string') d = JSON.parse(raw); } catch (e) { return fresh(cfg); }
     const p = fresh(cfg);
     if (!d || d.v !== cfg.save.version || !d.stages || typeof d.stages !== 'object') return p;
+    if (d.run && typeof d.run === 'object') {
+      if (Number.isInteger(d.run.best) && d.run.best >= 0 && d.run.best <= cfg.run.boards) p.run.best = d.run.best;
+      if (Number.isInteger(d.run.days) && d.run.days > 0 && p.run.best === cfg.run.boards) p.run.days = d.run.days;
+    }
     for (const def of defs) {
       const s = d.stages[def.id];
       if (!s || typeof s !== 'object') continue;
@@ -617,7 +940,50 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     return t;
   }
 
-  Game.progress = { fresh, parse, of, cleared, open, next, enter, record, total };
+  // ランの結果を足す。boards: クリアした面の数、days: かかった日数、won: 最後の扉を開けた。返り値: 記録を更新したか
+  function recordRun(p, boards, days, won) {
+    let up = false;
+    if (boards > p.run.best) { p.run.best = boards; up = true; }
+    if (won && (p.run.days == null || days < p.run.days)) { p.run.days = days; up = true; }
+    return up;
+  }
+
+  Game.progress = { recordRun, fresh, parse, of, cleared, open, next, enter, record, total };
+})();
+</script>
+<script>
+// 導入: どのヒントを出すかを決める所。DOM・Canvas・言語に触らない。設計書: docs/specs/2026-11-15-hoppe-clock-intro-design.md
+// 見たか（seen）は main が持ち、save が hoppe-clock.tips に書く
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  // 記録がまっさら（ごほうび 0、ぼうけんの記録なし）→ 1 本めのおはなしを流す
+  const fresh = (p) => p.run.best === 0 && !Object.values(p.stages).some((e) => e.gems.some(Boolean));
+
+  // 盤の始まりに出すヒント（まだ見ていないものを、決まった順に）。「その盤に、そのものがあるか」で決める（ステージの番号では決めない）
+  function atStart(stage, seen, isRun) {
+    const has = (f) => stage.items.some(f), ids = [];
+    if (isRun) ids.push('hit', 'jump');
+    else {
+      if (has((it) => it.kind === 'gem')) ids.push('goal');
+      if (has((it) => it.kind === 'gem' && it.ring === 'out')) ids.push('outer');
+      // 対の印: 数字の間にある内の輪の宝（長い針で合わせる札がある盤だけ。エリア 1 の「はん」は短い針だけで読む）
+      if (has((it) => it.kind === 'gem' && it.ring === 'in' && it.pos % 12 !== 0) && stage.cards.some((n) => n < 6)) ids.push('pair');
+      if (has((it) => it.kind === 'trap')) ids.push('trap');
+      if (stage.wall != null) ids.push('wall');
+      if (stage.lock != null) ids.push('lock');
+    }
+    return ids.filter((id) => !seen[id]);
+  }
+
+  // 出来事で出すヒント（夕方、クリア、札を並べた、レバーのあと、札を選ぶ、やすみば）。見ていれば null
+  const EVENTS = ['dusk', 'reward', 'draw', 'day', 'pick', 'rest'];
+  const on = (name, seen) => (EVENTS.includes(name) && !seen[name] ? name : null);
+
+  // 保存で拾う id（指の手本、ヒント、2 本めのおはなしを見た印）
+  const ids = (cfg = Game.config) => cfg.tips.concat(cfg.guide.tips, 'story2');
+
+  Game.guide = { fresh, atStart, on, ids };
 })();
 </script>
 <script>
@@ -630,12 +996,12 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   function write(key, data) { try { localStorage.setItem(key, JSON.stringify(data)); return true; } catch (e) { return false; } }
   const json = (raw) => { try { return typeof raw === 'string' ? JSON.parse(raw) : null; } catch (e) { return null; } };
 
-  // 設定 { sound: bool }
-  function parseSettings(raw) { const d = json(raw); return { sound: !(d && d.sound === false) }; }
-  // 手本 { seen: { count: true, … } }（できたものだけ）
+  // 設定 { sound: bool, haptics: bool }（前の保存に haptics が無ければオン）
+  function parseSettings(raw) { const d = json(raw); return { sound: !(d && d.sound === false), haptics: !(d && d.haptics === false) }; }
+  // 手本とヒント { seen: { put: true, goal: true, story2: true, … } }（見たものだけ。知らない id は捨てる）
   function parseTips(raw, cfg = Game.config) {
     const d = json(raw), t = { seen: {} };
-    if (d && d.seen && typeof d.seen === 'object') for (const id of cfg.tips) if (d.seen[id] === true) t.seen[id] = true;
+    if (d && d.seen && typeof d.seen === 'object') for (const id of Game.guide.ids(cfg)) if (d.seen[id] === true) t.seen[id] = true;
     return t;
   }
 
@@ -645,6 +1011,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     storeProgress: (p, cfg = Game.config) => write(cfg.save.progress, p),
     loadSettings: (cfg = Game.config) => parseSettings(read(cfg.save.settings)),
     storeSettings: (s, cfg = Game.config) => write(cfg.save.settings, s),
+    // 途中のラン（編 2）。読めないものは null（検めは run.fromSave）
+    loadRun: (cfg = Game.config) => Game.run.fromSave(json(read(cfg.save.run)), cfg),
+    storeRun: (run, cfg = Game.config) => write(cfg.save.run, Game.run.toSave(run)),
+    clearRun: (cfg = Game.config) => { try { localStorage.removeItem(cfg.save.run); } catch (e) { /* 書けない端末 */ } },
     loadTips: (cfg = Game.config) => parseTips(read(cfg.save.tips), cfg),
     storeTips: (t, cfg = Game.config) => write(cfg.save.tips, t),
   };
@@ -754,6 +1124,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   def('〜', '..... ..... .#... #.#.# ...#. ..... .....');
   def('。', '..... ..... ..... ..... .#... #.#.. .#...');
   def('、', '..... ..... ..... ..... #.... .#... .....');
+  def('「', '..### ..#.. ..#.. ..#.. ..... ..... .....');
+  def('」', '..... ..... ..... ..#.. ..#.. ..#.. ###..');
   def('・', '..... ..... ..... ..#.. ..... ..... .....');
   def('♪', '..##. ..#.# ..#.. ..#.. ###.. ###.. .....');
 
@@ -788,7 +1160,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   def('ふ', '..#.. ...#. ..#.. ..#.. #.#.# #...# .##..');
   def('へ', '..... ..... .#... #.#.. ...#. ....# .....');
   def('ほ', '#.### #..#. #.### #..#. #.##. #.#.# #.##.');
-  def('ま', '..#.. ##### ..#.. ##### ..#.. .###. #.#.#');
+  def('ま', '..#.. ##### ..#.. ##### .###. #.#.# .##.#');   // 下の輪を閉じる（開いていると「ま」に見えづらかった）
   def('み', '###.. .#... .#.#. #####  .#.#. #..#. ..#..'.replace('  ', ' '));
   def('む', '.#... ####. .#..# .#... ##... #.#.# .###.');
   def('め', '.#.#. ..#.. ##### #.#.# ##..# #..#. .##..');
@@ -900,11 +1272,59 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       clear: { title: 'クリア!', next: 'つぎへ', again: 'もういちど', back: 'もどる' },
       stuck: 'きょうは もう ねよう',
       help: 'てがかりを だす',
-      lock: { tip: 'とびらの じこくに あわせよう' },
+      // おはなし（紙芝居）。1 枚 = 行の並び（1 行 18 字まで）
+      story: {
+        skip: 'とばす', name: { 1: 'いせきを みつけた', 2: 'とじこめられた' },
+        1: [
+          ['ハムスターの たんけんかが', 'ジャングルの おくで', 'ふしぎな いせきを みつけた'],
+          ['まるい ゆかは とけいの しかけ', 'じかんの ふだを ならべると', 'はりが まわる'],
+          ['はりの さきを たからに とめると', 'たからが てに はいる'],
+          ['ひが くれる まえに', 'たからを あつめて', 'おくの とびらを めざそう!'],
+        ],
+        2: [
+          ['いせきの いちばん おくに', 'おおきな とけいの ゆかが あった'],
+          ['ゆかに のった とたん', 'いりぐちが しまって しまった!'],
+          ['まわる はりに あたると', 'ランタンの ひが きえて しまう', 'ジャンプで とびこえよう'],
+          ['8つの ゆかを こえて', '「ときの たから」を みつけだそう!'],
+        ],
+      },
+      // ヒント（はじめてのときに 1 回だけ）。見出しと、2〜3 行の文（1 行 17 字まで）
+      tip: {
+        tap: 'タップで つづける',
+        goal: { head: 'たからを とろう', lines: ['はりの さきを たからに とめると', 'たからが とれる', 'ぜんぶ とると クリア'] },
+        dusk: { head: 'ひが くれる', lines: ['ふだを つかうと ひが くれる', 'つかいきると よるに なって', 'あさから やりなおし'] },
+        reward: { head: 'ごほうび', lines: ['つかった ふだが すくないほど', 'ごほうびが ふえる', 'レバーも すくないと ほし'] },
+        outer: { head: 'そとの たから', lines: ['そとの たからは', 'ながい はりを とめて とる'] },
+        pair: { head: 'ちいさな しるし', lines: ['そとの きいろい しるしは', 'その たからが', '「なんぷん」かを しめす'] },
+        trap: { head: 'わな', lines: ['わなに とまると はじかれる', 'とおりすぎるのは へいき'] },
+        wall: { head: 'かべ', lines: ['みじかい はりは', 'かべを こえられない'] },
+        lock: { head: 'とびら', lines: ['とびらの じこくに', 'はりを あわせよう'] },
+        hit: { head: 'はりに ちゅうい', lines: ['ながい はりに あたると', 'ひが 1つ きえる', 'ぜんぶ きえると おわり'] },
+        jump: { head: 'ジャンプ', lines: ['すすむ ふだの あとに おくと', 'その ふだの はりを とびこえる'] },
+        draw: { head: 'ふだを ひく', lines: ['ならべると やまから 1まい ひく', 'ひいた ふだは もどせない'] },
+        day: { head: '1にちは 5かい', lines: ['レバーは 1にち 5かい まで', 'つかいきると よるに なって', 'ひが 1つ きえる'] },
+        pick: { head: 'ふだを えらぶ', lines: ['1まい えらんで やまに たす', 'えらばなくても よい'] },
+        rest: { head: 'やすみば', lines: ['ふだを 1まい ぬくか', 'ひを 1つ ともせる'] },
+      },
+      how: { name: 'あそびかた', back: 'もどる', story: 'おはなし', tips: 'ヒント' },
       // 擬音
-      fx: { ghost: 'ひゃあ', tick: 'カチ', door: 'ゴゴゴ', take: 'ピタッ', bounce: 'ガツン', put: 'コトン', lever: 'ガチャ', sleep: 'ぐう', dawn: 'あさ!' },
+      fx: { hit: 'ゴチン', jump: 'ピョン', ghost: 'ひゃあ', tick: 'カチ', door: 'ゴゴゴ', take: 'ピタッ', bounce: 'ガツン', put: 'コトン', lever: 'ガチャ', sleep: 'ぐう', dawn: 'あさ!' },
       // 札
-      card: { 12: ['1', 'じかん'], 6: ['30', 'ぷん'], 3: ['15', 'ふん'], 2: ['10', 'ぷん'], 1: ['5', 'ふん'] },
+      // 編 2 の札: [上の行, 下の行, 並べた札の字]
+      rcard: { sharp: ['つぎ', ':00', '00'], half: ['つぎ', 'はん', 'はん'], jump: ['ピョン', '', '↑'], x2: ['x2', '', 'x2'], draw2: ['2まい', 'ひく', '+2'], swap: ['とり', 'かえ', 'とり'], nap: ['ひる', 'ね', 'ね'] },
+      run: {
+        name: 'ぼうけん', over: 'ひが きえた', overAt: '{b}めんまで {d}にち', clear: 'クリア!', clearIn: '{d}にちで クリア', tap: 'タップで もどる', deck: 'やま', discard: 'すてふだ',
+        cont: 'つづきから', fresh: 'あたらしく', bestAt: '{b}/8', bestDays: '{d}にち',
+        pick: 'ふだを えらぼう', skip: 'えらばない', rest: 'やすみば', remove: 'ふだを 1まい ぬく', fire: 'ひを ともす', which: 'どれを ぬく?', back: 'もどる',
+      },
+      // 編 2 の札の名前と、効果の短い文（2 行まで）
+      rname: { sharp: 'つぎの ちょうど', half: 'つぎの はん', jump: 'ジャンプ', x2: '2ばい', draw2: '2まい ひく', swap: 'とりかえ', nap: 'ひるね' },
+      rdesc: {
+        time: ['はりが すすむ', '1まい ひく'], time2: ['はりが すすむ', '2まい ひく'], sharp: ['つぎの 12まで すすむ', '1まい ひく'], half: ['つぎの 6まで すすむ', '1まい ひく'],
+        jump: ['まえの ふだの', 'はりを とびこえる'], x2: ['つぎの ふだが 2ばい', 'はりも とびこえる'], draw2: ['やまから', '2まい ひく'],
+        swap: ['てふだを ぜんぶ', 'ひきなおす'], nap: ['レバーが 1かい', 'ふえる。きえる'],
+      },
+      card: { 4: ['20', 'ぷん'], 9: ['45', 'ふん'], 12: ['1', 'じかん'], 6: ['30', 'ぷん'], 3: ['15', 'ふん'], 2: ['10', 'ぷん'], 1: ['5', 'ふん'] },
     },
   };
 })();
@@ -1522,6 +1942,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         case 'bounce': play('gatsun'); break;
         case 'back': play('back'); break;
         case 'night': play('night'); break;
+        case 'jump': play('jump'); break;
+        case 'hit': play('gatsun'); break;
+        case 'over': play('ghost'); break;
         case 'ghost': play('ghost'); break;
         case 'day': play('dawn'); break;
         case 'door': play('door'); break;
@@ -1538,6 +1961,57 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   Game.audio = { create };
+})();
+</script>
+<script>
+// 振動。navigator.vibrate に、config.haptics の型（ミリ秒の並び。震える・止まる・震える…）を渡すだけ。強さは選べない（Web の制約）。
+// HOPPE BRIDGE の haptics.js を写したもの。前の振動が終わってから minGap ミリ秒は、次を出さない（重なると手触りがつぶれる）。
+// config.haptics.cut に名前がある型（当たり・扉・クリア）だけは、前の振動を打ち切って出す。
+// ない端末・オフのときは何もしない。vibrate と now を差し替えられるので、単体テストでも動く
+(function () {
+  const Game = (window.Game = window.Game || {});
+
+  // 出来事 → 型の名前（無いものは震わせない）
+  const ON = {
+    put: 'place', unput: 'take', full: 'deny', lever: 'lever', tick: 'click', hour: 'hour', take: 'fit', bounce: 'bounce',
+    hit: 'hit', jump: 'jump', night: 'night', ghost: 'night', over: 'over', door: 'door', clear: 'clear', gem: 'gem',
+  };
+
+  function create(cfg, vibrate, now) {
+    if (vibrate === undefined) vibrate = typeof navigator !== 'undefined' && navigator.vibrate ? navigator.vibrate.bind(navigator) : null;
+    if (!now) now = () => performance.now();
+    let end = -Infinity; // 前の振動が終わる時刻
+    let hidden = false;  // 画面が隠れている間は出さない
+
+    // kind: config.haptics の型の名前。出したら true
+    function play(kind) {
+      const H = cfg.haptics, p = H[kind];
+      if (!H.enabled || hidden || !vibrate || !Array.isArray(p) || !p.length) return false;
+      const t = now();
+      if (!H.cut.includes(kind) && t < end + H.minGap) return false;
+      try { vibrate(p); } catch (e) { return false; }
+      end = t + p.reduce((a, b) => a + b, 0);
+      return true;
+    }
+    function setEnabled(on) {
+      cfg.haptics.enabled = !!on;
+      if (!on) stop();
+    }
+    // 鳴っている振動を止める
+    function stop() { if (vibrate) { try { vibrate(0); } catch (e) { /* 止められなくてもよい */ } } end = -Infinity; }
+    // 画面が隠れたら止める（長い型が鳴りっぱなしにならないように）。隠れている間は、遅らせた振動も出さない
+    function setHidden(h) { hidden = !!h; if (hidden) stop(); }
+    // 出来事（ルールの出来事と、main が演出の節目で出す fx_ の出来事）→ 振動
+    function on(e) {
+      // 音が遅れて鳴るもの（扉が開ききってからのクリアの音）は、振動も同じだけ遅らせる。先に出すと、扉の振動を打ち切ってしまう
+      if (e.type === 'clear' && e.delay > 0 && typeof setTimeout !== 'undefined') { setTimeout(() => play('clear'), e.delay * 1000); return true; }
+      return ON[e.type] ? play(ON[e.type]) : false;
+    }
+
+    return { play, on, setEnabled, setHidden, stop, available: () => !!vibrate };
+  }
+
+  Game.haptics = { create };
 })();
 </script>
 <script>
@@ -1601,7 +2075,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     // 出来事 → 擬音。場所は main が決めて渡す（e.x, e.y）
     const WORD = {
       card: ['fx.tick', '#c0cbdc', 'S'], door: ['fx.door', '#ead4aa', 'M'], take: ['fx.take', '#ffffff', 'M'], bounce: ['fx.bounce', '#e43b44', 'M'],
-      put: ['fx.put', '#ead4aa', 'S'], lever: ['fx.lever', '#c0cbdc', 'S'], night: ['fx.sleep', '#c0cbdc', 'M'], ghost: ['fx.ghost', '#ffffff', 'M'], day: ['fx.dawn', '#fee761', 'M'],
+      put: ['fx.put', '#ead4aa', 'S'], lever: ['fx.lever', '#c0cbdc', 'S'], night: ['fx.sleep', '#c0cbdc', 'M'], hit: ['fx.hit', '#e43b44', 'M'], jump: ['fx.jump', '#ffffff', 'S'], ghost: ['fx.ghost', '#ffffff', 'M'], day: ['fx.dawn', '#fee761', 'M'],
     };
     function on(e) {
       const w = WORD[e.type];
@@ -1827,6 +2301,43 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       for (let y = -D.floorR - 3; y <= D.floorR + 3; y++) for (let x = -D.floorR - 3; x <= D.floorR + 3; x++) { const d = Math.hypot(x - 1, y - 2); if (d <= D.floorR + 1.5 && d > D.floorR - 3) g.fillRect(D.cx + x, D.cy + y, 1, 1); }
       return (R._ground = c);
     },
+    // 編 2「ぼうけん」の背景: 遺跡の中（石の壁と石畳の床。1 回だけ焼く）。おはなしで「とじこめられた」ので、空と木々は出さない
+    ruinGround() {
+      if (R._ruin) return R._ruin;
+      const C = Game.config, V = C.view, D = C.dial, H = C.layout.topH, c = B.mk(V.w, V.h), g = c.getContext('2d');
+      // 床の石畳
+      g.fillStyle = '#2e3550'; g.fillRect(0, 0, V.w, V.h);
+      g.fillStyle = '#262b44';
+      for (let y = H, k = 0; y < V.h; y += 14, k++) { g.fillRect(0, y, V.w, 1); for (let x = (k % 2) * 13 + 5; x < V.w; x += 26) g.fillRect(x, y, 1, 14); }
+      g.fillStyle = '#3a4466'; for (let i = 0; i < 90; i++) g.fillRect((i * 53) % V.w, H + 3 + ((i * 37) % (V.h - H - 6)), 2 + (i % 3), 1);
+      // 壁（上の帯）
+      for (let y = 0, k = 0; y < H; y += 8, k++) {
+        const h = Math.min(7, H - y);
+        g.fillStyle = '#262b44'; g.fillRect(0, y, V.w, 8);
+        g.fillStyle = '#3a4466'; g.fillRect(0, y, V.w, h);
+        g.fillStyle = '#4a5578'; g.fillRect(0, y, V.w, 1);
+        g.fillStyle = '#262b44'; for (let x = (k % 2) * 9 + 3; x < V.w; x += 18) g.fillRect(x, y, 1, h);
+      }
+      g.fillStyle = INK; g.fillRect(0, H - 1, V.w, 1);
+      g.fillStyle = '#3e8948'; for (let i = 0; i < 16; i++) g.fillRect((i * 29 + 5) % V.w, H - 2 + (i % 3), 2, 2);   // 壁ぎわの苔
+      // 床の影（右下へ少し）
+      g.fillStyle = '#1f2540';
+      for (let y = -D.floorR - 3; y <= D.floorR + 3; y++) for (let x = -D.floorR - 3; x <= D.floorR + 3; x++) { const d = Math.hypot(x - 1, y - 2); if (d <= D.floorR + 1.5 && d > D.floorR - 3) g.fillRect(D.cx + x, D.cy + y, 1, 1); }
+      return (R._ruin = c);
+    },
+    // 遺跡の壁の小さな窓: 外の空の色で、1 日の進みが分かる。p: 1 日の進み（0〜1）
+    ruinTop(g, p) {
+      const x = 12, y = 9, w = 26, h = 20, sky = R.skyColor(p);
+      g.fillStyle = INK; g.fillRect(x - 3, y - 3, w + 6, h + 6);
+      g.fillStyle = '#5a6988'; g.fillRect(x - 2, y - 2, w + 4, h + 4);
+      g.fillStyle = '#8b9bb4'; g.fillRect(x - 2, y - 2, w + 4, 1);
+      g.fillStyle = INK; g.fillRect(x - 1, y - 1, w + 2, h + 2);
+      g.fillStyle = mix(sky, '#ffffff', 0.3); g.fillRect(x, y, w, h);
+      g.fillStyle = sky; g.fillRect(x, y + (h >> 1), w, h - (h >> 1));
+      g.fillStyle = mix('#3e8948', sky, 0.4); for (let i = 0; i < w; i++) g.fillRect(x + i, y + h - 5 - ((i * 7) % 3) - (i % 9 < 4 ? 2 : 0), 1, 8);   // 外の木立
+      g.fillStyle = INK; g.fillRect(x, y + h, w, 3);
+      for (const bx of [8, 17]) g.fillRect(x + bx, y, 1, h);   // 格子
+    },
     // 日時計: 石の円盤。影は左（朝）から下を通って右（夜）へ。縁の色は朝（ごほうび 3）・昼（2）・夕方（1）の帯
     sundial(g, stage, used) {
       const S = Game.config.layout.sundial, N = stage.N, p = Math.min(1, used / N);
@@ -1845,7 +2356,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       }
       // 境目の刻み（朝 | 昼 | 夕方）
       g.fillStyle = INK;
-      for (const k of [stage.par, stage.noonAt]) { const a = Math.PI - (Math.PI * k) / N; for (let r = S.r - 3; r <= S.r - 1; r++) g.fillRect(S.cx + Math.round(r * Math.cos(a)), S.cy + Math.round(r * Math.sin(a)), 1, 1); }
+      for (const k of stage.marks || [stage.par, stage.noonAt]) { const a = Math.PI - (Math.PI * k) / N; for (let r = S.r - 3; r <= S.r - 1; r++) g.fillRect(S.cx + Math.round(r * Math.cos(a)), S.cy + Math.round(r * Math.sin(a)), 1, 1); }
       // 影と、まん中の柱
       const a = Math.PI - Math.PI * p, r = S.r - 4;
       g.fillStyle = '#262b44';
@@ -1857,6 +2368,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     // 札: 石の板に貼った紙。small: 並べた札（数字だけ）。「1 じかん」は金色。
     // 大きい札の下には、その時間ぶんだけ塗った小さな文字盤（長針が回る量。1 じかんは 1 周）
     card(g, n, x, y, w, h, small) {
+      if (typeof n === 'string') { const c = Game.cards.of(n); if (c.kind !== 'time') return R.fxCard(g, c, x, y, w, h, small); n = c.n; }   // 編 2: 札 id
       const hour = n === 12, T = lt('card.' + n);
       const paper = hour ? CARD.hour : CARD.paper, edge = hour ? CARD.hourEdge : CARD.edge, lit = hour ? '#fee761' : '#f4e6c8';
       g.fillStyle = INK; g.fillRect(x + 1, y, w - 2, h); g.fillRect(x, y + 1, w, h - 2);
@@ -1874,6 +2386,162 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         let fr = Math.atan2(j, i + 0.01) / (2 * Math.PI) + 0.25; if (fr < 0) fr += 1;
         g.fillStyle = d > 2.4 ? INK : f >= 1 || fr < f ? (hour ? '#e43b44' : '#f77622') : '#ffffff';
         g.fillRect(cx + i, cy + j, 1, 1);
+      }
+    },
+    // 編 2 の効果つきの札（種類ごとに色を変える）
+    fxCard(g, c, x, y, w, h, small) {
+      const TONE = { to: ['#b9e27a', '#3e8948', '#e3f5b8'], jump: ['#8fd3ff', '#0099db', '#d5f0ff'], x2: ['#f6a0a4', '#a22633', '#ffd5d7'], draw2: ['#c0cbdc', '#5a6988', '#e6ebf2'], swap: ['#c0cbdc', '#5a6988', '#e6ebf2'], nap: ['#e0b0e8', '#68386c', '#f3dcf7'] };
+      const [paper, edge, lit] = TONE[c.kind], T = lt('rcard.' + c.id);
+      g.fillStyle = INK; g.fillRect(x + 1, y, w - 2, h); g.fillRect(x, y + 1, w, h - 2);
+      g.fillStyle = edge; g.fillRect(x + 1, y + 1, w - 2, h - 2);
+      g.fillStyle = paper; g.fillRect(x + 1, y + 1, w - 2, h - 3);
+      g.fillStyle = lit; g.fillRect(x + 2, y + 1, w - 4, 1); g.fillRect(x + 1, y + 2, 1, h - 5);
+      const mid = (str, yy) => B.text(g, str, x + Math.round((w - B.textW(str)) / 2), yy, INK);
+      if (small) { mid(T[2], y + 4); return; }
+      mid(T[0], y + 2); if (T[1]) mid(T[1], y + 10);
+      const cx = x + (w >> 1), cy = y + 23;
+      if (c.kind === 'to') {
+        // 小さな文字盤と、行き先（12 か 6）を指す針
+        for (let j = -3; j <= 3; j++) for (let i = -3; i <= 3; i++) { const d = Math.hypot(i, j); if (d > 3.4) continue; g.fillStyle = d > 2.4 ? INK : '#ffffff'; g.fillRect(cx + i, cy + j, 1, 1); }
+        g.fillStyle = '#e43b44'; g.fillRect(cx, c.to === 0 ? cy - 2 : cy, 1, 3);
+      } else if (c.kind === 'jump') {
+        g.fillStyle = INK; g.fillRect(cx, cy - 8, 1, 9); g.fillRect(cx - 1, cy - 7, 3, 1); g.fillRect(cx - 2, cy - 6, 5, 1); g.fillRect(cx - 4, cy + 2, 9, 1);
+      } else if (c.kind === 'x2') {
+        for (let k = 0; k < 2; k++) { g.fillStyle = INK; g.fillRect(cx - 6 + k * 7, cy - 9, 6, 9); g.fillStyle = k === 0 ? '#ead4aa' : '#feae34'; g.fillRect(cx - 5 + k * 7, cy - 8, 4, 7); }
+      }
+    },
+    askBtns() { return [{ id: 'cont', x: 30, y: 96, w: 75, h: 18 }, { id: 'fresh', x: 30, y: 122, w: 75, h: 18 }]; },
+    // 編 2 の手札の場所（ふつうは 5 枚まで横に並ぶ。増えたら幅をつめて重ねる）
+    runHand(hand) {
+      const H = Game.config.layout.hand, V = Game.config.view, n = hand.length;
+      const step = n <= 1 ? 0 : Math.min(H.w + H.gap, (V.w - 2 * H.x - H.w) / (n - 1));
+      return hand.map((id, i) => ({ i, n: id, x: Math.round(H.x + i * step), y: H.y, w: H.w, h: H.h }));
+    },
+    // 探検家の立つ所（足もと）
+    hamSpot(stage) { return Game.dial.at(Game.config.run.hamR, stage.ham / 12); },
+    // 火（消えた火は暗い形）
+    flame(g, x, y, on, t) {
+      const F = [['..a..', '.aa..', '.aba.', 'abbba', 'ab6ba', '.aba.'], ['..a..', '..aa.', '.aba.', 'abbba', 'ab6ba', '.aba.']][on ? Math.floor(t * 3) % 2 : 0];
+      const col = on ? { a: '#f77622', b: '#fee761', 6: '#ffffff' } : { a: '#3a4466', b: '#262b44', 6: '#262b44' };
+      g.fillStyle = INK; g.fillRect(x - 1, y + 1, 7, 6); g.fillRect(x, y - 1, 5, 2);
+      F.forEach((row, j) => [...row].forEach((ch, i) => { if (ch === '.') return; g.fillStyle = col[ch]; g.fillRect(x + i, y + j, 1, 1); }));
+    },
+    // 編 2: 上の帯の火・面の進み・山札の残り
+    runTop(g, app) {
+      const C = Game.config, F = C.layout.fires, run = app.run;
+      for (let i = 0; i < C.run.fires; i++) R.flame(g, F.x + i * F.gap, F.y, i < app.vis.fires, app.time);
+      B.text(g, (run.board + 1) + '/' + C.run.boards, F.x, F.y + 10, '#ffffff', INK);
+      const d = lt('run.deck') + ' ' + run.deck.length;
+      B.text(g, d, F.x, F.y + 20, '#ffffff', INK);
+    },
+    // 編 2: 文字盤の上の探検家。跳ぶ・針の先に乗る・当たって目を回す
+    runHam(g, app) {
+      const C = Game.config, V = C.view, s = app.rules, st = s.stage, A = B.all().hamG[0], p = R.hamSpot(st);
+      const m = app.anim && app.anim.move;
+      // 跳ぶ: 山なりに上がって下りる。その札で針がちょうどここに止まるなら、地面へ下りずに針の先へじかに着地する
+      const RIDE = 6, H = C.run.jumpH, on = (t) => ((Math.round(t) % 12) + 12) % 12 === st.ham;
+      let up = 0;
+      if (m && m.jump) { const u = Math.min(1, m.t / m.dur), arc = Math.sin(Math.PI * u); up = Math.round(on(m.from + m.steps) && u > 0.5 ? RIDE + (H - RIDE) * arc : H * arc); }
+      else if (m && on(m.from)) up = Math.round(RIDE * Math.max(0, 1 - m.t / 0.12));     // 乗っていた針が動き出した: 下へ着地
+      else if (!m && on(app.vis.t)) up = RIDE;                                            // 針がちょうどここで止まっている: 針の先に乗ったまま
+      const hit = app.hamHit > 0, over = app.mode === 'over';
+      const x = Math.max(0, Math.min(V.w - 16, p.x - 8)) + (hit ? (Math.floor(app.time * 30) % 2 ? 1 : -1) : 0), y = p.y - 13 - up;
+      g.fillStyle = 'rgba(24,20,37,0.35)'; g.fillRect(p.x - 5, p.y + 2, 10, 2);           // 影
+      g.drawImage(over || app.vis.night > 0.5 ? A.down.n : hit ? A.hit.n : A.hold.n, x, y + (over || app.vis.night > 0.5 ? 2 : 0));
+    },
+    // ---- 編 2 の札を選ぶ・やすみば・山札の一覧・終わりの札（場所は main の当たりにも使う） ----
+    cardName(id) { const c = Game.cards.of(id); return c.kind === 'time' ? lt('card.' + c.n).join('') : lt('rname.' + id); },
+    panel(g, x, y, w, h) { g.fillStyle = INK; g.fillRect(x, y, w, h); g.fillStyle = CARD.paper; g.fillRect(x + 1, y + 1, w - 2, h - 2); g.fillStyle = '#f4e6c8'; g.fillRect(x + 1, y + 1, w - 2, 1); },
+    dim(g, a) { const V = Game.config.view; g.fillStyle = 'rgba(24,20,37,' + a + ')'; g.fillRect(0, 0, V.w, V.h); },
+    center(g, str, y, color) { B.text(g, str, Math.round((Game.config.view.w - B.textW(str)) / 2), y, color || INK); },
+    // 札を選ぶ: 3 行（札・名前・効果）と「えらばない」
+    pickRows() { const out = []; for (let i = 0; i < 3; i++) out.push({ i, x: 6, y: 34 + i * 46, w: 123, h: 42 }); out.push({ i: null, x: 34, y: 176, w: 67, h: 16 }); return out; },
+    // やすみば: 「ふだを 1まい ぬく」「ひを ともす」
+    restBtns() { return [{ id: 'remove', x: 14, y: 84, w: 107, h: 18 }, { id: 'fire', x: 14, y: 110, w: 107, h: 18 }]; },
+    // 札の一覧のます（6 列）
+    cells(list, y0) { const Q = Game.config.layout.queue; return list.map((id, i) => ({ i, n: id, x: 13 + (i % 6) * (Q.w + 1), y: y0 + Math.floor(i / 6) * (Q.h + 2), w: Q.w, h: Q.h })); },
+    backBtn() { return { x: 44, y: 216, w: 47, h: 16 }; },
+    deckBtn() { return { x: 100, y: 11, w: 30, h: 15 }; },
+    // 時計の形の宝（金の懐中時計。探検家くらいの大きさ）。(x, y) がまん中
+    watch(g, x, y, t = 0) {
+      const put = (i, j, c) => { g.fillStyle = c; g.fillRect(x + i, y + j, 1, 1); };
+      // 竜頭と輪
+      for (const [i, j, c] of [[-2, -11, INK], [-1, -12, INK], [0, -12, INK], [1, -12, INK], [2, -11, INK], [-2, -10, INK], [2, -10, INK], [-1, -11, '#fee761'], [0, -11, '#fee761'], [1, -11, '#feae34'], [-1, -10, INK], [0, -10, INK], [1, -10, INK], [-1, -9, '#feae34'], [0, -9, '#fee761'], [1, -9, '#f77622'], [-2, -9, INK], [2, -9, INK]]) put(i, j, c);
+      for (let j = -8; j <= 8; j++) for (let i = -8; i <= 8; i++) {
+        const d = Math.hypot(i, j);
+        if (d > 8.2) continue;
+        let c;
+        if (d > 7.3) c = INK;
+        else if (d > 5.4) c = i + j < -3 ? '#fee761' : i + j > 5 ? '#f77622' : '#feae34';      // 金の縁（左上が明るい）
+        else if (d > 4.7) c = INK;
+        else c = i + j > 4 ? '#ead4aa' : '#ffffff';                                           // 文字盤
+        put(i, j, c);
+      }
+      for (let k = 0; k < 12; k++) { const a = (k / 12) * 2 * Math.PI; put(Math.round(3.8 * Math.sin(a)), Math.round(-3.8 * Math.cos(a)), k % 3 ? '#8b9bb4' : INK); }
+      for (let k = 0; k <= 3; k++) put(0, -k, INK);                                           // 長針（12）
+      put(1, 0, INK); put(2, 1, INK);                                                         // 短針
+      put(0, 0, '#e43b44');
+      // 縁の光が、ゆっくり回る
+      const a = t * 1.5; put(Math.round(6.4 * Math.sin(a)), Math.round(-6.4 * Math.cos(a)), '#ffffff');
+    },
+    // きらきら（小さな十字）。k: 0〜1 で大きさと明るさ
+    sparkle(g, x, y, k) {
+      g.globalAlpha = Math.max(0, Math.min(1, k * 1.4));
+      g.fillStyle = '#fee761'; g.fillRect(x - 1, y, 3, 1); g.fillRect(x, y - 1, 1, 3);
+      if (k > 0.55) { g.fillRect(x - 2, y, 5, 1); g.fillRect(x, y - 2, 1, 5); }
+      g.fillStyle = '#ffffff'; g.fillRect(x, y, 1, 1);
+      g.globalAlpha = 1;
+    },
+    runPanels(g, app) {
+      const C = Game.config, V = C.view, run = app.run, m = app.mode;
+      if (app.anim) return;
+      if (m === 'pick') {
+        R.dim(g, 0.88); B.text(g, lt('run.pick'), 8, 15, '#ffffff'); R.textBtn(g, R.deckBtn(), lt('run.deck'));
+        for (const r of R.pickRows()) {
+          if (r.i == null) { R.textBtn(g, r, lt('run.skip')); continue; }
+          const id = run.picks[r.i], c = Game.cards.of(id), d = lt('rdesc.' + (c.kind === 'time' ? (c.draw === 2 ? 'time2' : 'time') : id));
+          R.panel(g, r.x, r.y, r.w, r.h);
+          R.card(g, id, r.x + 5, r.y + 7, C.layout.hand.w, C.layout.hand.h, false);
+          B.text(g, R.cardName(id), r.x + 36, r.y + 5, '#733e39');
+          B.text(g, d[0], r.x + 36, r.y + 17, INK); B.text(g, d[1], r.x + 36, r.y + 27, INK);
+        }
+      } else if (m === 'rest') {
+        R.dim(g, 0.88); R.center(g, lt('run.rest'), 58, '#ffffff');
+        for (let i = 0; i < C.run.fires; i++) R.flame(g, 53 + i * 10, 70, i < run.fires, app.time);
+        for (const b of R.restBtns()) {
+          if (b.id === 'fire' && !Game.run.canFire(run)) { g.fillStyle = INK; g.fillRect(b.x, b.y, b.w, b.h); g.fillStyle = '#3a4466'; g.fillRect(b.x + 1, b.y + 1, b.w - 2, b.h - 2); B.text(g, lt('run.fire'), b.x + Math.round((b.w - B.textW(lt('run.fire'))) / 2), b.y + 5, '#5a6988'); }
+          else R.textBtn(g, { x: b.x, y: b.y + 1, w: b.w, h: b.h - 2 }, lt('run.' + b.id));
+        }
+      } else if (m === 'remove' || m === 'deck') {
+        R.dim(g, 0.85);
+        if (m === 'remove') { R.center(g, lt('run.which'), 16, '#ffffff'); for (const c of R.cells(run.deck, 34)) R.card(g, c.n, c.x, c.y, c.w, c.h, true); R.textBtn(g, R.backBtn(), lt('run.back')); }
+        else {
+          const deck = run.deck.slice().sort(), dis = run.discard.slice().sort(), y2 = 34 + (Math.ceil(deck.length / 6) || 1) * 17 + 18;
+          B.text(g, lt('run.deck') + ' ' + deck.length, 13, 20, '#ffffff'); for (const c of R.cells(deck, 32)) R.card(g, c.n, c.x, c.y, c.w, c.h, true);
+          B.text(g, lt('run.discard') + ' ' + dis.length, 13, y2 - 12, '#ffffff'); for (const c of R.cells(dis, y2)) R.card(g, c.n, c.x, c.y, c.w, c.h, true);
+        }
+      } else if (m === 'over' || (m === 'win' && app.clearT > C.anim.door + C.run.watchSec + 0.5)) {
+        const a = lt(m === 'over' ? 'run.over' : 'run.clear'), b = lt(m === 'over' ? 'run.overAt' : 'run.clearIn', { b: run.board, d: run.days }), t = lt('run.tap');
+        const w = Math.max(B.textW(a), B.textW(b), B.textW(t)) + 14, x = Math.round((V.w - w) / 2), y = 88;
+        R.panel(g, x, y, w, 48);
+        R.center(g, a, y + 7, '#733e39'); R.center(g, b, y + 20); R.center(g, t, y + 34, '#8b9bb4');
+      }
+      // クリア: 扉の奥から、時計の形の宝がひとりでに浮かんで、探検家の所へ飛んでくる。通った跡にきらきらが残る（ふしぎな力）
+      if (m === 'win' && app.clearT > C.anim.door * 0.6) {
+        const D = C.layout.door, p = R.hamSpot(run.stage), x0 = D.x + D.w / 2, y0 = D.y + D.h / 2 + 4, x1 = p.x, y1 = p.y - 30;
+        const at = (u) => { const e = u * u * (3 - 2 * u); return { x: x0 + (x1 - x0) * e + 10 * Math.sin(u * Math.PI * 3) * (1 - u), y: y0 + (y1 - y0) * e - 16 * Math.sin(Math.PI * e) }; };
+        const u = Math.max(0, Math.min(1, (app.clearT - C.anim.door) / C.run.watchSec));
+        // 軌跡: 少し前に通った所ほど小さく
+        for (let k = 1; k <= 14; k++) {
+          const v = u - k * 0.035;
+          if (v < 0) break;
+          const q = at(v), tw = 0.5 + 0.5 * Math.sin(app.time * 9 + k * 1.7);
+          R.sparkle(g, Math.round(q.x + 5 * Math.sin(k * 2.3)), Math.round(q.y + 4 * Math.cos(k * 1.9)), (1 - k / 15) * (0.45 + 0.55 * tw) * (u < 1 ? 1 : Math.max(0, 1 - (app.clearT - C.anim.door - C.run.watchSec) * 1.5)));
+        }
+        const c = at(u), bob = Math.round(1.5 * Math.sin(app.time * 3));
+        // まわりを回るきらきら
+        for (let k = 0; k < 4; k++) { const a = app.time * 2 + (k * Math.PI) / 2; R.sparkle(g, Math.round(c.x + 13 * Math.cos(a)), Math.round(c.y + bob + 13 * Math.sin(a)), 0.5 + 0.4 * Math.sin(app.time * 6 + k)); }
+        R.watch(g, Math.round(c.x), Math.round(c.y) + bob, app.time);
       }
     },
     // レバー: 苔むした石の台と、付け根で回る棒。pull（0〜1）で左上から右へ倒れる。ready のとき、にぎりの玉が赤い
@@ -1969,7 +2637,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     // 手本: 指の絵が、札を盤へ運ぶ／レバーを引く（最初の 1 回だけ。ゆっくりくり返す）
     demo(g, app) {
       const C = Game.config, L = C.layout, A = B.all(), seen = app.tips.seen;
-      if (app.mode !== 'play' || app.anim || app.drag || app.leverDrag || app.stuckTip || app.helpTip || app.tipT > 0) return;
+      if (app.run || app.mode !== 'play' || app.anim || app.drag || app.leverDrag || app.stuckTip || app.helpTip || app.tipQ.length) return;
       const u = Math.min(1, ((app.time % C.anim.demo) / C.anim.demo) / 0.7), e = u * u * (3 - 2 * u);
       if (!seen.put && !app.queue.length) {
         // 運ぶ札は、解き手の道の最初の 1 枚（いつも「1 じかん」だと、まねをして失敗する盤がある）
@@ -2046,6 +2714,15 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         if (e.stamp) { g.fillStyle = '#f77622'; g.fillRect(t.x + t.w - 5, t.y + 2, 3, 3); g.fillStyle = '#feae34'; g.fillRect(t.x + t.w - 4, t.y + 3, 1, 1); }
       }
       g.drawImage(app.settings.sound ? A.spkOn : A.spkOff, S.sound.x + 2, S.sound.y + 3);
+      // 振動の入り切り（ふるえる端末の絵）
+      { const h = S.haptics, on = app.settings.haptics, c = on ? '#ffffff' : '#5a6988'; g.fillStyle = c; g.fillRect(h.x + 4, h.y + 2, 5, 9); g.fillStyle = '#193c3e'; g.fillRect(h.x + 5, h.y + 3, 3, 6); g.fillStyle = c; if (on) { g.fillRect(h.x + 1, h.y + 4, 1, 5); g.fillRect(h.x + 11, h.y + 4, 1, 5); g.fillRect(h.x + 2, h.y + 5, 1, 3); g.fillRect(h.x + 10, h.y + 5, 1, 3); } else { g.fillStyle = '#e43b44'; g.fillRect(h.x + 10, h.y + 5, 1, 1); g.fillRect(h.x + 11, h.y + 6, 1, 1); g.fillRect(h.x + 11, h.y + 4, 1, 1); g.fillRect(h.x + 9, h.y + 4, 1, 1); g.fillRect(h.x + 9, h.y + 6, 1, 1); } }
+      R.textBtn(g, C.layout.runBtn, lt('run.name'));
+      R.textBtn(g, C.layout.howBtn, lt('how.name'));
+      // ぼうけんの記録（クリアしていれば日数、まだなら進んだ面）
+      const rec = app.progress.run;
+      if (rec.best > 0) B.text(g, rec.days != null ? lt('run.bestDays', { d: rec.days }) : lt('run.bestAt', { b: rec.best }), C.layout.runBtn.x + C.layout.runBtn.w + 3, C.layout.runBtn.y + 5, '#fee761');
+      // 途中のランがあるとき: つづきから／あたらしく
+      if (app.runAsk) { R.dim(g, 0.7); for (const b of R.askBtns()) R.textBtn(g, b, lt('run.' + b.id)); }
     },
 
     // app: main.js の app
@@ -2056,18 +2733,24 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       g.save();
       g.translate(R.fx, R.fy);
       g.beginPath(); g.rect(0, 0, V.w, V.h); g.clip();
-      if (app.screen === 'title') R.title(g, app);
-      else if (app.screen === 'select') R.select(g, app);
-      else R.play(g, app);
+      if (app.story) Game.story.draw(g, app);
+      else {
+        if (app.screen === 'title') R.title(g, app);
+        else if (app.screen === 'select') R.select(g, app);
+        else if (app.screen === 'how') Game.story.how(g, app);
+        else R.play(g, app);
+        if (Game.story.tipOn(app)) Game.story.tipCard(g, app);
+      }
       g.restore();
     },
     play(g, app) {
       const C = Game.config, V = C.view, L = C.layout, s = app.rules, st = s.stage, vis = app.vis, A = B.all();
       const slow = 0.5 - 0.5 * Math.cos((app.time * 2 * Math.PI) / 1.8);   // ゆっくりした明るさのゆれ
       // 地面・空と木々・日時計・床
-      g.drawImage(R.ground(), 0, 0);
-      R.top(g, Math.min(1, vis.used / st.N));
-      R.sundial(g, st, vis.used);
+      const dayN = st.N + (app.run ? s.extra || 0 : 0);   // 編 2 は「ひるね」で 1 日が延びる
+      if (app.run) { g.drawImage(R.ruinGround(), 0, 0); R.ruinTop(g, Math.min(1, vis.used / dayN)); }   // 編 2 は遺跡の中
+      else { g.drawImage(R.ground(), 0, 0); R.top(g, Math.min(1, vis.used / dayN)); }
+      R.sundial(g, app.run ? { N: dayN, par: dayN, noonAt: dayN, marks: Array.from({ length: dayN - 1 }, (_, i) => i + 1) } : st, vis.used);   // 編 2: レバー 1 回ごとの刻み
       if (st.lock != null) R.door(g, st.lock, app.doorOpen);
       const hints = s.helpOn ? { nums: 'all', mins: true, zones: true, ticks: true, names: true } : st.hints;
       // 助け舟: 並べている間、その並びで針が止まる所に、2 本の針のうすい影を見せる
@@ -2076,15 +2759,17 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       // 探検家（夜は横になって寝る。お化けが出た夜は、目を回して気絶）
       const ham = A.hamG[0];
       // お化けの夜は、お化けが出てから 1 拍おいて倒れる（app.fainted）
-      if (app.ghost ? app.fainted : vis.night > 0.5) g.drawImage(ham.down.n, L.ham.x, L.ham.y + 2); else g.drawImage(ham.hold.n, L.ham.x, L.ham.y);
+      if (app.run) R.runHam(g, app);
+      else if (app.ghost ? app.fainted : vis.night > 0.5) g.drawImage(ham.down.n, L.ham.x, L.ham.y + 2); else g.drawImage(ham.hold.n, L.ham.x, L.ham.y);
       R.leverArt(g, app.leverPull, app.queue.length > 0 && !app.anim);
       // 夜: 世界を暗くする（札は暗くしない）
       if (vis.night > 0) { g.globalAlpha = vis.night * C.sky.nightDim; g.fillStyle = C.sky.night; g.fillRect(0, 0, V.w, L.queue.y - 3); g.globalAlpha = 1; }
       if (app.ghost && vis.night > 0.3) { g.globalAlpha = Math.min(1, (vis.night - 0.3) * 3); R.ghost(g, L.ham.x + 13, L.ham.y - 20 + Math.round(2 * Math.sin(app.time * 3)), app.time); g.globalAlpha = 1; }
       // 小さなボタン
       R.btnArt(g, L.btn.menu, 'menu', true, 0);
-      if (app.mode === 'play') R.btnArt(g, L.btn.sleep, 'sleep', s.used > 0, s.stuck ? slow : 0);
-      if (app.mode === 'play' && Game.rules.canHelp(s) && !s.helpOn) R.btnArt(g, L.btn.help, 'help', true, slow);
+      if (app.mode === 'play') R.btnArt(g, L.btn.sleep, 'sleep', app.run ? true : s.used > 0, s.stuck ? slow : 0);
+      if (app.run) R.runTop(g, app);
+      if (!app.run && app.mode === 'play' && Game.rules.canHelp(s) && !s.helpOn) R.btnArt(g, L.btn.help, 'help', true, slow);
 
       // 止まったあとの時刻の名前
       if (st.lock == null && app.nameT > 0 && hints.names && app.mode === 'play') B.text(g, Game.lang.time(s.t), L.sign.x + 1, L.sign.y + 3, '#ffffff', INK);
@@ -2097,15 +2782,14 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         g.fillStyle = i < room ? CARD.slot : '#262b44'; g.fillRect(x, L.queue.y, L.queue.w, L.queue.h);
       }
       for (const q of R.queue(app.running.concat(app.queue)).slice(0, C.queueMax)) R.card(g, q.n, q.x, q.y - (q.i < run ? 2 : 0), q.w, q.h, true);
-      for (const h of R.hand(st)) R.card(g, h.n, h.x, h.y, h.w, h.h, false);
+      for (const h of app.run ? R.runHand(app.vHand) : R.hand(st)) R.card(g, h.n, h.x, h.y, h.w, h.h, false);
       if (app.drag) { const H = L.hand; R.card(g, app.drag.n, Math.round(app.drag.x - H.w / 2), Math.round(app.drag.y - H.h / 2 - L.dragLift), H.w, H.h, false); }
-      // 鍵のステージの始まり: 何をする遊びかを知らせる札（さわると消える）。針を隠さないよう、まだ空いている「並べる所」の上に出す
-      if (st.lock != null && app.tipT > 0 && app.mode === 'play') R.noticeArt(g, lt('lock.tip'), Math.min(1, app.tipT / 0.3));
       // きょうの残りの枚数では取りきれない: 寝るのをすすめる札（さわると寝る。ほかの所をさわると消える）
       if (app.helpTip && !app.stuckTip && !app.anim && app.mode === 'play' && !s.helpOn) R.noticeArt(g, lt('help'), 1, mix('#2ce8f5', '#ffffff', slow));
       if (app.stuckTip && !app.anim && app.mode === 'play') R.noticeArt(g, lt('stuck'), 1, mix('#fee761', '#ffffff', slow));
       R.demo(g, app);
       app.fx.draw(g);
+      if (app.run) R.runPanels(g, app);
       // クリア
       if (app.mode === 'clear' && app.clearT > app.clearWait) {
         const P = L.clear, x = P.x, y = P.y;
@@ -2126,16 +2810,436 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 })();
 </script>
 <script>
+// 導入の絵: おはなし（紙芝居）とヒントの札。演出だけ（ルールの状態を書き換えない）。設計書: docs/specs/2026-11-15-hoppe-clock-intro-design.md
+// 何を出すかは guide.js と main.js が決める。ここは描くだけ。置き場所は config.guide
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const B = Game.bake, R = Game.render;
+  const lt = (path, vars) => Game.lang.t(path, vars);
+  const INK = '#181425', PAPER = '#ead4aa', GOLD = '#feae34';
+
+  // ---- おはなしの絵（id: 1 | 2、i: 何枚め 0〜3、t: その枚が出てからの秒） ----
+  function page(g, id, i, t) {
+    const V = Game.config.view, H = Game.config.guide.story.artH, f = PAGES[id + '-' + (i + 1)];
+    g.save(); g.beginPath(); g.rect(0, 0, V.w, H); g.clip();
+    if (f) f(g, t);
+    else { g.fillStyle = '#193c3e'; g.fillRect(0, 0, V.w, H); R.center(g, id + '-' + (i + 1), 70, '#5a6988'); }
+    g.restore();
+  }
+
+  // ---- 絵の道具 ----
+  const clamp01 = (x) => Math.max(0, Math.min(1, x));
+  const seg = (u, a, b) => { const x = clamp01((u - a) / (b - a)); return x * x * (3 - 2 * x); };   // u が a〜b の間に 0 → 1（なめらかに）
+  const loop = (t, sec) => (t % sec) / sec;
+  const whole = (v) => (Math.abs(v - Math.round(v)) < 1e-6 ? Math.round(v) : v);   // 止まっているときは、表の座標（整数）で描く
+  const HINTS = { nums: 'all', ticks: true };
+  const tmps = {};
+  function tmp(w, h) {
+    const k = w + 'x' + h, c = tmps[k] || (tmps[k] = B.mk(w, h)), g = c.getContext('2d');
+    g.clearRect(0, 0, w, h); g.imageSmoothingEnabled = false;
+    return [c, g];
+  }
+  // 見本の盤: 遊ぶ窓と同じ座標で描いてから、床のまわり（r の大きさ）を切り出して貼る。dy: 切り出す窓を上へずらす（床の上の探検家や扉を入れる）
+  function board(g, r, dy, draw, ruin) {
+    const V = Game.config.view, D = Game.config.dial, [c, sg] = tmp(V.w, V.h);
+    sg.drawImage(ruin ? R.ruinGround() : R.ground(), 0, 0);   // ruin: 編 2 の盤（遺跡の中）
+    draw(sg);
+    g.drawImage(c, D.cx - (r.w >> 1), D.cy - (r.h >> 1) - dy, r.w, r.h, r.x, r.y, r.w, r.h);
+  }
+  const dial = (sg, t, items, taken, wall) => Game.dial.draw(sg, { t: whole(t), hints: HINTS, items, taken: taken || [], wall: wall == null ? null : wall });
+  // 取れたときのきらきら（k: 0 → 1 で広がって消える）
+  function burst(g, p, k) {
+    if (k <= 0 || k >= 1) return;
+    for (let i = 0; i < 6; i++) { const a = (i / 6) * 2 * Math.PI + 0.4, d = 3 + 9 * k; R.sparkle(g, p.x + Math.round(d * Math.cos(a)), p.y + Math.round(d * Math.sin(a)), 1 - k); }
+  }
+  // 目を引く枠（ゆっくり明るくなる）
+  function ring(g, p, n, a) { g.globalAlpha = a; g.fillStyle = '#ffffff'; g.fillRect(p.x - n, p.y - n, 2 * n + 1, 1); g.fillRect(p.x - n, p.y + n, 2 * n + 1, 1); g.fillRect(p.x - n, p.y - n, 1, 2 * n + 1); g.fillRect(p.x + n, p.y - n, 1, 2 * n + 1); g.globalAlpha = 1; }
+  // 文字盤の上の探検家（up: 跳んでいる高さ、hit: 目を回す）
+  function ham(sg, pos, up, hit, t) {
+    const A = B.all().hamG[0], p = Game.dial.at(Game.config.run.hamR, pos / 12);
+    sg.fillStyle = 'rgba(24,20,37,0.35)'; sg.fillRect(p.x - 5, p.y + 2, 10, 2);
+    sg.drawImage(hit ? A.hit.n : A.hold.n, p.x - 8 + (hit ? (Math.floor(t * 30) % 2 ? 1 : -1) : 0), p.y - 13 - Math.round(up));
+  }
+  const fires = (g, x, y, n, t) => { for (let i = 0; i < 3; i++) R.flame(g, x + i * 9, y, i < n, t); };
+  // k 倍に大きくして描く（小さな絵を、見本の枠で見やすく）
+  function big(g, w, h, k, x, y, draw) { const [c, cg] = tmp(w, h); draw(cg); g.drawImage(c, x, y, w * k, h * k); }
+  // 山札（裏向きの札の重なり）
+  function pile(g, x, y) {
+    for (let i = 2; i >= 0; i--) { g.fillStyle = INK; g.fillRect(x + i * 2, y - i * 2, 25, 28); g.fillStyle = '#3a4466'; g.fillRect(x + i * 2 + 1, y - i * 2 + 1, 23, 26); g.fillStyle = '#5a6988'; g.fillRect(x + i * 2 + 1, y - i * 2 + 1, 23, 1); }
+    g.fillStyle = '#5a6988'; g.fillRect(x + 8, y + 9, 9, 9); g.fillStyle = '#3a4466'; g.fillRect(x + 10, y + 11, 5, 5);
+  }
+  const lerp = (a, b, k) => Math.round(a + (b - a) * k);
+  const HC = { w: 25, h: 28 }, QC = { w: 17, h: 15 };
+
+  // ---- ヒントの見本（r: 枠、t: 出てからの秒。くり返す） ----
+  const ARTS = {
+    // 短い針が宝へ進んで止まり、宝が光る（1 じかんの札 2 枚ぶん）
+    goal(g, t, r) {
+      const u = loop(t, 4), tt = 36 + 12 * seg(u, 0.12, 0.36) + 12 * seg(u, 0.42, 0.66), got = u >= 0.66, it = [{ ring: 'in', pos: 60, kind: 'gem' }];
+      board(g, r, 0, (sg) => { dial(sg, tt, it, [got]); burst(sg, Game.dial.pts().in[60], (u - 0.66) / 0.25); });
+    },
+    // 長い針が外の宝で止まる
+    outer(g, t, r) {
+      const u = loop(t, 3.6), tt = 48 + 3 * seg(u, 0.2, 0.55), got = u >= 0.55, it = [{ ring: 'out', pos: 3, kind: 'gem' }];
+      board(g, r, 0, (sg) => { dial(sg, tt, it, [got]); burst(sg, Game.dial.pts().out[3], (u - 0.55) / 0.3); });
+    },
+    // 内の宝と対の印: 長い針が印に、短い針が宝に重なって取れる
+    pair(g, t, r) {
+      const u = loop(t, 4.4), tt = 48 + 4 * seg(u, 0.4, 0.68), got = u >= 0.68, it = [{ ring: 'in', pos: 52, kind: 'gem' }], D = Game.config.dial;
+      board(g, r, 0, (sg) => {
+        dial(sg, tt, it, [got]);
+        if (u < 0.4) { const a = 0.5 - 0.5 * Math.cos((u / 0.4) * 4 * Math.PI); ring(sg, Game.dial.at(D.pairR, 4 / 12), 3, a); ring(sg, Game.dial.pts().in[52], 4, a); }
+        burst(sg, Game.dial.pts().in[52], (u - 0.68) / 0.25);
+      });
+    },
+    // 罠: 止まると弾かれる。通りすぎるのは平気
+    trap(g, t, r) {
+      const u = loop(t, 6), tt = 48 + 3 * seg(u, 0.06, 0.2) - 3 * seg(u, 0.3, 0.4) + 6 * seg(u, 0.55, 0.8), it = [{ ring: 'out', pos: 3, kind: 'trap' }];
+      board(g, r, 0, (sg) => {
+        dial(sg, tt, it);
+        if (u >= 0.2 && u < 0.32) { const p = Game.dial.pts().out[3], str = lt('fx.bounce'); B.text(sg, str, p.x - B.textW(str) + 4, p.y - 16, '#ffffff', INK); }
+      });
+    },
+    // 壁: 短い針は越えられない
+    wall(g, t, r) {
+      const u = loop(t, 4.4), tt = 44 + 15.4 * seg(u, 0.12, 0.42) - 15.4 * seg(u, 0.55, 0.7);
+      board(g, r, 0, (sg) => {
+        dial(sg, tt, [], [], 60);
+        if (u >= 0.42 && u < 0.56) { const p = Game.dial.pts().in[60], str = lt('fx.bounce'); B.text(sg, str, p.x - 6, p.y - 14, '#ffffff', INK); }
+      });
+    },
+    // 扉: 彫ってある時刻に針を合わせると開く
+    lock(g, t, r) {
+      const u = loop(t, 5), tt = 15 * seg(u, 0.15, 0.5), open = seg(u, 0.56, 0.86), D = Game.config.dial, L = Game.config.layout.door, dy = 30;
+      board(g, r, dy, (sg) => {
+        dial(sg, tt, []);
+        sg.save(); sg.translate(D.cx - (r.w >> 1) + 5 - L.x, D.cy - (r.h >> 1) - dy + 5 - L.y); R.door(sg, 15, open); sg.restore();
+      });
+    },
+    // 長い針が探検家に当たり、火が消える
+    hit(g, t, r) {
+      const u = loop(t, 4.4), k = seg(u, 0.15, 0.6), hitNow = k >= 0.5, dizzy = hitNow && u < 0.85;
+      board(g, r, 22, (sg) => { dial(sg, 117 + 6 * k, []); ham(sg, 0, 0, dizzy, t); if (hitNow && u < 0.75) { const p = Game.dial.at(Game.config.run.hamR, 0), str = lt('fx.hit'); B.text(sg, str, p.x + 10, p.y - 8, '#ffffff', INK); } }, true);
+      fires(g, r.x + 4, r.y + 4, hitNow ? 2 : 3, t);
+    },
+    // 「15 ふん」のあとに「ジャンプ」: その札の針を跳びこえる
+    jump(g, t, r) {
+      const u = loop(t, 4.4), k = clamp01((u - 0.3) / 0.4), e = seg(u, 0.3, 0.7), put1 = u >= 0.06, put2 = u >= 0.16;
+      board(g, r, 22, (sg) => { dial(sg, 118 + 3 * e, []); ham(sg, 0, Game.config.run.jumpH * Math.sin(Math.PI * k), false, t); }, true);
+      fires(g, r.x + 4, r.y + 4, 3, t);
+      const y = r.y + r.h - QC.h - 3;
+      if (put1 && u < 0.72) R.card(g, 't3', r.x + 3, y, QC.w, QC.h, true);
+      if (put2 && u < 0.72) R.card(g, 'jump', r.x + 4 + QC.w, y, QC.w, QC.h, true);
+    },
+    // 日時計の影が進み、空が夕方から夜へ（札を 1 枚使うごとに）
+    dusk(g, t, r) {
+      const N = 6, u = loop(t, 6), used = Math.min(N, Math.floor(u * (N + 1.5))), p = used / N, night = seg(u, 0.84, 0.94), st = { N, par: 2, noonAt: 4 };
+      g.save(); g.translate(r.x - 16, r.y + 14); R.top(g, p); R.sundial(g, st, used); g.restore();
+      g.fillStyle = '#265c42'; g.fillRect(r.x, r.y + 14 + Game.config.layout.topH, r.w, r.h);
+      g.fillStyle = '#193c3e'; g.fillRect(r.x, r.y, r.w, 14);
+      for (let i = used; i < N; i++) R.card(g, 12, r.x + 3 + i * (QC.w + 2), r.y + 80, QC.w, QC.h, true);
+      if (night > 0) { g.globalAlpha = night * 0.7; g.fillStyle = Game.config.sky.night; g.fillRect(r.x, r.y, r.w, r.h); g.globalAlpha = 1; }
+    },
+    // ごほうび 3 つと星が、順に光る
+    reward(g, t, r) {
+      const u = loop(t, 4), A = B.all(), n = u < 0.12 ? 0 : u < 0.3 ? 1 : u < 0.48 ? 2 : 3, star = u >= 0.66, k = 3, gw = A.gem.width, gh = A.gem.height, step = gw * k + 5;
+      const x0 = r.x + Math.round((r.w - (3 * step + 7 * k)) / 2), y0 = r.y + Math.round((r.h - gh * k) / 2);
+      for (let i = 0; i < 3; i++) g.drawImage(i < n ? A.gem : A.gemOff, x0 + i * step, y0, gw * k, gh * k);
+      big(g, 7, 7, k, x0 + 3 * step, y0 + Math.round((gh - 7) * k / 2), (cg) => R.star(cg, 0, 0, star));
+      if (star) burst(g, { x: x0 + 3 * step + 10, y: y0 + Math.round(gh * k / 2) }, (u - 0.66) / 0.3);
+    },
+    // 札を並べると、山から 1 枚来る
+    draw(g, t, r) {
+      const u = loop(t, 4.4), a = seg(u, 0.12, 0.38), b = seg(u, 0.5, 0.8), hy = r.y + 80, hx = (i) => r.x + 5 + i * (HC.w + 2), qx = r.x + 8, qy = r.y + 20, px = r.x + r.w - HC.w - 9;
+      for (let i = 0; i < 4; i++) { g.fillStyle = '#262b44'; g.fillRect(qx + i * (QC.w + 1), qy, QC.w, QC.h); }
+      pile(g, px, hy);
+      R.card(g, 't2', hx(1), hy, HC.w, HC.h, false); R.card(g, 'jump', hx(2), hy, HC.w, HC.h, false);
+      if (a < 0.6) R.card(g, 't3', lerp(hx(0), qx, a), lerp(hy, qy, a), HC.w, HC.h, false);
+      else R.card(g, 't3', lerp(hx(0), qx, a), lerp(hy, qy, a), QC.w, QC.h, true);
+      if (b > 0) R.card(g, 't1', lerp(px, hx(0), b), hy, HC.w, HC.h, false);
+    },
+    // 5 つに区切った日時計がレバー 1 回ごとに進み、使いきると夜になって火が 1 つ消える
+    day(g, t, r) {
+      const N = 5, u = loop(t, 6), used = Math.min(N, Math.floor(u * (N + 2.2))), night = seg(u, 0.72, 0.82), S = Game.config.layout.sundial, k = 3, w = 2 * S.r + 4;
+      big(g, w, w + 2, k, r.x + Math.round((r.w - w * k) / 2), r.y + 4, (cg) => { cg.translate(S.r + 2 - S.cx, S.r + 2 - S.cy); R.sundial(cg, { N, par: N, noonAt: N, marks: [1, 2, 3, 4] }, used); cg.setTransform(1, 0, 0, 1, 0, 0); });
+      if (night > 0) { g.globalAlpha = night * 0.6; g.fillStyle = Game.config.sky.night; g.fillRect(r.x, r.y, r.w, r.h); g.globalAlpha = 1; }
+      for (let i = 0; i < 3; i++) big(g, 9, 9, 2, r.x + 31 + i * 20, r.y + 98, (cg) => R.flame(cg, 2, 2, i < (night > 0.5 ? 2 : 3), t));
+    },
+    // 札 3 枚のうち 1 枚が山へ入る
+    pick(g, t, r) {
+      const u = loop(t, 4.4), lift = seg(u, 0.15, 0.3), go = seg(u, 0.36, 0.72), ids = ['t4', 'jump', 'half'], y = r.y + 22, hx = (i) => r.x + 14 + i * (HC.w + 8), px = r.x + Math.round((r.w - HC.w) / 2) - 2, py = r.y + 84;
+      pile(g, px, py);
+      ids.forEach((id, i) => { if (i !== 1) R.card(g, id, hx(i), y, HC.w, HC.h, false); });
+      if (go < 1) R.card(g, ids[1], lerp(hx(1), px + 4, go), lerp(y - 4 * lift, py - 4, go), HC.w, HC.h, false);
+    },
+    // やすみば: 山から札が 1 枚抜ける。火が 1 つともる
+    rest(g, t, r) {
+      const u = loop(t, 5), out = seg(u, 0.1, 0.4), lit = u >= 0.62, px = r.x + 16, py = r.y + 56;
+      pile(g, px, py);
+      if (out > 0 && out < 1) { g.globalAlpha = 1 - out; R.card(g, 't1', px + 4, lerp(py - 4, py - 44, out), HC.w, HC.h, false); g.globalAlpha = 1; }
+      big(g, 9, 9, 4, r.x + 72, r.y + 46, (cg) => R.flame(cg, 2, 2, lit, t));
+      if (lit) burst(g, { x: r.x + 72 + 18, y: r.y + 46 + 18 }, (u - 0.62) / 0.3);
+    },
+  };
+  function tipArt(g, id, t, r) {
+    g.fillStyle = INK; g.fillRect(r.x - 1, r.y - 1, r.w + 2, r.h + 2);
+    g.fillStyle = '#193c3e'; g.fillRect(r.x, r.y, r.w, r.h);
+    g.save(); g.beginPath(); g.rect(r.x, r.y, r.w, r.h); g.clip();
+    if (ARTS[id]) ARTS[id](g, t, r);
+    g.restore();
+  }
+
+  // ---- おはなしの場面 ----
+  // 遊ぶ窓と同じ座標で場面を描いてから、縦に y0 から絵の高さぶんを切り出して貼る
+  function scene(g, y0, draw) {
+    const V = Game.config.view, H = Game.config.guide.story.artH, [c, sg] = tmp(V.w, V.h);
+    draw(sg);
+    g.drawImage(c, 0, y0, V.w, H, 0, 0, V.w, H);
+  }
+  const world = (sg, p) => { sg.drawImage(R.ground(), 0, 0); R.top(sg, p); };
+  // 大きな探検家（2 倍）
+  const bigHam = (g, img, x, y) => g.drawImage(img, Math.round(x), Math.round(y), img.width * 2, img.height * 2);
+  // 遺跡の奥: 暗い石の壁と床、上のまん中に入口。open（0〜1）: 入口の石の板の開き具合
+  function ruin(sg, open, t) {
+    const V = Game.config.view;
+    sg.fillStyle = '#262b44'; sg.fillRect(0, 0, V.w, V.h);
+    for (let y = 0, k = 0; y < 60; y += 8, k++) {
+      sg.fillStyle = '#3a4466'; sg.fillRect(0, y, V.w, 7);
+      sg.fillStyle = '#4a5578'; sg.fillRect(0, y, V.w, 1);
+      sg.fillStyle = '#262b44'; for (let x = (k % 2) * 9 + 3; x < V.w; x += 18) sg.fillRect(x, y, 1, 7);
+    }
+    sg.fillStyle = '#2e3550'; sg.fillRect(0, 60, V.w, V.h - 60);
+    sg.fillStyle = '#3a4466'; for (let i = 0; i < 70; i++) sg.fillRect((i * 53) % V.w, 62 + ((i * 37) % 130), 3 + (i % 3), 1);
+    sg.fillStyle = '#3e8948'; for (let i = 0; i < 16; i++) sg.fillRect((i * 29 + 5) % V.w, 58 + (i % 3), 2, 2);
+    // 入口
+    const x = 52, y = 27, w = 30, h = 26, slab = Math.round(h * (1 - open));
+    sg.fillStyle = INK; sg.fillRect(x - 4, y - 4, w + 8, h + 4);
+    sg.fillStyle = '#5a6988'; sg.fillRect(x - 3, y - 3, w + 6, h + 3);
+    sg.fillStyle = '#8b9bb4'; sg.fillRect(x - 3, y - 3, w + 6, 1);
+    sg.fillStyle = '#a5dcf7'; sg.fillRect(x, y, w, h);
+    sg.fillStyle = '#3e8948'; sg.fillRect(x, y + 13, w, h - 13);
+    sg.fillStyle = '#63c74d'; for (let i = 0; i < 6; i++) sg.fillRect(x + i * 5, y + 11 + (i % 2) * 2, 5, 2);
+    if (slab > 0) {
+      sg.fillStyle = '#8b9bb4'; sg.fillRect(x, y, w, slab);
+      sg.fillStyle = '#c0cbdc'; sg.fillRect(x, y, 1, slab);
+      sg.fillStyle = '#5a6988'; for (let i = 0; i < 7; i++) { const yy = y + ((i * 7 + 3) % h); if (yy < y + slab) sg.fillRect(x + 2 + ((i * 11) % (w - 6)), yy, 3, 1); }
+      sg.fillStyle = INK; sg.fillRect(x, y + slab - 1, w, 1);
+    }
+    // 壁のたいまつ
+    for (const tx of [16, 104]) big(sg, 9, 9, 2, tx, 38, (cg) => R.flame(cg, 2, 2, true, t + tx));   // 「とばす」の下
+  }
+  const T0 = 6.5;   // 場面がくり返す秒（音は最初の 1 回だけ）
+  const PAGES = {
+    // ジャングルの奥の、苔むした円い石の床。手前に大きな探検家が歩いてくる
+    '1-1'(g, t) {
+      const A = B.all().hamG[0], V = Game.config.view, D = Game.config.dial;
+      scene(g, 14, (sg) => {
+        world(sg, 0.1);
+        sg.drawImage(Game.dial.floor({ nums: 'none' }), 0, 0);
+        sg.fillStyle = '#3e8948'; for (let i = 0; i < 60; i++) { const p = Game.dial.at(12 + ((i * 17) % 44), (i * 0.171) % 1); sg.fillRect(p.x, p.y, 2 + (i % 2), 1); }
+        sg.fillStyle = '#265c42'; for (let i = 0; i < 24; i++) { const p = Game.dial.at(50 + (i % 7), (i * 0.093) % 1); sg.fillRect(p.x - 1, p.y, 3, 2); }
+        const k = (t % 3) / 3; if (k < 0.5) R.sparkle(sg, D.cx + 18, D.cy - 22, Math.sin(Math.PI * k * 2));
+      });
+      const go = seg(t, 0.3, 1.9), x = -40 + 50 * go, y = Game.config.guide.story.artH - 36;
+      bigHam(g, go < 1 ? A.run[Math.floor(t * 9) % A.run.length].n : A.hold.n, x, y + (go < 1 ? 0 : Math.round(Math.sin(t * 2.5))));
+      if (t > 2.1) R.big(g, '!', x + 46, y - 4 - Math.round(2 * Math.max(0, 1 - (t - 2.1) * 4)), 2, '#fee761');
+    },
+    // 札が 2 枚並び、レバーが倒れて、針が回る
+    '1-2'(g, t) {
+      const C = Game.config, L = C.layout, V = C.view, A = B.all().hamG[0], n = Math.floor(t / T0), u = t % T0, Q = L.queue;
+      const tt = 36 + 18 * n + 12 * seg(u, 2.0, 2.9) + 6 * seg(u, 2.95, 3.4), pull = seg(u, 1.6, 1.75) - seg(u, 3.5, 3.8);
+      scene(g, 55, (sg) => {
+        world(sg, 0.1); dial(sg, tt % 144, []);
+        sg.drawImage(A.hold.n, L.ham.x, L.ham.y);
+        R.leverArt(sg, pull, u >= 0.5 && u < 1.6);
+        sg.fillStyle = INK; sg.fillRect(0, Q.y - 3, V.w, V.h);
+        for (let i = 0; i < C.queueMax; i++) { sg.fillStyle = '#193c3e'; sg.fillRect(Q.x + i * (Q.w + Q.gap), Q.y, Q.w, Q.h); }
+        if (u >= 0.5 && u < 2.9) R.card(sg, 12, Q.x, Q.y - (u >= 2.0 ? 2 : 0), Q.w, Q.h, true);
+        if (u >= 1.0 && u < 3.4) R.card(sg, 6, Q.x + Q.w + Q.gap, Q.y - (u >= 2.0 ? 2 : 0), Q.w, Q.h, true);
+      });
+    },
+    // 長い針が宝の上で止まり、宝が光って探検家へ飛ぶ
+    '1-3'(g, t) {
+      const L = Game.config.layout, A = B.all(), u = t % T0, tt = 94 + 4 * seg(u, 0.8, 2.0), got = u >= 2.0, p = Game.dial.pts().out[2], fly = seg(u, 2.2, 3.0);
+      scene(g, 36, (sg) => {
+        world(sg, 0.1); dial(sg, tt, [{ ring: 'out', pos: 2, kind: 'gem' }], [got]);
+        sg.drawImage(A.hamG[got && fly >= 1 ? 2 : 0].hold.n, L.ham.x, L.ham.y);
+        burst(sg, p, (u - 2.0) / 0.5);
+        if (got) {
+          const hx = L.ham.x + 6, hy = L.ham.y - 9 + (fly >= 1 ? Math.round(Math.sin(t * 3)) : 0);
+          sg.drawImage(A.gem, lerp(p.x - 4, hx, fly), lerp(p.y - 4, hy, fly) - Math.round(14 * Math.sin(Math.PI * fly)));
+        }
+      });
+    },
+    // 夕方の空と日時計。奥に石の扉。宝を持った探検家
+    '1-4'(g, t) {
+      const A = B.all(), u = t % (T0 + 2), p = 0.1 + 0.8 * seg(u, 0.5, 6), N = 8, H = Game.config.guide.story.artH, D = Game.config.layout.door;
+      scene(g, 0, (sg) => {
+        world(sg, p); R.sundial(sg, { N, par: 3, noonAt: 5 }, N * p);
+        dial(sg, 30, []);
+        R.door(sg, 42, 0);
+        ring(sg, { x: D.x + (D.w >> 1), y: D.y + (D.h >> 1) - 1 }, (D.w >> 1) + 4, 0.25 + 0.35 * (0.5 - 0.5 * Math.cos(t * 2)));
+      });
+      const y = H - 36 + Math.round(Math.sin(t * 2.5));
+      bigHam(g, A.hamG[2].hold.n, 8, y);
+      g.drawImage(A.gem, 46, y - 8, A.gem.width * 2, A.gem.height * 2);
+    },
+    // 暗い遺跡の中の文字盤。縁に探検家
+    '2-1'(g, t) {
+      const A = B.all().hamG[0], go = seg(t, 0.3, 1.6);
+      scene(g, 22, (sg) => {
+        ruin(sg, 1, t); dial(sg, 0, []);
+        sg.drawImage(go < 1 ? A.run[Math.floor(t * 9) % A.run.length].n : A.hold.n, lerp(-18, 0, go), 121);   // 床の左の縁の外
+      });
+    },
+    // 文字盤の上の探検家。うしろで入口が閉じる
+    '2-2'(g, t) {
+      const close = clamp01((t - 0.4) / 1.38), slam = t >= 1.78, shake = slam && t < 2.1 ? (Math.floor(t * 30) % 2 ? 1 : -1) : 0;
+      g.save(); g.translate(0, shake);
+      scene(g, 22, (sg) => {
+        ruin(sg, 1 - close, t); dial(sg, 0, []);
+        ham(sg, 9, slam && t < 2.0 ? 4 : 0, slam && t < 2.6, t);
+        if (slam && t < 3) { const p = Game.dial.at(Game.config.run.hamR, 9 / 12); R.big(sg, '!', p.x + 4, p.y - 34, 2, '#fee761'); }
+      });
+      g.restore();
+    },
+    // 長い針が探検家へ迫る: 1 回めは当たって火が消え、2 回めは跳んでよける
+    '2-3'(g, t) {
+      const P = 2.6, u = t % (2 * P), lap = u < P ? 0 : 1, k = (u % P) / P, tt = 3 + 12 * k + 12 * lap, at9 = 0.5;   // 長針は 3 から 1 周。半分で探検家（9）に届く
+      const hitNow = lap === 0 && k >= at9, jump = lap === 1 ? clamp01((k - at9 + 0.16) / 0.32) : 0;
+      scene(g, 22, (sg) => {
+        ruin(sg, 0, t); dial(sg, tt, []);
+        ham(sg, 9, jump > 0 && jump < 1 ? Game.config.run.jumpH * Math.sin(Math.PI * jump) : 0, hitNow && k < at9 + 0.3, t);
+        const p = Game.dial.at(Game.config.run.hamR, 9 / 12);
+        if (hitNow && k < at9 + 0.25) { const str = lt('fx.hit'); B.text(sg, str, p.x + 8, p.y - 24, '#ffffff', INK); }
+        if (jump > 0 && jump < 1) { const str = lt('fx.jump'); B.text(sg, str, p.x + 8, p.y - 34, '#ffffff', INK); }
+      });
+      for (let i = 0; i < 3; i++) big(g, 9, 9, 2, 4 + i * 16, Game.config.guide.story.artH - 22, (cg) => R.flame(cg, 2, 2, i < (hitNow || lap === 1 ? 2 : 3), t));
+    },
+    // 扉が 8 つ奥へ並び、いちばん奥で金の懐中時計が光る
+    '2-4'(g, t) {
+      const V = Game.config.view, H = Game.config.guide.story.artH, A = B.all().hamG[0], cx = V.w >> 1, cy = 68;
+      g.fillStyle = '#181425'; g.fillRect(0, 0, V.w, H);
+      for (let i = 0; i < 8; i++) {
+        const k = Math.pow(0.8, i), w = Math.round(132 * k), h = Math.round(140 * k), x = cx - (w >> 1), y = cy - Math.round(h * 0.48), b = Math.max(2, Math.round(9 * k));
+        g.fillStyle = INK; g.fillRect(x - 1, y - 1, w + 2, h + 2);
+        g.fillStyle = ['#8b9bb4', '#7a89a6', '#6a7896', '#5a6988', '#4d5a7a', '#424c6c', '#3a4466', '#30385a'][i]; g.fillRect(x, y, w, h);
+        g.fillStyle = 'rgba(255,255,255,0.18)'; g.fillRect(x, y, w, 1); g.fillRect(x, y, 1, h);
+        g.fillStyle = i === 7 ? '#3e2731' : '#181425'; g.fillRect(x + b, y + b, w - 2 * b, h - b);
+      }
+      // いちばん奥の光と、時計の形の宝
+      const glow = 0.5 - 0.5 * Math.cos(t * 2.2);
+      for (let r = 14; r >= 6; r -= 4) { g.globalAlpha = 0.12 + 0.1 * glow; g.fillStyle = '#fee761'; g.fillRect(cx - r, cy - r + 2, 2 * r + 1, 2 * r + 1); }
+      g.globalAlpha = 1;
+      R.watch(g, cx, cy + 4, t);
+      for (let i = 0; i < 5; i++) { const a = t * 0.8 + i * 1.257, k = 0.5 + 0.5 * Math.sin(t * 3 + i * 2); R.sparkle(g, cx + Math.round(15 * Math.cos(a)), cy + 3 + Math.round(13 * Math.sin(a)), k); }
+      bigHam(g, A.hold.n, 6, H - 36 + Math.round(Math.sin(t * 2.5)));
+    },
+  };
+  // 場面の音（その枚が出てからの秒, 出来事）。最初の 1 回だけ鳴らす。擬音の字は出さない
+  const CUES = {
+    '1-2': [[0.5, { type: 'put', n: 12 }], [1.0, { type: 'put', n: 6 }], [1.6, { type: 'lever' }]].concat([0, 1, 2, 3, 4, 5].map((i) => [2.0 + i * 0.23, { type: 'tick', k: i }])),
+    '1-3': [0, 1, 2, 3].map((i) => [0.8 + i * 0.3, { type: 'tick', k: i }]).concat([[2.0, { type: 'take' }]]),
+    '2-2': [[0.4, { type: 'door' }]],
+    '2-3': [[1.3, { type: 'hit' }], [2.6 + 0.9, { type: 'jump' }]],
+    '2-4': [[0.5, { type: 'gem', i: 2 }], [0.75, { type: 'gem', i: 4 }]],
+  };
+
+  const S = {
+    PAGES, ARTS, page, tipArt,
+    cues(id, i) { return CUES[id + '-' + (i + 1)] || []; },
+    // ヒントが出ているか（札やレバーをつまんでいる間は、離すまで待つ）
+    tipOn(app) { return app.tipQ.length > 0 && !app.drag && !app.leverDrag; },
+    // おはなしの 1 枚の字数
+    len(id, i) { return lt('story.' + id)[i].reduce((n, s) => n + [...s].length, 0); },
+    pages(id) { return lt('story.' + id).length; },
+    skipBtn() { return Game.config.guide.story.skip; },
+
+    // おはなし: 上に絵、下に暗い帯と白い文（1 字ずつ）。右上に「とばす」、右下に丸とめくれる印
+    draw(g, app) {
+      const C = Game.config, V = C.view, G = C.guide, L = G.story, s = app.story;
+      g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h);
+      page(g, s.id, s.page, s.age);
+      g.fillStyle = INK; g.fillRect(0, L.artH, V.w, V.h - L.artH);
+      g.fillStyle = '#3a4466'; g.fillRect(0, L.artH, V.w, 1);
+      const lines = lt('story.' + s.id)[s.page];
+      let left = Math.floor(s.t / G.charSec);
+      lines.forEach((str, j) => {
+        const chars = [...str], n = Math.max(0, Math.min(chars.length, left));
+        left -= chars.length;
+        if (n > 0) B.text(g, chars.slice(0, n).join(''), L.textX, L.textY + j * L.lineH, '#ffffff');
+      });
+      // 何枚めかの丸
+      const total = lines.length ? S.pages(s.id) : 0;
+      for (let k = 0; k < total; k++) { g.fillStyle = k === s.page ? '#ffffff' : '#5a6988'; g.fillRect(V.w - 22 - (total - 1 - k) * 6, V.h - 11, 3, 3); }
+      // めくれる印（文が出終わったら、ゆっくり上下する）
+      if (left >= 0) {
+        const y = V.h - 13 + Math.round(1.5 * Math.sin(app.time * 4));
+        g.fillStyle = '#fee761'; g.fillRect(V.w - 13, y, 7, 1); g.fillRect(V.w - 12, y + 1, 5, 1); g.fillRect(V.w - 11, y + 2, 3, 1); g.fillRect(V.w - 10, y + 3, 1, 1);
+      }
+      // とばす
+      const k = S.skipBtn(), str = lt('story.skip');
+      g.fillStyle = 'rgba(24,20,37,0.6)'; g.fillRect(k.x, k.y, k.w, k.h);
+      B.text(g, str, k.x + Math.round((k.w - B.textW(str)) / 2), k.y + 3, '#c0cbdc');
+      // めくるときの短い暗転
+      if (s.fade > 0) R.dim(g, Math.min(1, s.fade / G.fadeSec));
+    },
+
+    // ---- あそびかた（見直し）: おはなし 2 本と、ヒントのます。まだ見ていないヒントは「?」 ----
+    // 返り値: [{ kind: 'story' | 'tip', id, seen, x, y, w, h }]。main の当たりにも使う
+    howCells(app) {
+      const G = Game.config.guide, W = G.how, out = [];
+      for (const id of [1, 2]) out.push({ kind: 'story', id, seen: true, x: W.x, y: W.storyY + (id - 1) * W.rowH, w: W.w, h: 16 });
+      G.tips.forEach((id, i) => out.push({ kind: 'tip', id, seen: !!app.tips.seen[id], x: W.x + (i % 2) * (W.cellW + 3), y: W.tipY + Math.floor(i / 2) * (W.cellH + W.cellGap), w: W.cellW, h: W.cellH }));
+      return out;
+    },
+    how(g, app) {
+      const V = Game.config.view, W = Game.config.guide.how;
+      g.fillStyle = '#193c3e'; g.fillRect(0, 0, V.w, V.h);
+      B.text(g, lt('how.name'), Math.round((V.w - B.textW(lt('how.name'))) / 2), 5, GOLD, INK);
+      B.text(g, lt('how.story'), W.x, W.storyY - 11, '#ffffff');
+      B.text(g, lt('how.tips'), W.x, W.tipY - 11, '#ffffff');
+      for (const c of S.howCells(app)) {
+        if (c.kind === 'story') { R.textBtn(g, c, lt('story.name.' + c.id)); continue; }
+        g.fillStyle = INK; g.fillRect(c.x, c.y, c.w, c.h);
+        g.fillStyle = c.seen ? PAPER : '#262b44'; g.fillRect(c.x + 1, c.y + 1, c.w - 2, c.h - 2);
+        const str = c.seen ? lt('tip.' + c.id + '.head') : '?';
+        B.text(g, str, c.x + Math.round((c.w - B.textW(str)) / 2), c.y + 4, c.seen ? INK : '#5a6988');
+      }
+      R.textBtn(g, R.backBtn(), lt('how.back'));
+    },
+
+    // ヒントの札: 遊びを暗くして、見出し・見本・文・「タップで つづける」
+    tipCard(g, app) {
+      const C = Game.config, G = C.guide, P = G.tip, id = app.tipQ[0], T = lt('tip.' + id);
+      R.dim(g, 0.6);
+      R.panel(g, P.x, P.y, P.w, P.h);
+      B.text(g, T.head, P.x + Math.round((P.w - B.textW(T.head)) / 2), P.y + 7, GOLD, INK);
+      tipArt(g, id, app.tipAge, { x: P.x + P.art.x, y: P.y + P.art.y, w: P.art.w, h: P.art.h });
+      T.lines.forEach((str, j) => B.text(g, str, P.x + Math.round((P.w - B.textW(str)) / 2), P.y + P.textY + j * P.lineH, INK));
+      if (app.tipAge >= G.holdSec) {
+        const tap = lt('tip.tap');
+        g.globalAlpha = 0.55 + 0.45 * (0.5 - 0.5 * Math.cos((app.time * 2 * Math.PI) / 1.8));
+        B.text(g, tap, P.x + P.w - 5 - B.textW(tap), P.y + P.h - 12, '#733e39');
+        g.globalAlpha = 1;
+      }
+    },
+  };
+
+  Game.story = S;
+})();
+</script>
+<script>
 // つなぎ: 指の動きをルールの操作にし、ルールが返す出来事を演出（針が回る・擬音・音）に配る。
 // ルールは一瞬で進む。画面に見せる途中の姿（針の位置・取った宝・空の進み）は app.vis が持ち、出来事を 1 つずつ時間をかけて映す。
-// 確かめ用の URL: ?stage=1-3 / ?stage=t2（その盤から）、?seed=123（数字を決める種）、?nosave=1（保存しない）
+// 確かめ用の URL: ?stage=1-3 / ?stage=t2（その盤から）、?seed=123（数字を決める種）、?nosave=1（保存しない）、?notips=1（おはなしとヒントを出さない）
 (function () {
   const Game = (window.Game = window.Game || {});
   const cfg = Game.config, RU = Game.rules, K = Game.clock;
   const q = new URLSearchParams(location.search);
 
   const app = {
-    screen: 'title',    // 'title' | 'select' | 'play'
+    screen: 'title',    // 'title' | 'select' | 'how'（あそびかた）| 'play'
     time: 0,
     progress: null, settings: null, tips: null,
     def: null,          // 遊んでいるステージの型（確かめ用の盤では null）
@@ -2145,6 +3249,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     ghost: false,       // この夜はお化けが出た（見た目だけ）
     fainted: false,     // お化けを見て倒れた（出てから 1 拍あと）
     demoCard: null,     // 手本の指が運ぶ札（解き手の道の最初の 1 枚）
+    run: null,          // 編 2「ぼうけん」のラン（遊んでいる間）。ルールの状態は run.s（app.rules も同じものを指す）
+    vHand: [],          // 編 2: 画面に見せている手札（針が回っている間は、レバーを引く前の姿）
+    pulled: [],         // 編 2: レバーを引いたときの並び
+    hamHit: 0,          // 編 2: 当たって目を回している残りの秒
     rules: null,
     vis: null,          // { t（小数あり）, taken, used（空と日時計の進み。小数あり）, usedTo, night（0〜1）, nightTo }
     queue: [],          // 並べた札（左から）。針が回っている間も、次のぶんを並べられる
@@ -2154,13 +3262,54 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     anim: null,         // 出来事を順に映している間 { ev, i, wait, move, k, cards }
     mode: 'play', clearT: 0, clearWait: 0, gemsShown: 0, nameT: 0,
     doorOpen: 0,        // 扉の開き具合（0〜1。鍵のステージ）
-    tipT: 0,            // 鍵のステージの始まりの札を出す残りの秒
+    story: null,        // おはなし（紙芝居）を流している間 { id, page, t（字を出す秒）, age（絵の秒）, fade, then }
+    tipQ: [],           // 出すヒントの列（先頭を見せている）。出ている間は遊びが止まる
+    tipAge: 0,          // いまのヒントが出てからの秒
+    tipReview: false,   // あそびかたからの見直し（閉じても「見た」を書かない）
     fx: null, audio: null, manual: false,
   };
   Game.app = app;
 
   const nosave = q.get('nosave') === '1';
+  const notips = q.get('notips') === '1';   // おはなしもヒントも出さない（確かめ用・通しテスト）
   const store = (what) => { if (nosave) return; if (what === 'progress') Game.save.storeProgress(app.progress); else if (what === 'tips') Game.save.storeTips(app.tips); else Game.save.storeSettings(app.settings); };
+
+  // ---- 導入: ヒントとおはなし ----
+  function pushTips(ids) {
+    if (notips) return;
+    for (const id of [].concat(ids)) if (id && !app.tips.seen[id] && !app.tipQ.includes(id)) { if (!app.tipQ.length) app.tipAge = 0; app.tipQ.push(id); }
+  }
+  const tipEvent = (name) => pushTips(Game.guide.on(name, app.tips.seen));
+  function closeTip() {
+    const id = app.tipQ.shift();
+    app.tipAge = 0;
+    emit({ type: 'put', n: 3 });
+    if (app.tipReview) { app.tipReview = false; return; }
+    app.tips.seen[id] = true; store('tips');
+  }
+  // then: 終わった（最後までめくった・とばした）あとにすること
+  function startStory(id, then) {
+    if (notips) { then(); return; }
+    app.story = { id, page: 0, t: 0, age: 0, fade: 0, then, cue: 0 };
+  }
+  function endStory() { const s = app.story; app.story = null; s.then(); }
+  function storyInput(e) {
+    if (e.type !== 'down') return;
+    const s = app.story, G = cfg.guide;
+    if (inRect(Game.story.skipBtn(), e.x, e.y, 3)) { emit({ type: 'put', n: 3 }); endStory(); return; }
+    if (s.fade > 0) return;
+    const full = Game.story.len(s.id, s.page) * G.charSec;
+    if (s.t < full) { s.t = full; return; }   // 文が出ている途中: 全部出す
+    emit({ type: 'put', n: 2 });
+    if (s.page + 1 >= Game.story.pages(s.id)) { endStory(); return; }
+    s.page++; s.t = 0; s.age = 0; s.cue = 0; s.fade = G.fadeSec;
+  }
+  // 「ぼうけん」を新しく始める。まだなら、先に 2 本めのおはなし
+  function newRun() {
+    if (app.tips.seen.story2) { startRun(0); return; }
+    app.tips.seen.story2 = true; store('tips');
+    startStory(2, () => startRun(0));
+  }
 
   // ステージに入る。型のあるステージは、入るたびに数字を決める（?seed= があればその種）
   function enter(id) {
@@ -2176,7 +3325,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.def = def || null;
     begin(stage);
   }
-  function begin(stage) {
+  function begin(stage, isRun) {
+    app.run = null; app.tipQ = []; app.tipReview = false;
     const s = (app.rules = RU.start(stage));
     app.screen = 'play';
     app.vis = { t: s.t, taken: s.taken.slice(), used: 0, usedTo: 0, night: 0, nightTo: 0 };
@@ -2185,8 +3335,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.stuckTip = false; app.helpTip = false; app.ghost = false; app.fainted = false;
     const best = app.tips.seen.put ? null : Game.solver.solve(stage);
     app.demoCard = best && best.moves.length ? best.moves[0][0] : null;
-    app.doorOpen = 0; app.tipT = s.stage.lock != null ? cfg.anim.lockTip : 0;
+    app.doorOpen = 0;
     if (app.fx) app.fx.clear();
+    if (!isRun && app.def) pushTips(Game.guide.atStart(stage, app.tips.seen, false));   // 確かめ用の盤では出さない
   }
   // クリアのあとの「つぎへ」: 同じエリアの次（確かめ用の盤は順に回る）。なければ null
   function nextId() {
@@ -2195,8 +3346,135 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const T = Game.testStages; return T[(T.findIndex((d) => d.id === id) + 1) % T.length].id;
   }
 
+  // ---- 編 2「ぼうけん」 ----
+  function beginRun(run) {
+    begin(run.stage, true);
+    app.run = run; app.def = null; app.rules = run.s;
+    app.vis.fires = run.fires; app.vis.t = run.s.t; app.vis.taken = run.s.taken.slice(); app.vis.used = app.vis.usedTo = run.s.pulls;
+    app.vHand = run.hand.slice(); app.queue = run.queue.slice(); app.pulled = []; app.hamHit = 0;
+  }
+  // ランの段階に合ったヒント（盤の始まり、札を選ぶ、やすみば）
+  function runTips() {
+    const run = app.run;
+    if (app.mode === 'play') pushTips(Game.guide.atStart(run.stage, app.tips.seen, true));
+    else if (app.mode === 'pick' || app.mode === 'rest') tipEvent(app.mode);
+  }
+  const saveRun = () => { if (nosave || !app.run) return; if (['play', 'pick', 'rest'].includes(app.run.phase)) Game.save.storeRun(app.run); else Game.save.clearRun(); };
+  // ランの段階に合わせて画面を切り替える（札を選ぶ・やすみば・次の面）
+  function syncRun() {
+    const run = app.run;
+    beginRun(run);
+    app.mode = run.phase === 'pick' ? 'pick' : run.phase === 'rest' ? 'rest' : 'play';
+    saveRun(); runTips();
+  }
+  function resumeRun(run) { app.run = run; app.runBoard = 0; syncRun(); }
+  function startRun(board = 0) {
+    const seed = q.has('seed') ? Game.rng.seedFrom(/^-?\d+$/.test(q.get('seed')) ? +q.get('seed') : q.get('seed')) : (Math.random() * 0x7fffffff) | 0;
+    app.runBoard = board;
+    beginRun(Game.run.start(seed, cfg, board));
+    saveRun(); runTips();
+  }
+  // ランが終わった: 記録を足して、途中のランを消す
+  function endRun(won) {
+    const run = app.run;
+    if (!nosave) { Game.progress.recordRun(app.progress, won ? cfg.run.boards : run.board, run.days, won); store('progress'); Game.save.clearRun(); }
+    else Game.progress.recordRun(app.progress, won ? cfg.run.boards : run.board, run.days, won);
+  }
+  // ルールの出来事を、札 1 枚ぶんを 1 つの動きにまとめた列にする（針は、進む長さに関係なく同じ時間で回る）
+  function runAnim(ev) {
+    const out = [];
+    let cur = null, list = [];
+    for (const e of ev) {
+      if (e.type === 'pull') list = e.list;
+      else if (e.type === 'card') { cur = { type: '_card', n: e.n, jump: e.jump, from: list[e.i] ? list[e.i].from : 0, steps: 0, marks: [] }; out.push(cur); }
+      else if (e.type === 'tick') cur.steps++;
+      else if (e.type === 'hour' || e.type === 'hit' || e.type === 'dodge') cur.marks.push({ k: cur.steps, type: e.type });
+      else if (!['draw', 'shuffle', 'mulligan', 'clear', 'board'].includes(e.type)) out.push(e);
+    }
+    return out;
+  }
+  function runPull() {
+    const run = app.run;
+    if (!Game.run.canPull(run)) { emit({ type: 'full' }); return; }
+    const L = cfg.layout.lever;
+    app.pulled = run.queue.slice(); app.running = app.pulled.slice(); app.queue = [];
+    const ev = Game.run.pull(run);
+    emit({ type: 'lever', x: L.x + 8, y: L.y - 4 });
+    if (!app.tips.seen.lever) { app.tips.seen.lever = true; store('tips'); }
+    app.vis.usedTo = run.s.pulls;
+    saveRun();
+    play(runAnim(ev), cfg.anim.leverWait);
+  }
+  function runInput(e) {
+    const R = Game.render, run = app.run, L = cfg.layout;
+    if (e.type === 'down') {
+      if (inRect(L.btn.menu, e.x, e.y, 2)) { app.keptRun = ['play', 'pick', 'rest'].includes(run.phase) ? Game.run.fromSave(Game.run.toSave(run)) : null; app.anim = null; app.drag = null; app.run = null; app.screen = 'select'; app.fx.clear(); return; }   // keptRun: 保存しない設定（確かめ用）のときの「つづきから」
+      if (app.anim) return;
+      if (app.mode === 'over' || app.mode === 'win') {
+        if (app.mode === 'win' && app.clearT <= cfg.anim.door + cfg.run.watchSec + 0.8) return;
+        app.run = null; app.screen = 'select'; app.fx.clear(); return;
+      }
+      if (app.mode === 'pick') {
+        if (inRect(R.deckBtn(), e.x, e.y, 2)) { app.mode = 'deck'; app.deckBack = 'pick'; return; }   // 選ぶ前に、いまの山札を見られる
+        const r = R.pickRows().find((c) => inRect(c, e.x, e.y));
+        if (!r) return;
+        emit({ type: 'put', n: r.i == null ? 1 : 3 });
+        Game.run.pick(run, r.i); syncRun(); return;
+      }
+      if (app.mode === 'rest') {
+        const b = R.restBtns().find((c) => inRect(c, e.x, e.y));
+        if (!b) return;
+        if (b.id === 'remove') { app.mode = 'remove'; emit({ type: 'put', n: 2 }); return; }
+        if (!Game.run.canFire(run)) { emit({ type: 'full' }); return; }
+        emit({ type: 'take' }); Game.run.rest(run, 'fire'); syncRun(); return;
+      }
+      if (app.mode === 'remove') {
+        if (inRect(R.backBtn(), e.x, e.y, 1)) { app.mode = 'rest'; return; }
+        const c = R.cells(run.deck, 34).find((c) => inRect(c, e.x, e.y));
+        if (!c) return;
+        emit({ type: 'unput', n: 2 }); Game.run.rest(run, 'remove', c.i); syncRun(); return;
+      }
+      if (app.mode === 'deck') { app.mode = app.deckBack || 'play'; app.deckBack = null; return; }
+      // 山札の残り枚数をさわると、山札と捨て札の中身の一覧（順番は見せない）
+      if (inRect({ x: L.fires.x - 2, y: L.fires.y + 8, w: 40, h: 22 }, e.x, e.y)) { app.mode = 'deck'; return; }
+      if (inRect(L.btn.sleep, e.x, e.y, 2)) { app.running = []; app.queue = []; const ev = Game.run.sleep(run); saveRun(); play(runAnim(ev)); return; }
+      if (inRect(R.lever(), e.x, e.y)) { app.leverDrag = { x0: e.x, y0: e.y }; return; }
+      // 並びのいちばん右が引かない札（ジャンプなど）なら、つまんで手札へ戻せる
+      const lastQ = R.queue(app.queue).pop();
+      if (lastQ && Game.run.canTake(run) && inRect(lastQ, e.x, e.y, 1)) { app.queue.pop(); app.drag = { n: lastQ.n, x: e.x, y: e.y, from: 'queue' }; return; }
+      const hs = R.runHand(app.vHand);
+      for (let k = hs.length - 1; k >= 0; k--) if (inRect(hs[k], e.x, e.y)) { app.drag = { n: hs[k].n, i: k, x: e.x, y: e.y, from: 'hand' }; return; }   // 重なったときは、上（右）の札
+    } else if (e.type === 'move') {
+      if (app.drag) { app.drag.x = e.x; app.drag.y = e.y; }
+      if (app.leverDrag) {
+        app.leverPull = Math.max(0, Math.min(1, Math.max(e.y - app.leverDrag.y0, e.x - app.leverDrag.x0) / L.lever.pull));
+        if (app.leverPull >= 1) { app.leverDrag = null; runPull(); }
+      }
+    } else {
+      app.leverDrag = null;
+      const d = app.drag;
+      if (!d) return;
+      app.drag = null;
+      if (d.from === 'queue') {
+        if (e.type === 'up' && d.y - L.dragLift >= L.hand.y - 6) { Game.run.take(run); emit({ type: 'unput', n: 2 }); saveRun(); }
+        app.queue = run.queue.slice(); app.vHand = run.hand.slice();
+        return;
+      }
+      if (e.type !== 'up' || app.anim || !R.onDrop(d.x, d.y - L.dragLift)) return;
+      // 並べる（取り消せない）。置けない札は手札へ戻る
+      const ev = Game.run.place(run, d.i);
+      if (ev[0].type === 'deny') { emit({ type: 'full' }); return; }
+      app.queue = run.queue.slice(); app.vHand = run.hand.slice();
+      saveRun();
+      const Q = L.queue, c = Game.cards.of(d.n);
+      emit({ type: 'put', n: c.kind === 'time' ? Math.min(12, c.n) : 2, x: Q.x + (app.queue.length - 1) * (Q.w + Q.gap) + Q.w / 2, y: Q.y - 2 });
+      if (!app.tips.seen.put) { app.tips.seen.put = true; store('tips'); }
+      tipEvent('draw');
+    }
+  }
+
   // 演出の出来事を、擬音と音に配る
-  function emit(e) { app.fx.on(e); app.audio.on(e); }
+  function emit(e) { app.fx.on(e); app.audio.on(e); if (app.haptics) app.haptics.on(e); }
 
   // ---- 出来事を順に映す ----
   // wait: 最初の出来事までの間（レバーを倒してから 1 拍おいて、針が動き出す）
@@ -2226,7 +3504,26 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         an.wait = A.bounceWait; break;
       }
       case '_back': emit({ type: 'back' }); moveTo(Math.round(vis.t), -K.wrap(Math.round(vis.t) - e.back), A.back); break;
+      // ---- 編 2 ----
+      case '_card': {
+        // いま効いている札から右を見せる（使い終えた札は消える）
+        app.running = app.pulled.slice(e.from);
+        const m = { from: Math.round(vis.t), steps: e.steps, dur: cfg.run.cardSec, t: 0, jump: e.jump, marks: e.marks.slice() };
+        // 刻む音は間引く（大きい札でも 6 回まで）
+        const n = Math.min(e.steps, 6);
+        for (let k = 0; k < n; k++) m.marks.push({ k: (k * e.steps) / n, type: 'tick', j: k });
+        m.marks.sort((a, b) => a.k - b.k);
+        an.move = m; an.wait = m.dur;
+        if (e.jump) { const p = R.hamSpot(s.stage); emit({ type: 'jump', x: p.x, y: p.y - 26 }); }
+        break;
+      }
+      case 'day': vis.t = s.t; vis.taken = s.taken.slice(); vis.used = 0; vis.usedTo = 0; vis.nightTo = 0; app.vHand = app.run.hand.slice(); emit({ type: 'day', x: cfg.view.w / 2, y: 60 }); an.wait = A.dusk; break;
+      case 'over': app.mode = 'over'; vis.nightTo = 1; vis.fires = 0; emit({ type: 'over' }); endRun(false); an.wait = A.dusk; break;
+      case 'pick': app.mode = 'pick'; emit({ type: 'clear' }); an.wait = 0.5; break;
+      // 最後の扉: 石の板がゆっくり開き、時計の形の宝が出てくる
+      case 'win': { app.mode = 'win'; app.clearT = 0; const D = cfg.layout.door; emit({ type: 'door', x: D.x + D.w + 18, y: D.y + 14 }); emit({ type: 'clear', delay: A.door + cfg.run.watchSec }); endRun(true); break; }
       case 'night': {
+        if (app.run) { app.queue = []; app.running = []; vis.nightTo = 1; vis.fires = Math.max(0, e.fires); const p = R.hamSpot(s.stage); emit({ type: 'night', x: p.x, y: p.y - 24 }); an.wait = A.night; break; }
         app.queue = []; app.running = []; vis.nightTo = 1; app.stuckTip = false;
         // ときどきお化けが出て、気絶する（見た目だけの違い）
         app.ghost = app.forceGhost != null ? app.forceGhost : Math.random() * cfg.ghostEvery < 1;
@@ -2263,14 +3560,25 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (an.move) {
       const m = an.move;
       m.t = Math.min(m.dur, m.t + dt);
+      // 編 2: 札の途中で起きること（刻む音、1 周の合図、探検家への当たり）
+      while (m.marks && m.marks.length && (m.marks[0].k / Math.max(1, m.steps)) * m.dur <= m.t) {
+        const k = m.marks.shift();
+        if (k.type === 'tick') emit({ type: 'tick', k: k.j });
+        else if (k.type === 'hour') emit({ type: 'hour' });
+        else if (k.type === 'hit') { vis.fires--; app.hamHit = 0.7; const p = Game.render.hamSpot(app.rules.stage); emit({ type: 'hit', x: p.x, y: p.y - 24 }); }
+      }
       vis.t = K.wrap(m.from + m.steps * (m.t / m.dur));
       if (m.t >= m.dur) { vis.t = K.wrap(m.from + m.steps); an.move = null; }
     }
     an.wait -= dt;
     while (an.wait <= 0 && !an.move && an.i < an.ev.length) step(an.ev[an.i++]);
     if (an.wait <= 0 && !an.move && an.i >= an.ev.length) {
-      app.anim = null; app.running = []; vis.t = app.rules.t; vis.usedTo = app.rules.used;
+      app.anim = null; app.running = []; vis.t = app.rules.t; vis.usedTo = app.run ? app.rules.pulls : app.rules.used;
+      if (app.run) { app.vHand = app.run.hand.slice(); app.queue = app.run.queue.slice(); vis.fires = app.run.fires; vis.taken = app.rules.taken.slice(); }
       if (app.mode === 'play') app.nameT = cfg.anim.name;
+      // 針が止まってから出すヒント
+      if (app.run) { if (app.mode === 'play') tipEvent('day'); else if (app.mode === 'pick') tipEvent('pick'); }
+      else if (app.def && app.mode === 'play' && app.rules.used / app.rules.stage.N >= cfg.guide.duskAt) tipEvent('dusk');
     }
   }
 
@@ -2294,16 +3602,50 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
   function onInput(e) {
     const R = Game.render, s = app.rules, L = cfg.layout;
-    if (app.screen === 'title') { if (e.type === 'down') app.screen = 'select'; return; }
+    if (app.story) { storyInput(e); return; }
+    if (Game.story.tipOn(app)) { if (e.type === 'down' && app.tipAge >= cfg.guide.holdSec) closeTip(); return; }
+    if (app.screen === 'title') {
+      if (e.type !== 'down') return;
+      // 記録がまっさらなら、1 本めのおはなしから
+      if (Game.guide.fresh(app.progress)) startStory(1, () => { app.screen = 'select'; }); else app.screen = 'select';
+      return;
+    }
+    if (app.screen === 'how') {
+      if (e.type !== 'down') return;
+      if (inRect(R.backBtn(), e.x, e.y, 1)) { emit({ type: 'put', n: 3 }); app.screen = 'select'; return; }
+      const c = Game.story.howCells(app).find((c) => inRect(c, e.x, e.y));
+      if (!c) return;
+      if (!c.seen) { emit({ type: 'full' }); return; }
+      emit({ type: 'put', n: 2 });
+      if (c.kind === 'story') { app.story = { id: c.id, page: 0, t: 0, age: 0, fade: 0, then: () => { app.screen = 'how'; }, cue: 0 }; return; }
+      app.tipQ = [c.id]; app.tipAge = 0; app.tipReview = true;   // 見直し: 閉じても「見た」を書き換えない
+      return;
+    }
     if (app.screen === 'select') {
       if (e.type !== 'down') return;
+      if (app.runAsk) {
+        const b = R.askBtns().find((c) => inRect(c, e.x, e.y));
+        const saved = app.runAsk; app.runAsk = null;
+        if (!b) return;
+        emit({ type: 'put', n: 2 });
+        if (b.id === 'cont') resumeRun(saved); else newRun();
+        return;
+      }
+      if (inRect(L.runBtn, e.x, e.y, 1)) {
+        emit({ type: 'put', n: 2 });
+        const saved = nosave ? app.keptRun : Game.save.loadRun();
+        if (saved) app.runAsk = saved; else newRun();
+        return;
+      }
+      if (inRect(L.howBtn, e.x, e.y, 1)) { emit({ type: 'put', n: 2 }); app.screen = 'how'; return; }
+      if (inRect(L.select.haptics, e.x, e.y, 1)) { app.settings.haptics = !app.settings.haptics; app.haptics.setEnabled(app.settings.haptics); store('settings'); if (app.settings.haptics) app.haptics.play('place'); emit({ type: 'put', n: 3 }); return; }
       if (inRect(L.select.sound, e.x, e.y, 2)) { app.settings.sound = !app.settings.sound; cfg.audio.enabled = app.settings.sound; store('settings'); emit({ type: 'put', n: 3 }); return; }
       const tile = R.tiles(app).find((c) => inRect(c, e.x, e.y));
       if (tile && tile.open) { emit({ type: 'put', n: 2 }); enter(tile.id); } else if (tile) emit({ type: 'full' });
       return;
     }
+    if (app.run) { runInput(e); return; }
     if (e.type === 'down') {
-      app.tipT = Math.min(app.tipT, 0.3);
       if (inRect(L.btn.menu, e.x, e.y, 2)) { app.anim = null; app.drag = null; app.screen = 'select'; app.fx.clear(); return; }
       if (app.mode === 'clear') {
         if (app.anim || app.gemsShown < s.gems || app.clearT <= app.clearWait + 0.3) return;
@@ -2353,13 +3695,22 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   function update(dt) {
     const vis = app.vis, A = cfg.anim;
     app.time += dt;
+    if (app.story) {
+      const s = app.story, cues = Game.story.cues(s.id, s.page);
+      if (s.fade > 0) s.fade -= dt; else { s.t += dt; s.age += dt; }
+      // 場面の音（最初の 1 回だけ）
+      while (s.cue < cues.length && cues[s.cue][0] <= s.age) { const e = cues[s.cue++][1]; app.audio.on(e); if (app.haptics) app.haptics.on(e); }
+      app.fx.update(dt); return;
+    }
+    if (Game.story.tipOn(app)) { app.tipAge += dt; app.fx.update(dt); return; }   // ヒントが出ている間、遊びは止まる
     if (app.screen !== 'play') { app.fx.update(dt); return; }
     if (app.anim) tickAnim(dt);
     else if (!app.leverDrag && app.leverPull > 0) app.leverPull = Math.max(0, app.leverPull - dt / A.leverBack);
     if (vis.used < vis.usedTo) vis.used = Math.min(vis.usedTo, vis.used + dt * 4);
     if (vis.night !== vis.nightTo) vis.night += Math.sign(vis.nightTo - vis.night) * Math.min(Math.abs(vis.nightTo - vis.night), dt / A.dusk);
     if (app.nameT > 0) app.nameT -= dt;
-    if (app.tipT > 0) app.tipT -= dt;
+    if (app.hamHit > 0) app.hamHit -= dt;
+    if (app.mode === 'win') { app.clearT += dt; app.doorOpen = Math.min(1, app.clearT / A.door); }
     if (app.mode === 'clear') {
       app.clearT += dt;
       if (app.rules.stage.lock != null) app.doorOpen = Math.min(1, app.clearT / A.door);
@@ -2368,15 +3719,37 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         app.gemsShown = n; emit({ type: 'gem', i: n - 1 });
         if (n >= app.rules.gems && RU.result(app.rules).star) { emit({ type: 'gem', i: 4 }); emit({ type: 'gem', i: 7 }); }   // 星: 高い音を重ねる
       }
+      if (app.def && app.gemsShown >= app.rules.gems && app.clearT > app.clearWait + A.gemEvery * app.rules.gems + 0.5) tipEvent('reward');
     }
     app.fx.update(dt);
   }
 
+  // うっかり閉じない: 画面の端から札をなぞると「戻る」になる端末がある。履歴に 1 つ積んでおき、遊んでいる間の「戻る」は積み直して受け流す
+  // （タイトルでは積み直さないので、もう 1 回「戻る」で出られる）
+  function guard() {
+    try { if (!(history.state && history.state.hoppeClock)) history.pushState({ hoppeClock: 1 }, ''); } catch (e) { /* 履歴が使えない */ }
+  }
+  // 画面を消さない（Wake Lock）: 考えている間に暗くならないように。タイトルと、隠れている間は持たない。隠れると外れるので、戻ったら取り直す
+  let wakeLock = null, wakeBusy = false;
+  function wake() {
+    const want = () => !document.hidden && app.screen !== 'title';
+    if (!want()) { if (wakeLock) { const l = wakeLock; wakeLock = null; l.release().catch(() => {}); } return; }
+    if (wakeLock || wakeBusy || !navigator.wakeLock) return;
+    wakeBusy = true;
+    navigator.wakeLock.request('screen').then((l) => {
+      wakeBusy = false;
+      if (!want()) { l.release().catch(() => {}); return; }
+      wakeLock = l;
+      l.addEventListener('release', () => { if (wakeLock === l) wakeLock = null; });
+    }, () => { wakeBusy = false; });   // 断られたら（電池が少ない、など）次に触ったときにまた試す
+  }
   function boot() {
     const canvas = document.getElementById('c');
     Game.render.init(canvas);
     app.progress = nosave ? Game.progress.fresh() : Game.save.loadProgress();
-    app.settings = nosave ? { sound: true } : Game.save.loadSettings();
+    app.settings = nosave ? { sound: true, haptics: true } : Game.save.loadSettings();
+    app.haptics = Game.haptics.create(cfg);
+    app.haptics.setEnabled(app.settings.haptics);
     app.tips = nosave ? { seen: {} } : Game.save.loadTips();
     cfg.audio.enabled = app.settings.sound;
     app.audio = Game.audio.create(cfg);
@@ -2384,8 +3757,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     Game.input.create(canvas, onInput);
     // 音の再開。タッチは指を離したときに初めて許されるので、置いたとき・離したときの両方で試す
     for (const ev of ['pointerdown', 'pointerup', 'touchend', 'keydown']) document.addEventListener(ev, () => { if (!app.audio.running()) app.audio.unlock(); }, true);
-    document.addEventListener('visibilitychange', () => app.audio.setHidden(document.hidden));
+    document.addEventListener('visibilitychange', () => { app.audio.setHidden(document.hidden); app.haptics.setHidden(document.hidden); wake(); });
+    // 触るたびに: 「戻る」の備えを積み直し、画面を消さない約束を取り直す
+    document.addEventListener('pointerdown', () => { guard(); wake(); }, true);
+    document.addEventListener('pointerup', () => setTimeout(wake, 0), true);   // 離したあとに画面が変わる（タイトル → ステージ選び）ので、そのあとで
+    addEventListener('popstate', () => { if (app.screen !== 'title') guard(); });
     if (q.has('stage')) enter(q.get('stage'));
+    else if (q.has('run')) startRun(+q.get('board') || 0);
     let last = performance.now();
     const frame = (now) => {
       const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
@@ -2400,7 +3778,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // テスト用: 実時間に関係なく進める
   Game.debug = {
     step(sec) { app.manual = true; for (let i = 0; i < Math.round(sec * 60); i++) update(1 / 60); Game.render.draw(app); },
-    enter, input: onInput,
+    enter, startRun, input: onInput, wake: () => !!wakeLock,
   };
 
   boot();
