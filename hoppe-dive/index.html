@@ -258,7 +258,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
     // 演出・音
     fx: { shakeMax: 2, popSec: 0.5, pullSec: 0.14 }, // pullSec: じしゃくで宝が吸い寄せられる時間（絵だけ）
-    audio: { enabled: true, volume: 0.5, bgmVolume: 0.6, seedResetSec: 1.0 },
+    audio: { enabled: true, volume: 0.5, bgmVolume: 0.6, seedResetSec: 1.0, key: 'hoppe-dive.sound' }, // key: 音のオン・オフ（タイトルで切り替え。曲も止まる）
     input: { swipePx: 24, controlFrom: 1 / 3 },
     // オープニング（おはなし。4 枚の紙芝居）。設計書: docs/specs/2026-11-04-hoppe-dive-opening-design.md
     // 文は text.js の story（1 枚 2 行、1 行は textBox.story に収める）。cps: 1 秒に出す字の数。fadeSec: めくったときに明るくなるまで
@@ -2850,6 +2850,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // 振動のオン・オフ（タイトルの JA EN の左）。HOPPE BRIDGE の絵を写す。震える線つきの電話、オフは線の代わりに ×。色は bake で付ける（オン 金・オフ 灰）
   S.vibOn = ['..6666..', '6.6..6.6', '6.6..6.6', '..6..6..', '6.6..6.6', '6.6..6.6', '..6666..'];
   S.vibOff = ['6666....', '6..6....', '6..6.i.i', '6..6..i.', '6..6.i.i', '6..6....', '6666....'];
+  // 音のオン・オフ（振動の左）。スピーカーと音の線、オフは線の代わりに ×（振動と同じ形の ×）。色は bake で付ける
+  S.sndOn = ['...6..6.', '..66...6', '6666.6.6', '6666.6.6', '6666.6.6', '..66...6', '...6..6.'];
+  S.sndOff = ['...6....', '..66....', '6666.i.i', '6666..i.', '6666.i.i', '..66....', '...6....'];
   S.arrowL = ['...00', '..060', '.0660', '06660', '.0660', '..060', '...00'];
   S.arrowR = S.arrowL.map((r) => r.split('').reverse().join(''));
 
@@ -3141,6 +3144,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     b.vibOn = bake(S.vibOn, { map: { 6: 'k' } }); // 振動オン: 選んだ JA/EN と同じ金
     b.vibOff = bake(S.vibOff, { map: { 6: '4' } }); // オフ: 選んでいない側と同じ灰（× は赤）
     b.vibInk = { on: bake(S.vibOn, { map: { 6: '0' } }), off: bake(S.vibOff, { map: { 6: '0', i: '0' } }) }; // 縁取り（文字と同じ INK で、まわり 8 方向に置く）
+    b.sndOn = bake(S.sndOn, { map: { 6: 'k' } }); // 音: 振動と同じ色の決まり
+    b.sndOff = bake(S.sndOff, { map: { 6: '4' } });
+    b.sndInk = { on: bake(S.sndOn, { map: { 6: '0' } }), off: bake(S.sndOff, { map: { 6: '0', i: '0' } }) };
     // ③実績とシークレット
     for (const k of ['medalS', 'pup', 'batHang']) b[k] = bake(S[k]);
     b.medal = {};
@@ -3430,7 +3436,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         const comp = ac.createDynamicsCompressor();
         comp.threshold.value = -14; comp.ratio.value = 6;
         master = ac.createGain();
-        master.gain.value = cfg.audio.volume;
+        master.gain.value = cfg.audio.enabled || opt.context ? cfg.audio.volume : 0;
         master.connect(comp).connect(ac.destination);
         noiseBuf = ac.createBuffer(1, ac.sampleRate, ac.sampleRate);
         const d = noiseBuf.getChannelData(0);
@@ -3633,6 +3639,12 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     return {
       unlock, on, music, tick,
       setHidden(h) { hidden = h; if (!ac) return; if (h) ac.suspend(); else ac.resume(); },
+      // 音のオン・オフ（曲も）。オフにしたら、もう予約した音も出口で消す。オンに戻すと曲は今の拍から続ける（tick が追いつかずに今から）
+      setEnabled(on) {
+        cfg.audio.enabled = !!on;
+        if (master && !opt.context) master.gain.setValueAtTime(on ? cfg.audio.volume : 0, ac.currentTime);
+      },
+      enabled: () => !!cfg.audio.enabled,
     };
   }
 
@@ -4262,8 +4274,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   // タイトルの言語の切り替え（右下の JA EN）。box: タップの範囲、ja / en: 文字の位置
-  // haptics: 振動のオン・オフ（JA EN の左。電話の絵）。icon: 絵の位置
-  R.titleLayout = () => ({ lang: { x: 158, y: 93, w: 34, h: 15, ja: { x: 164, y: 99 }, en: { x: 179, y: 99 } }, haptics: { x: 143, y: 93, w: 15, h: 15, icon: { x: 148, y: 99 } } });
+  // haptics: 振動のオン・オフ（JA EN の左。電話の絵）。sound: 音のオン・オフ（振動の左。スピーカーの絵）。icon: 絵の位置
+  R.titleLayout = () => ({ lang: { x: 158, y: 93, w: 34, h: 15, ja: { x: 164, y: 99 }, en: { x: 179, y: 99 } }, haptics: { x: 143, y: 93, w: 15, h: 15, icon: { x: 148, y: 99 } }, sound: { x: 128, y: 93, w: 15, h: 15, icon: { x: 132, y: 99 } } });
 
   // 位置（窓の中のドット）: 左に見本の枠、右に一覧（1行 8 ドット）
   R.howtoLayout = function () {
@@ -4582,10 +4594,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       const LB = R.titleLayout().lang, cur = Game.lang.cur;
       B.text(g, 'JA', LB.ja.x, LB.ja.y, cur === 'ja' ? GOLD : '#8b9bb4', INK);
       B.text(g, 'EN', LB.en.x, LB.en.y, cur === 'en' ? GOLD : '#8b9bb4', INK);
-      const HB = R.titleLayout().haptics.icon, hon = !app.haptics || app.haptics.enabled();
-      const ink = hon ? A.vibInk.on : A.vibInk.off;
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (dx || dy) g.drawImage(ink, HB.x + dx, HB.y + dy);
-      g.drawImage(hon ? A.vibOn : A.vibOff, HB.x, HB.y);
+      // 振動と音のオン・オフの絵（縁取りは文字と同じ INK で、まわり 8 方向に置く）
+      const toggle = (p, on, onImg, offImg, ink) => {
+        for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) if (dx || dy) g.drawImage(on ? ink.on : ink.off, p.x + dx, p.y + dy);
+        g.drawImage(on ? onImg : offImg, p.x, p.y);
+      };
+      toggle(R.titleLayout().haptics.icon, !app.haptics || app.haptics.enabled(), A.vibOn, A.vibOff, A.vibInk);
+      toggle(R.titleLayout().sound.icon, !app.audio || app.audio.enabled(), A.sndOn, A.sndOff, A.sndInk);
       return;
     }
     if (!s) return;
@@ -4906,7 +4921,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 })();
 </script>
 <script>
-// 保存データの読み書き。②の恒久強化（hoppe-dive.meta、検め方は meta.parse）、③の実績（hoppe-dive.records、検め方は achieve.parse）、きろく（hoppe-dive.board、board.parse）、ヒントを見たか（hoppe-dive.tips、parseTips）、言語（hoppe-dive.lang、parseLang）、振動のオン・オフ（hoppe-dive.haptics、parseHaptics）。
+// 保存データの読み書き。②の恒久強化（hoppe-dive.meta、検め方は meta.parse）、③の実績（hoppe-dive.records、検め方は achieve.parse）、きろく（hoppe-dive.board、board.parse）、ヒントを見たか（hoppe-dive.tips、parseTips）、言語（hoppe-dive.lang、parseLang）、音のオン・オフ（hoppe-dive.sound、parseSound）、振動のオン・オフ（hoppe-dive.haptics、parseHaptics）。
 // 読めない・壊れている・版が違うときは最初の状態から始める。書けない（容量・プライベートモード）ときは黙って続ける
 (function () {
   const Game = (window.Game = window.Game || {});
@@ -4955,7 +4970,12 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const loadHaptics = (cfg = Game.config) => parseHaptics(read(cfg.haptics.key));
   const storeHaptics = (on, cfg = Game.config) => write(cfg.haptics.key, !!on);
 
-  Game.save = { load, store, loadRecords, storeRecords, loadBoard, storeBoard, freshTips, parseTips, loadTips, storeTips, parseLang, loadLang, storeLang, parseHaptics, loadHaptics, storeHaptics };
+  // 音のオン・オフ（hoppe-dive.sound）。読み方は振動と同じ（false のときだけオフ）
+  const parseSound = parseHaptics;
+  const loadSound = (cfg = Game.config) => parseSound(read(cfg.audio.key));
+  const storeSound = (on, cfg = Game.config) => write(cfg.audio.key, !!on);
+
+  Game.save = { load, store, loadRecords, storeRecords, loadBoard, storeBoard, freshTips, parseTips, loadTips, storeTips, parseLang, loadLang, storeLang, parseHaptics, loadHaptics, storeHaptics, parseSound, loadSound, storeSound };
 })();
 </script>
 <script>
@@ -5294,13 +5314,21 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     sfx({ type: 'camp_page' });
     if (on) app.haptics.play('buy');
   }
+  // 音のオン・オフ（振動の左）。曲も止まる。端末に覚える。オンにしたときは確かめに 1 回鳴らす（オフにしたときは鳴らない）
+  function toggleSound() {
+    const on = !app.audio.enabled();
+    app.audio.setEnabled(on);
+    if (!T.noStore) Game.save.storeSound(on, cfg);
+    sfx({ type: 'camp_page' });
+  }
   function onInput(e) {
     if (e.type === 'down') app.audio.unlock();
     if (app.paused || app.mode === 'countdown') return;
     const s = app.rules;
     if (app.mode === 'title') {
-      // 右下の JA EN（キーは L）: 言語を切り替えて端末に覚える。その左の電話の絵: 振動のオン・オフ。どちらもゲームは始めない
+      // 右下の JA EN（キーは L）: 言語を切り替えて端末に覚える。その左の電話の絵: 振動のオン・オフ。さらに左のスピーカー: 音のオン・オフ。どれもゲームは始めない
       if (e.type === 'tap' && inRect(Game.render.toField(e.x, e.y), Game.render.titleLayout().haptics)) return toggleHaptics();
+      if (e.type === 'tap' && inRect(Game.render.toField(e.x, e.y), Game.render.titleLayout().sound)) return toggleSound();
       if (e.type === 'lang' || (e.type === 'tap' && inRect(Game.render.toField(e.x, e.y), Game.render.titleLayout().lang))) return toggleLang();
       if (e.type === 'tap' || e.type === 'key') { if (isFresh()) startStory('title'); else enterCamp(); }
       return;
@@ -5445,6 +5473,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     setIcons();
     app.fx = Game.fx.create(cfg);
     app.audio = Game.audio.create(cfg);
+    app.audio.setEnabled(T.noStore ? true : Game.save.loadSound(cfg));
     app.haptics = Game.haptics.create(cfg);
     app.haptics.setEnabled(T.noStore ? true : Game.save.loadHaptics(cfg));
     Game.input.create(cfg, canvas, onInput);
