@@ -65,7 +65,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       // 音ごとの大きさの倍率
       level: { ripple: 1, pop: 1, swish: 1, rustle: 1, scratch: 2.2, bloom: 1, buzz: 1, fwoosh: 1, hop: 1, grab: 1, drop: 1, munch: 1, cheek: 1, poke: 1, pet: 1, roll: 1, step: 1, dig: 1, stash: 1, find: 1, yawn: 1,
         beg: 1, croak: 1, clam: 1, scuttle: 1, boing: 1, shake: 1, hat: 1, plip: 1, sand: 1, crunch: 1, wake: 1, snore: 1, gift: 1, wear: 1,
-        rainbow: 1, twinkle: 1, splash: 1, whale: 1, spout: 1, squeak: 1, shoot: 1 },
+        rainbow: 1, twinkle: 1, splash: 1, whale: 1, spout: 1, squeak: 1, shoot: 1, achoo: 1 },
       sfx: {
         // ポロン（何もない所に触れた。高さは曲の音階から vars.hz）
         ripple: [{ k: 'chime', mul: 1, type: 'triangle', vol: 0.16, a: 0.004, dec: 0.45 }, { k: 'chime', mul: 2, type: 'sine', vol: 0.04, a: 0.002, dec: 0.25 }],
@@ -127,6 +127,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         hat: [{ k: 'tone', f: 400, type: 'triangle', vol: 0.15, dec: 0.3, slide: 2.5 }, { k: 'chime', mul: 2, type: 'sine', vol: 0.06, dec: 0.4, delay: 0.1 }],
         // チャプ（水面をなぞる。音階の高い音を短く）
         plip: [{ k: 'chime', mul: 2, type: 'sine', vol: 0.07, dec: 0.08, slide: 1.6 }],
+        // ハクション（組み合わせ: 綿毛が鼻に・雪だるまに雪）: 吸って上がる声と、はじける息
+        achoo: [{ k: 'tone', f: 520, type: 'triangle', vol: 0.09, dec: 0.22, slide: 1.5 }, { k: 'noise', f: 2400, q: 0.8, vol: 0.14, dec: 0.16, delay: 0.24 },
+          { k: 'tone', f: 760, type: 'triangle', vol: 0.1, dec: 0.12, slide: 0.55, delay: 0.24 }],
         // サラッ（砂をなぞる）
         sand: [{ k: 'noise', f: 3200, q: 0.6, vol: 0.05, a: 0.01, dec: 0.08 }],
         // キュッ（雪をなぞる）
@@ -201,6 +204,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     roll: { ms: 900 },                    // 転がって起き上がるまで
     find: { every: 40, p: 0.35 },         // なぞる地面をこれだけ（ドット）なぞるごとに、この確率で物が出る
     blow: { r: 30 },                      // はらったとき、指からこの距離（ドット）の「はらう物」が飛ぶ
+    // 組み合わせ（meet.js）: foot … 足元とみなす、物の立つ高さと足元の線の差（ドット）/ blowLen … はらった物が進むとみなす距離 /
+    //   landPad … 跳んだ先の当たりを、相手の r + pad よりさらに広げる量 / hamR … 飛んできた物が当たる、ハムスターの丸の半径 /
+    //   passX・footX … 身なり・足元で出会う所（hamX から前へのドット。真ん中まで来ると体に隠れるので、少し前で起こす）
+    meet: { foot: 6, blowLen: 60, landPad: 4, hamR: 14, passX: 34, footX: 26 },
     wake: { ms: 1600 },                   // 巣で目を覚まして出てくるまで
     bed: { ms: 2400 },                    // おやすみ: その場に巣を掘って、もぐりこんで眠るまで
     // 夜（おやすみのあと・巣で眠っている間）: 画面を暗くする濃さ、暗くなるまでの秒、明るくなるまでの秒
@@ -555,7 +562,35 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     },
   ];
 
-  Game.lands = { OBJ, LANDS, GIFT, SIGHT };
+  // 組み合わせ（設計書 2026-11-20-hoppe-walk-meet-design.md）。meet.js が引き、meetart.js が描く
+  //   how: carry（運んで相手の上で離す）| land（跳んだ先に相手）| blow（はらった通り道に相手）| pass（身なりで通りすぎる）| foot（足元を通りすぎる）
+  //   a: 動かす側の種類（pass は身なり、foot は 'ham'）/ b: 相手の種類（ハムスターは 'ham'）/ ms: 反応の長さ
+  //   endA / endB: 終わったあとの st.st（なければ反応の前に戻す）/ keepB: 相手に残る印（st.keep）/ ham: ハムスターのしぐさ
+  //   dxB: 終わったら相手を横へずらす（ドット）/ regrow: 木の実を 1 つ戻す
+  const MEET = {
+    bugFlower:     { how: 'land',  a: 'ladybug',   b: 'flower',    ms: 1400, endA: 'gone', keepB: 'perch' },
+    seedFlower:    { how: 'carry', a: 'seed',      b: 'flower',    ms: 1200, keepB: 'sunflower' },
+    puffHam:       { how: 'blow',  a: 'puff',      b: 'ham',       ms: 1400, endA: 'blown', ham: 'sneeze' },
+    crownFlower:   { how: 'pass',  a: 'crown',     b: 'flower',    ms: 1000 },
+    frogBubble:    { how: 'land',  a: 'frog',      b: 'bubble',    ms: 1200, endB: 'gone' },
+    frogWeed:      { how: 'land',  a: 'frog',      b: 'weed',      ms: 1000, endA: 'gone', keepB: 'hide' },
+    frogFoot:      { how: 'foot',  a: 'ham',       b: 'frog',      ms: 1000, dxB: -80 },
+    packFrog:      { how: 'pass',  a: 'frogpack',  b: 'frog',      ms: 1200 },
+    foamCrab:      { how: 'blow',  a: 'foam',      b: 'crab',      ms: 1400, endA: 'gone' },
+    foamShell:     { how: 'blow',  a: 'foam',      b: 'shell',     ms: 1200, endA: 'gone' },
+    crabFoot:      { how: 'foot',  a: 'ham',       b: 'crab',      ms: 800, ham: 'poke' },
+    strawShell:    { how: 'pass',  a: 'straw',     b: 'shell',     ms: 1200 },
+    leafShroom:    { how: 'blow',  a: 'leaf',      b: 'mushroom',  ms: 1200, endA: 'gone' },
+    appleTree:     { how: 'carry', a: 'apple',     b: 'appletree', ms: 1000, regrow: true },
+    shroomFoot:    { how: 'foot',  a: 'ham',       b: 'mushroom',  ms: 900, ham: 'bounce' },
+    capeLeaf:      { how: 'pass',  a: 'cape',      b: 'leaf',      ms: 1200, endB: 'gone' },
+    nutSnowman:    { how: 'carry', a: 'chestnut',  b: 'snowman',   ms: 1000, keepB: 'nose' },
+    flakeSnowman:  { how: 'blow',  a: 'flake',     b: 'snowman',   ms: 1000, endA: 'gone', endB: 'hat' },
+    tophatSnowman: { how: 'pass',  a: 'tophat',    b: 'snowman',   ms: 1200 },
+    scarfSnowman:  { how: 'pass',  a: 'scarf',     b: 'snowman',   ms: 1200 },
+  };
+
+  Game.lands = { OBJ, LANDS, GIFT, SIGHT, MEET };
 })();
 </script>
 <script>
@@ -696,9 +731,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const add = (p, st, free) => {
       const def = OBJ()[p.kind], x = Math.round(p.wx + (st && st.dx ? st.dx : 0) - s.d);
       if (x - def.r < E || x + def.r > V.w - E) return;
-      out.push({ key: p.key, kind: p.kind, item: p.item, x, y: p.y, cy: p.y + (def.cy || 0), r: def.r, st: st || null, free, t: p.t, y0: p.y0 });
+      out.push({ key: p.key, kind: p.kind, item: p.item, wx: p.wx, x, y: p.y, cy: p.y + (def.cy || 0), r: def.r, st: st || null, free, t: p.t, y0: p.y0 });
     };
     for (const p of W().objectsIn(s.seed, s.d - 64, s.d + V.w + 64, cfg)) {
+      if (s.bareTo && p.wx < s.bareTo) continue; // 確かめ用の場面（meet.stage）: 置いた物だけ
       const st = s.objs[p.key];
       if (!hidden(st) && !flewAway(s, OBJ()[p.kind], st)) add(p, st, false);
     }
@@ -711,7 +747,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     for (const o of visible(s, cfg)) {
       const def = OBJ()[o.kind];
       if (o.st && o.st.st && !def.again && def.act !== 'carry') continue; // 1 度きりの物は反応したら触れない
-      if (o.st && o.st.st === 'away') continue;                            // 飛び去っている途中
+      if (o.st && (o.st.st === 'away' || o.st.st === 'meet')) continue;   // 飛び去っている途中・組み合わせの反応の途中
       const dd = Math.hypot(x - o.x, y - o.cy);
       const reach = o.r + cfg.touch.pad + (def.food ? cfg.feed.grabPad : 0);
       if (dd <= reach && dd < bd) { best = o; bd = dd; }
@@ -720,8 +756,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   const addCredit = (s, n, cfg) => { s.credit = Math.min(cfg.walk.max, s.credit + n); };
-  const BUSY = ['dig', 'eat', 'roll', 'poke', 'beg', 'sleep', 'wake', 'wear', 'bed'];
-  const busy = (s, cfg) => !!s.carry || (s.pet && s.t - s.pet.lastT <= cfg.pet.gapMs / 1000) || BUSY.includes(s.ham.act);
+  const BUSY = ['dig', 'eat', 'roll', 'poke', 'beg', 'sleep', 'wake', 'wear', 'bed', 'sneeze', 'bounce'];
+  const M = () => Game.meet; // 組み合わせ（meet.js）
+  // 身なりの組み合わせの間は、立ち止まって見る（歩き続けると、物がハムスターの体の後ろへ流れて見えなくなる）
+  const watching = (s) => !!(s.meet && Game.lands.MEET[s.meet.id].how === 'pass');
+  const busy = (s, cfg) => !!s.carry || (s.pet && s.t - s.pet.lastT <= cfg.pet.gapMs / 1000) || BUSY.includes(s.ham.act) || watching(s);
   const setAct = (s, act, sec = 0, kind = null) => { s.ham.act = act; s.ham.t0 = s.t; s.ham.until = sec ? s.t + sec : 0; s.ham.kind = kind; };
   const canEat = (s) => !['dig', 'sleep', 'wake', 'bed'].includes(s.ham.act);
   const stOf = (s, key) => s.objs[key] || (s.objs[key] = { st: null, t: 0, dx: 0, n: 0 });
@@ -736,9 +775,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const giftOut = (s) => s.free.some((p) => p.kind === 'gift') || (s.carry && s.carry.kind === 'gift');
   const blownSt = (def) => (def.gone === 'stem' ? 'blown' : def.gone ? 'gone' : 'sway');
 
-  // 物の反応（置いたとき）。{ react, spawn } を返す
+  // 物の反応（置いたとき）。{ react, spawn, away, meets } を返す（meets: 跳んだ先で起きた組み合わせの出来事）
   function react(s, o, cfg) {
-    const def = OBJ()[o.kind], st = stOf(s, o.key);
+    const def = OBJ()[o.kind], st = stOf(s, o.key), meets = [];
     let r = def.act === 'blow' ? 'blow' : def.tap, spawn = null, away = false;
     st.t = s.t;
     switch (r) {
@@ -747,7 +786,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         // 何度かは少し先へ跳んで止まる。hops 回跳んだあとか、次に跳ぶと画面の前の端を越えるときは、飛び去る（def.away 秒で消える）
         st.n++;
         if (st.n > def.hops || o.x + def.dx + def.r > cfg.view.w - cfg.layout.edge) { st.st = 'away'; away = true; }
-        else { st.dx += def.dx; st.st = r; }
+        else { st.dx += def.dx; st.st = r; M().tryLand(s, o, cfg, meets); }
         break;
       case 'pop': st.st = 'gone'; break;
       case 'open': st.st = st.st === 'open' ? null : 'open'; r = st.st ? 'open' : 'close'; break;
@@ -774,7 +813,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       case 'blow': st.st = blownSt(def); break;
       default: st.st = r; break; // scuttle, boing: その場の動き（時間 st.t で描く）
     }
-    return { react: r, spawn, away };
+    return { react: r, spawn, away, meets };
   }
 
   // 食べる（口の当たりに入った）
@@ -928,11 +967,12 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
           // 反応の動きの途中: 何もしない（動きを途中からやり直させない）
           s.fingers[e.id] = { on: 'obj', key: o.key, acc: 0 };
         } else if (o && OBJ()[o.kind].act !== 'carry') {
-          const { react: r, spawn, away } = react(s, o, cfg);
+          const { react: r, spawn, away, meets } = react(s, o, cfg);
           s.fingers[e.id] = { on: 'obj', key: o.key, acc: 0 };
           addCredit(s, C.hit, cfg);
           const def = OBJ()[o.kind];
-          out.push({ type: 'hit', key: o.key, kind: o.kind, x: o.x, y: o.cy, react: r, spawn, away, gone: def.act === 'blow' ? def.gone : undefined });
+          out.push({ type: 'hit', key: o.key, kind: o.kind, x: o.x, y: o.cy, react: r, spawn, away, gone: def.act === 'blow' ? def.gone : undefined, met: meets.length ? meets[0].id : undefined });
+          out.push(...meets);
         } else if (sightAt(s, e.x, e.y, cfg)) {
           // 景色の驚きの 2 段め（なぞる地面の上なら、そのままなぞれる）
           s.fingers[e.id] = { on: 'sight', acc: 0 };
@@ -997,12 +1037,14 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         // 指の近くの「はらう物」が飛ぶ
         for (const o of visible(s, cfg)) {
           const def = OBJ()[o.kind];
-          if (def.act !== 'blow' || (o.st && o.st.st && !def.again) || locked(s, def, o.st)) continue;
+          if (def.act !== 'blow' || (o.st && o.st.st && (!def.again || o.st.st === 'meet')) || locked(s, def, o.st)) continue;
           if (Math.hypot(o.x - e.x, o.cy - e.y) > cfg.blow.r) continue;
-          const st = stOf(s, o.key);
-          st.st = blownSt(def); st.t = s.t;
+          // 通り道に相手がいれば組み合わせ（飛んだあとの状態は組み合わせの終わりに決まる）
+          const meets = [], met = M().tryBlow(s, o, e.vx, e.vy, cfg, meets);
+          if (!met) { const st = stOf(s, o.key); st.st = blownSt(def); st.t = s.t; }
           addCredit(s, C.hit, cfg);
-          out.push({ type: 'blow', key: o.key, kind: o.kind, x: o.x, y: o.cy, vx: e.vx, vy: e.vy, gone: def.gone });
+          out.push({ type: 'blow', key: o.key, kind: o.kind, x: o.x, y: o.cy, vx: e.vx, vy: e.vy, gone: def.gone, met: met || undefined });
+          out.push(...meets);
         }
         break;
       }
@@ -1021,6 +1063,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
             const p = addFree(s, c.kind, c.from.wx, c.from.y, null, c.item);
             out.push({ type: 'back', key: p.key, kind: c.kind, item: c.item });
             beg(s, p.wx - s.d, p.y + (OBJ()[c.kind].cy || 0), cfg, out);
+          } else if (e.type === 'release' && M().tryCarry(s, c, x, y, cfg, out)) {
+            // 相手の上で離した: 組み合わせ（相手が受け取って、ごはんはなくなる）
+            addCredit(s, C.hit, cfg);
           } else {
             const W2 = cfg.world;
             const wx = Math.max(s.d + L.edge + 10, Math.min(s.d + cfg.view.w - L.edge - 10, Math.round(x) + s.d));
@@ -1046,8 +1091,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       else if (h.act === 'dig') { s.stash += s.cheeks; const n = s.cheeks; s.cheeks = 0; setAct(s, 'stand'); out.push({ type: 'stash', n, stash: s.stash }); }
       else if (h.act === 'wake') { setAct(s, 'stand'); out.push({ type: 'awake' }); }
       else if (h.act === 'bed') { setAct(s, 'sleep'); out.push({ type: 'asleep' }); }
-      else if (['eat', 'poke', 'roll', 'idle', 'beg', 'wear'].includes(h.act)) setAct(s, h.act === 'idle' ? 'sit' : 'stand');
+      else if (['eat', 'poke', 'roll', 'idle', 'beg', 'wear', 'sneeze', 'bounce'].includes(h.act)) setAct(s, h.act === 'idle' ? 'sit' : 'stand');
     }
+    // 組み合わせの反応の終わり
+    M().step(s, cfg, out);
     // なでる: 続けてなでていると転がる
     if (s.pet && s.t - s.pet.lastT <= cfg.pet.gapMs / 1000 && !['roll', 'dig', 'eat'].includes(h.act)) {
       s.pet.ms += dt * 1000;
@@ -1055,10 +1102,12 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     }
     // 歩く
     if (!busy(s, cfg) && s.credit > 0) {
-      const mv = Math.min(s.credit, cfg.walk.speed * dt);
+      const mv = Math.min(s.credit, cfg.walk.speed * dt), d0 = s.d;
       s.d += mv; s.credit -= mv; s.stepAcc += mv;
       if (h.act !== 'walk') { setAct(s, 'walk'); out.push({ type: 'walk' }); }
       while (s.stepAcc >= cfg.walk.stepEvery) { s.stepAcc -= cfg.walk.stepEvery; out.push({ type: 'step', ground: landHere(s, cfg).scratch }); }
+      // 通りすぎた物と、身なり・足元で出会う
+      M().passBy(s, d0, cfg, out);
     } else if (h.act === 'walk') { setAct(s, 'stand'); out.push({ type: 'stop' }); }
     // 何もしないと座る。座っている間は、ときどき待つしぐさ
     if (h.act === 'stand' && !s.carry && !s.pet && s.t - s.lastTouch >= cfg.idle.sitMs / 1000) {
@@ -1101,12 +1150,220 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (['sleep', 'bed', 'wake'].includes(s.ham.act)) return [];
     if (s.carry) { const c = s.carry; s.carry = null; addFree(s, c.kind, c.from.wx, c.from.y, null, c.item); }
     s.pet = null; s.fingers = {}; s.sight = null; s.credit = 0;
+    if (s.meet) { s.meet.until = s.t; M().step(s, cfg, []); } // 組み合わせの反応は、すぐ終わらせる
     s.nest = Math.round(s.d) + cfg.layout.hamX;
     setAct(s, 'bed', cfg.bed.ms / 1000);
     return [{ type: 'bed' }];
   }
 
-  Game.walk = { create, touch, step, bedtime, visible, hamBox, busy, landHere, hamWx, sightPos, sightAt };
+  Game.walk = { create, touch, step, bedtime, visible, hamBox, busy, landHere, hamWx, sightPos, sightAt, addFree, stOf, locked, setAct };
+})();
+</script>
+<script>
+// 組み合わせ（ルール側の純粋な関数。DOM・音・絵に触らない）。設計書 2026-11-20-hoppe-walk-meet-design.md。
+// 物と物、身なりと物、物とハムスターが出会うと、いつもと違う動きが起きる。表は lands.js の MEET。
+// walk.js が、きっかけの所で呼ぶ:
+//   tryCarry … 運んだごはんを離したとき（口・りすに渡せなかったあと）/ tryLand … 跳んで止まった直後 /
+//   tryBlow … はらって飛ばす前 / passBy … 歩いた直後（身なり・足元）/ step … 反応の終わり
+// 状態: s.meet = { id, t0, until, keyA, keyB }（1 つまで。保存しない）。物の st.met … 起きた組み合わせ（同じ物とは 1 回だけ）。
+//   反応中の物は st.st = 'meet'（st.prev に前の状態、st.t は始まった時刻）。残る印は st.keep。
+// 出来事: meet { id, how, keyA, keyB, kindA, kindB, x, y, finger } / meetEnd { id }
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const T = () => Game.lands.MEET;
+  const OBJ = () => Game.lands.OBJ;
+  const Wk = () => Game.walk;
+
+  const rowsFor = (how, a) => Object.keys(T()).filter((id) => T()[id].how === how && T()[id].a === a);
+  // 相手になれる物か（見えていて、反応の途中でなく、その組み合わせがまだ起きていない）
+  function free(s, o, id, cfg) {
+    const st = o.st, def = OBJ()[o.kind];
+    if (!st) return true;
+    if (st.st === 'meet' || st.st === 'away' || st.st === 'gone' || st.st === 'taken') return false;
+    if (st.met && st.met.includes(id)) return false;
+    return !Wk().locked(s, def, st);
+  }
+  // ハムスターが相手になれるか（歩いているか立っていて、運んでいる物もなでている指もない）
+  const hamFree = (s) => ['walk', 'stand'].includes(s.ham.act) && !s.carry && !s.pet;
+
+  function begin(s, id, oa, ob, x, y, finger, cfg, out, kindA) {
+    if (s.meet) return false;
+    const row = T()[id];
+    s.meet = { id, t0: s.t, until: s.t + row.ms / 1000, keyA: oa ? oa.key : null, keyB: ob ? ob.key : null };
+    for (const o of [oa, ob]) {
+      if (!o) continue;
+      const st = Wk().stOf(s, o.key);
+      st.prev = { st: st.st, t: st.t };
+      st.st = 'meet'; st.t = s.t; st.meet = id;
+      (st.met || (st.met = [])).push(id);
+    }
+    if (row.ham) Wk().setAct(s, row.ham, row.ms / 1000);
+    out.push({ type: 'meet', id, how: row.how, keyA: s.meet.keyA, keyB: s.meet.keyB, kindA: kindA || (oa ? oa.kind : row.a), kindB: ob ? ob.kind : row.b, x: Math.round(x), y: Math.round(y), finger });
+    return true;
+  }
+
+  // 運んだごはんを相手の上で離した。起きたら true（ごはんはなくなる）
+  function tryCarry(s, c, x, y, cfg, out) {
+    if (s.meet) return false;
+    const ids = rowsFor('carry', c.kind);
+    if (!ids.length) return false;
+    const pad = cfg.touch.pad, lift = cfg.feed.lift;
+    let best = null, bd = Infinity;
+    for (const o of Wk().visible(s, cfg)) {
+      const id = ids.find((k) => T()[k].b === o.kind);
+      if (!id || !free(s, o, id, cfg)) continue;
+      const dd = Math.min(Math.hypot(x - o.x, y - o.cy), Math.hypot(x - o.x, y - lift - o.cy));
+      if (dd <= o.r + pad && dd < bd) { best = { id, o }; bd = dd; }
+    }
+    if (!best) return false;
+    return begin(s, best.id, null, best.o, best.o.x, best.o.cy, true, cfg, out, c.kind);
+  }
+
+  // 跳んで止まった直後（o は跳ぶ前の見えている物。st.dx はもう足してある）。起きたら true
+  function tryLand(s, o, cfg, out) {
+    if (s.meet) return false;
+    const ids = rowsFor('land', o.kind);
+    if (!ids.length) return false;
+    const nx = o.x + OBJ()[o.kind].dx, pad = cfg.touch.pad + cfg.meet.landPad;
+    let best = null, bd = Infinity;
+    for (const t of Wk().visible(s, cfg)) {
+      if (t.key === o.key) continue;
+      const id = ids.find((k) => T()[k].b === t.kind);
+      if (!id || !free(s, t, id, cfg)) continue;
+      const dd = Math.hypot(nx - t.x, o.y - t.y);
+      if (dd <= t.r + pad && dd < bd) { best = { id, t }; bd = dd; }
+    }
+    if (!best) return false;
+    return begin(s, best.id, o, best.t, best.t.x, best.t.cy, true, cfg, out);
+  }
+
+  // 点 (px, py) から線分 (x0, y0)-(x0 + ux L, y0 + uy L) への距離と、線分の上の進み（0〜L）
+  function seg(px, py, x0, y0, ux, uy, L) {
+    const u = Math.max(0, Math.min(L, (px - x0) * ux + (py - y0) * uy));
+    return { d: Math.hypot(px - (x0 + ux * u), py - (y0 + uy * u)), u };
+  }
+  // はらって飛ばす物 o の通り道に相手がいれば起こす。起きた組み合わせの id を返す（なければ null）
+  function tryBlow(s, o, vx, vy, cfg, out) {
+    if (s.meet) return null;
+    const ids = rowsFor('blow', o.kind), v = Math.hypot(vx, vy);
+    if (!ids.length || !v) return null;
+    const ux = vx / v, uy = vy / v, L = cfg.meet.blowLen, pad = cfg.touch.pad;
+    let best = null;
+    const toHam = ids.find((k) => T()[k].b === 'ham');
+    if (toHam && hamFree(s)) {
+      const c = { x: cfg.layout.hamX, y: cfg.layout.footY - cfg.meet.hamR };
+      const r = seg(c.x, c.y, o.x, o.cy, ux, uy, L);
+      if (r.d <= cfg.meet.hamR && r.u > 0) best = { id: toHam, t: null, u: r.u, x: c.x, y: c.y };
+    }
+    for (const t of Wk().visible(s, cfg)) {
+      if (t.key === o.key) continue;
+      const id = ids.find((k) => T()[k].b === t.kind);
+      if (!id || !free(s, t, id, cfg)) continue;
+      const r = seg(t.x, t.cy, o.x, o.cy, ux, uy, L);
+      if (r.d <= t.r + pad && r.u > 0 && (!best || r.u < best.u)) best = { id, t, u: r.u, x: t.x, y: t.cy };
+    }
+    if (!best) return null;
+    return begin(s, best.id, o, best.t, best.x, best.y, true, cfg, out) ? best.id : null;
+  }
+
+  // 歩いた直後: 画面の x が、ハムスターの前の所（身なりは meet.passX、足元は meet.footX。hamX から前へのドット）をまたいだ物と出会う
+  //   （ハムスターの真ん中まで来ると体に隠れるので、その少し前で起こす）。d0 は歩く前の距離
+  function passBy(s, d0, cfg, out) {
+    if (s.meet || s.d === d0) return;
+    const hx = cfg.layout.hamX, foot = cfg.layout.footY, M = cfg.meet;
+    const crossed = (o, at) => o.x + (s.d - d0) > hx + at && o.x <= hx + at;
+    for (const o of Wk().visible(s, cfg)) {
+      // 身なりを先に（passX は footX より前なので、両方に当てはまる物は身なりが先に起きる）
+      if (crossed(o, M.passX)) for (const slot of ['head', 'neck']) {
+        const item = s.wear[slot];
+        const id = item && rowsFor('pass', item).find((k) => T()[k].b === o.kind);
+        if (id && free(s, o, id, cfg) && begin(s, id, null, o, o.x, o.cy, false, cfg, out)) return;
+      }
+      if (!crossed(o, M.footX)) continue;
+      const id = rowsFor('foot', 'ham').find((k) => T()[k].b === o.kind);
+      if (id && Math.abs(o.y - foot) <= M.foot && hamFree(s) && free(s, o, id, cfg) && begin(s, id, null, o, o.x, o.cy, false, cfg, out)) return;
+    }
+  }
+
+  // 反応の終わり
+  function step(s, cfg, out) {
+    const m = s.meet;
+    if (!m || s.t < m.until) return;
+    const row = T()[m.id];
+    const end = (key, st1) => {
+      const st = key && s.objs[key];
+      if (!st) return null;
+      if (st1) { st.st = st1; st.t = s.t; } else if (st.prev) { st.st = st.prev.st; st.t = st.prev.t; }
+      delete st.prev;
+      return st;
+    };
+    end(m.keyA, row.endA);
+    // 帽子がもう飛んでいった雪だるまは、もう一度飛ばさない
+    const pb = m.keyB && s.objs[m.keyB] && s.objs[m.keyB].prev;
+    const b = end(m.keyB, row.endB === 'hat' && pb && pb.st === 'hat' ? null : row.endB);
+    if (b) {
+      if (row.keepB) b.keep = row.keepB;
+      if (row.dxB) b.dx = (b.dx || 0) + row.dxB;
+      if (row.regrow) b.n = Math.max(0, (b.n || 0) - 1);
+    }
+    s.meet = null;
+    out.push({ type: 'meetEnd', id: m.id });
+  }
+
+  // ---- 確かめ用（?meet=<id>・dev/meets.html・テスト）----
+  // その組み合わせがすぐ起きる場面を作る。{ a, b }（置いた物の key。ないほうは null）と、きっかけに使う画面の点を返す
+  function stage(s, id, cfg = Game.config) {
+    const row = T()[id], LANDS = Game.lands.LANDS, L = cfg.layout;
+    const kindB = row.b === 'ham' ? row.a : row.b;
+    const has = (l, k) => l.spawn.concat(l.find).some((e) => e.kind === k) || l.spawn.some((e) => OBJ()[e.kind].drop === k);
+    const li = Math.max(0, LANDS.findIndex((l) => has(l, kindB)));
+    s.d = li * cfg.land.len + 300; s.nest = s.d - 600;
+    s.objs = {}; s.free = []; s.meet = null; s.carry = null; s.pet = null; s.fingers = {}; s.credit = 0; s.sight = null;
+    s.rareNext = s.d + cfg.rare.every; s.rareLast = s.d;
+    s.bareTo = s.d + cfg.view.w + 80; // 置いた物だけにする（区切りの物はここまで出さない）
+    Wk().setAct(s, 'stand');
+    if (row.how === 'pass') { const slot = Game.lands.GIFT[row.a].slot; s.wear[slot] = row.a; if (!s.got.includes(row.a)) s.got.push(row.a); }
+    const put = (kind, x, y) => (kind === 'ham' ? null : Wk().addFree(s, kind, x + s.d, y).key);
+    const cy = (k) => OBJ()[k].cy || 0;
+    switch (row.how) {
+      case 'carry': {
+        const b = put(row.b, 90, 136);
+        if (row.regrow) Wk().stOf(s, b).n = 1; // 木は実を 1 つ落としたあと（りんごを返す枝がある）
+        return { a: put(row.a, 116, 162), b, from: { x: 116, y: 162 + cy(row.a) }, to: { x: 90, y: 136 + cy(row.b) } };
+      }
+      case 'land': { const ax = 56; return { a: put(row.a, ax, 140), b: put(row.b, ax + OBJ()[row.a].dx, 140), from: { x: ax, y: 140 + cy(row.a) } }; }
+      // 指は物の少し上に置いて（置いただけでは飛ばない所）、そこからはらう
+      case 'blow':
+        if (row.b === 'ham') return { a: put(row.a, 78, 146), b: null, from: { x: 78, y: 146 + cy(row.a) - 18 }, v: { x: -0.5, y: 0 } };
+        return { a: put(row.a, 60, 140), b: put(row.b, 100, 140), from: { x: 60, y: 140 + cy(row.a) - 18 }, v: { x: 0.5, y: 0 } };
+      case 'pass': return { a: null, b: put(row.b, L.hamX + cfg.meet.passX + 16, 130) };
+      case 'foot': return { a: null, b: put(row.b, L.hamX + cfg.meet.footX + 16, L.footY) };
+    }
+    return { a: null, b: null };
+  }
+  // stage の場面で、きっかけを指の出来事として起こす（carry / land / blow）。pass と foot は歩く分を渡すだけ（呼ぶ側が step で進める）
+  //   出来事の列を返す
+  function kick(s, id, at, cfg = Game.config, fid = 900) {
+    const row = T()[id], W = Wk(), out = [];
+    const tc = (e) => out.push(...W.touch(s, e, cfg));
+    switch (row.how) {
+      case 'carry':
+        tc({ type: 'press', id: fid, x: at.from.x, y: at.from.y });
+        tc({ type: 'stroke', id: fid, x: at.to.x, y: at.to.y, px: at.from.x, py: at.from.y, d: Math.hypot(at.to.x - at.from.x, at.to.y - at.from.y) });
+        tc({ type: 'release', id: fid, x: at.to.x, y: at.to.y, moved: true });
+        break;
+      case 'land': tc({ type: 'press', id: fid, x: at.from.x, y: at.from.y }); tc({ type: 'release', id: fid, x: at.from.x, y: at.from.y, moved: false }); break;
+      case 'blow':
+        tc({ type: 'press', id: fid, x: at.from.x, y: at.from.y });
+        tc({ type: 'flick', id: fid, x: at.from.x, y: at.from.y, vx: at.v.x, vy: at.v.y });
+        tc({ type: 'release', id: fid, x: at.from.x, y: at.from.y, moved: true });
+        break;
+      default: s.credit = Math.max(s.credit, 40);
+    }
+    return out;
+  }
+
+  Game.meet = { tryCarry, tryLand, tryBlow, passBy, step, stage, kick, hamFree };
 })();
 </script>
 <script>
@@ -1472,7 +1729,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       fx: { pop: 'ポンッ', swish: 'ヒュッ', rustle: 'サッ', bloom: 'パッ', buzz: 'ブーン', fuwa: 'フワッ', grab: 'ヒョイ', hop: 'ピョン', munch: 'モグモグ', poke: 'ムニッ', roll: 'ゴロン', pet: 'スリスリ', dig: 'ザッザッ', stash: 'ポンッ', find: 'ピョコッ',
         kero: 'ケロッ', pachin: 'パチン', yura: 'ユラユラ', paka: 'パカッ', kasa: 'カサカサ', poyon: 'ポヨン', yusa: 'ユサユサ', poto: 'ポトッ',
         hira: 'ヒラリ', kira: 'キラッ', pon: 'ポーン', chapu: 'チャプ', aan: 'アーン', wake: 'ムクッ', hello: 'ピョコッ', jaan: 'ジャーン',
-        niji: 'キラキラ', pasha: 'パシャッ', zabun: 'ザブーン', pushu: 'プシュー', choro: 'チョロチョロ', chu: 'チュッ', kiran: 'キラーン' },
+        niji: 'キラキラ', pasha: 'パシャッ', zabun: 'ザブーン', pushu: 'プシュー', choro: 'チョロチョロ', chu: 'チュッ', kiran: 'キラーン',
+        // 組み合わせ（lands.js の MEET）
+        chon: 'チョン', paa: 'パーッ', hakushon: 'ハクション', pekori: 'ペコリ', paku: 'パクッ', pyoon: 'ピョーン', kerokero: 'ケロケロ',
+        bukubuku: 'ブクブク', puu: 'プッ', kirari: 'キラリ', hirahira: 'ヒラヒラ', pita: 'ピタッ', kyoro: 'キョロキョロ', po: 'ポッ' },
       // 親の画面（字の読める大人のため。ひらがな）
       parent: { adult: 'おとな', title: 'おとなの へや', sleep: 'おやすみ', sound: 'おと', vol0: 'ちいさい', vol1: 'ふつう', vol2: 'おおきい',
         haptics: 'ぶるぶる', on: 'あり', off: 'なし', back: 'もどる' },
@@ -2486,9 +2746,34 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         break;
       }
       case 'roll': p.rot = Math.min(3, Math.floor((u / (cfg.roll.ms / 1000)) * 4)) + 1; p.eyes = 'happy'; break;
+      // 組み合わせ: 綿毛が鼻に付いて「ハクション」（綿毛が届くまで目を丸く → 吸いこむ → 目をつぶって体ごとはじける）
+      case 'sneeze':
+        if (u < 0.45) { p.eyes = 'wide'; p.look = 1; }
+        else if (u < 0.62) { p.eyes = 'squint'; p.mouth = 'open'; p.bob = -1; p.hatY = -1; }
+        else if (u < 0.85) { p.eyes = 'squint'; p.mouth = 'open'; p.squash = 2; p.lean = 2; p.hatY = -3; }
+        else p.eyes = 'happy';
+        break;
+      // 組み合わせ: きのこの傘でぽよんと跳ねる（大きく 1 回、小さく 1 回）
+      case 'bounce': {
+        const v = Math.max(0, u - 0.07) / 0.83; // きのこが縮んでから跳ぶ
+        p.eyes = 'happy'; p.mouth = 'open';
+        // 体ごと持ち上げる（影は地面に残る）。1 回め 5 ドット、2 回め 2 ドット。跳ぶ瞬間だけ縦に伸び、着地で縮む
+        p.lift = v < 0.6 ? Math.round(5 * Math.sin(Math.PI * v / 0.6)) : Math.round(2 * Math.sin(Math.PI * Math.min(1, (v - 0.6) / 0.3)));
+        if (v < 0.08) p.bob = -1; else if ((v > 0.55 && v < 0.62) || v > 0.92) p.squash = 1;
+        p.hatY = v < 0.3 ? -2 : 0;
+        break;
+      }
       default: if (cyc(2.7, 10) === 0) p.eyes = 'closed'; break;
     }
     if (s.pet && s.t - s.pet.lastT <= cfg.pet.gapMs / 1000 && h.act !== 'roll') p.eyes = 'happy';
+    // 身なりの組み合わせ（立ち止まって見ている）: 目を細めて会釈を返す
+    if (s.meet && Game.lands.MEET[s.meet.id].how === 'pass' && h.act === 'stand') {
+      // はじめは目を開けて見て、相手が応えたら会釈（頭を 2 ドット下げて止め、戻す）
+      const v = s.t - s.meet.t0;
+      if (v < 0.45) { p.look = 1; p.eyes = 'open'; } else if (v < 1.0) { p.eyes = 'happy'; p.bob = v < 0.55 || v > 0.9 ? 1 : 2; p.lean = 1; }
+    }
+    // かえるが頭を越える: 上を見て、少し縮む
+    if (s.meet && s.meet.id === 'frogFoot' && ['walk', 'stand'].includes(h.act)) { const v = s.t - s.meet.t0; if (v < 0.6) { p.eyes = 'wide'; p.squash = v > 0.1 && v < 0.45 ? 1 : 0; p.hatY = -1; } }
     // 景色の驚きが始まったとき: 目を丸くして口を開ける
     if (s.sight && s.t - s.sight.t0 < 1.6 && ['stand', 'walk', 'sit'].includes(h.act)) { p.eyes = 'wide'; p.mouth = 'open'; }
     // 運んでいる間: 口を大きく開けて、手を伸ばして待つ（ここへ持ってきて、が分かるように）
@@ -2548,6 +2833,25 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       px(g, ch, x + i, y + j);
     }
   }
+  // ---- 組み合わせ（lands.js の MEET）の道具 ----
+  const lerp = (a, b, u) => a + (b - a) * u;
+  // すきまのない 1 ドットの線
+  const line = (g, c, x0, y0, x1, y1) => { const n = Math.max(Math.abs(x1 - x0), Math.abs(y1 - y0), 1); for (let i = 0; i <= n; i++) px(g, c, Math.round(lerp(x0, x1, i / n)), Math.round(lerp(y0, y1, i / n))); };
+  // 小さな泡の輪（3×3 の白、まん中が抜け、右下に影）。k: 1 → 輪、0.5 → 点、0 → なし（半透明にせず段で消す）
+  const bubbleDot = (g, x, y, k) => { if (k <= 0) return; if (k < 0.5) { px(g, 6, x, y); return; } px(g, 6, x - 1, y, 1, 1); px(g, 6, x, y - 1, 1, 1); px(g, 5, x + 1, y, 1, 1); px(g, 5, x, y + 1, 1, 1); };
+  // 1 ドットの輪（いまの fillStyle で）
+  const ring = (g, cx, cy, r) => { for (let i = 0; i < 8 * r + 4; i++) { const a = (i / (8 * r + 4)) * Math.PI * 2; g.fillRect(Math.round(cx + Math.cos(a) * r), Math.round(cy + Math.sin(a) * r), 1, 1); } };
+  const ease = (u) => { u = clamp(u, 0, 1); return u * u * (3 - 2 * u); };
+  // 組み合わせの名前（反応の途中なら）。since はそのときの、組み合わせが始まってからの秒
+  const meetOf = (o, st) => (st === 'meet' && o.st ? o.st.meet : null);
+  // 反応の前の状態（咲いていた・開いていた・帽子が飛んでいた）
+  const before = (o, st) => (st === 'meet' ? (o.st.prev && o.st.prev.st) || null : st);
+  // 組み合わせの相手（見えている物）。いなければ null
+  function mate(s, o) {
+    const m = s.meet; if (!m) return null;
+    const k = m.keyA === o.key ? m.keyB : m.keyA;
+    return k ? Game.walk.visible(s).find((v) => v.key === k) || null : null;
+  }
   // 足元の影
   const shadow = (g, x, y, rx, a = 0.22) => { const a0 = g.globalAlpha; g.globalAlpha = a0 * a; g.fillStyle = PAL[0]; ell(g, x, y, rx, 1); g.globalAlpha = a0; };
   // 水しぶき（a: 0〜1 で広がって消える輪と、飛び散る粒）
@@ -2585,13 +2889,50 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     '.pmmmp.',
     '..pmp..',
   ];
+  // ひまわり（種を花にあげると変わる）。k: 0〜1 で開いていく
+  function sunflower(g, hx, hy, k) {
+    const n = 8, R = 1 + 3 * k, pr = k < 0.45 ? 1 : 2, cr = k < 0.5 ? 1 : 2;
+    const pet = [];
+    for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2 + 0.4; pet.push([Math.round(Math.cos(a) * R), Math.round(Math.sin(a) * R), Math.round(Math.cos(a) * (R + pr)), Math.round(Math.sin(a) * (R + pr))]); }
+    // 花びら（縁 → 影 → 地 → 先の光）。先が 1 枚ずつ外へ出る
+    for (const [dx, dy, tx, ty] of pet) { g.fillStyle = PAL.g; ell(g, hx + dx, hy + dy, pr + 1, pr + 1); px(g, 'g', hx + tx - 1, hy + ty - 1, 3, 3); }
+    for (const [dx, dy, tx, ty] of pet) { g.fillStyle = PAL.j; ell(g, hx + dx, hy + dy, pr, pr); g.fillStyle = PAL.k; ell(g, hx + dx - Math.sign(dx), hy + dy - Math.sign(dy), pr, pr); px(g, 'k', hx + tx, hy + ty); }
+    for (const [dx, dy] of pet) px(g, 'l', hx + Math.round(dx * 0.8), hy + Math.round(dy * 0.8));
+    // 花びらの間の切れ込み（外周を 1 ドット深く）
+    if (k > 0.6) for (let i = 0; i < n; i++) { const a = ((i + 0.5) / n) * Math.PI * 2 + 0.4; px(g, 'g', hx + Math.round(Math.cos(a) * (R + 1)), hy + Math.round(Math.sin(a) * (R + 1))); }
+    // 真ん中（こげ茶の縁、茶の地、明るい点）
+    oell(g, hx, hy, cr, cr, PAL.f, PAL.g);
+    px(g, 'e', hx - 1, hy - 1); if (cr > 1) { px(g, 'e', hx, hy - 2); px(g, 'g', hx + 1, hy + 1); }
+  }
+  // 花の上にとまった小さなてんとう虫（頭が右）。fold: 0〜1 で羽をたたむ
+  function perchBug(g, bx, by, fold) {
+    if (fold < 1) { const w = Math.round(3 * (1 - fold)); g.fillStyle = PAL[6]; ell(g, bx - 1, by - 3, w + 1, 1); }
+    oell(g, bx, by, 3, 2, PAL.h, PAL[0]);
+    g.fillStyle = PAL.i; ell(g, bx - 1, by - 1, 2, 1);
+    px(g, 6, bx - 2, by - 2);                              // 光
+    px(g, 'i', bx - 2, by - 1, 1, 2); px(g, 'i', bx - 1, by, 1, 1); px(g, 'i', bx, by - 1, 3, 2); // 点のまわりを地の赤に（影にまぎれないように）
+    px(g, 0, bx - 2, by); px(g, 0, bx + 1, by - 1);        // 背中の点 2 つ
+    px(g, 0, bx + 3, by - 1, 2, 2); px(g, 0, bx + 5, by - 2); // 黒い頭と触角
+  }
   function flower(g, o, s, t, st, since) {
     const { x, y } = o, [P, Q, H] = PETAL[Math.floor(keyHash(o.key) * PETAL.length)];
-    const sw = wob(since, 0.6, 2, 18);
+    const m = meetOf(o, st), keep = o.st && o.st.keep;
+    let sw = m ? 0 : wob(since, 0.6, 2, 18), bx = 0, by = 0, perch = keep === 'perch', fold = 1, sun = keep === 'sunflower' ? 1 : 0, seed = -1;
+    // 王冠で通りすぎると、ハムスターのほう（左）へおじぎする
+    let bend = 0;
+    if (m === 'crownFlower') { const u = since / 0.9, k = u < 0.35 ? ease(u / 0.35) : u < 0.6 ? 1 : 1 - ease((u - 0.6) / 0.4); bx = -Math.round(4 * k); by = Math.round(3 * k); bend = k; }
+    // てんとう虫がとまる: 重みで少ししなって、羽をたたむ
+    if (m === 'bugFlower' && since >= 0.5) { perch = true; fold = clamp((since - 0.5) / 0.4, 0, 1); sw = wob(since - 0.5, 0.8, 2, 16); by = since < 0.7 ? 1 : 0; }
+    // 種が花の真ん中に落ちて、ひまわりに開く
+    if (m === 'seedFlower') { if (since < 0.35) seed = since / 0.35; else sun = ease((since - 0.35) / 0.5); }
+    st = before(o, st);
     shadow(g, x, y, 5);
     grid(g, STEM, x - 4, y - 10);
-    const hx = x + sw, hy = y - 15;
-    if (st === 'bloom') {
+    // おじぎ: 茎の上のほうも左へしなる
+    if (bend > 0.3) { px(g, 'p', x - 2, y - 11, 3, 2); px(g, 'm', x - 1, y - 11, 1, 2); if (bend > 0.7) { px(g, 'p', x - 3, y - 12, 2, 1); } }
+    const hx = x + sw + bx, hy = y - 15 + by;
+    if (sun > 0) sunflower(g, hx, hy, sun);
+    else if (st === 'bloom') {
       const k = Math.min(1, since / 0.25), r = Math.round(2 + 3 * k);
       const pet = [0, 1, 2, 3, 4].map((i) => { const a = -Math.PI / 2 + (i * Math.PI * 2) / 5; return [Math.round(Math.cos(a) * r), Math.round(Math.sin(a) * r)]; });
       // 花びらを 1 枚ずつ（縁・影・地・光）。重なった所に縁が残って 1 枚ずつに見える
@@ -2604,6 +2945,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       oell(g, hx, hy, 2, 2, PAL.k, PAL.g);
       px(g, 'l', hx - 1, hy - 1, 2, 1); px(g, 'j', hx + 1, hy + 1);
     } else grid(g, BUD, hx - 3, hy - 4, { P, Q, H });
+    if (seed >= 0) grid(g, ['.g.', 'gfg', 'gcg', 'gfg', '.g.'], hx - 1, Math.round(hy - 12 + 10 * seed * seed)); // 小さな種（こげ茶に明るい縦すじ）が真ん中へ落ちる
+    if (perch) perchBug(g, hx + 3, hy - (sun > 0 ? 6 : st === 'bloom' ? 5 : 4), fold); // 真上から少し横へずらして、はみ出させる
   }
 
   // てんとう虫（上から見た形。頭が右。はねの合わせ目は横）
@@ -2614,6 +2957,12 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (st === 'fly' && since < 0.7) {
       fly = true; const u = since / 0.7;
       lx = Math.round(x - def.dx * (1 - u)); ly = Math.round(y - 3 - Math.sin(Math.PI * u) * 22);
+    } else if (st === 'meet') {
+      // 花へ飛んでいって、とまる（とまったあとは花の絵が描く）
+      const b = mate(s, o);
+      if (since >= 0.5 || !b) return;
+      fly = true; const u = ease(since / 0.5);
+      lx = Math.round(lerp(x - def.dx, b.x + 1, u)); ly = Math.round(lerp(y - 3, b.y - 20, u) - Math.sin(Math.PI * u) * 14);
     } else if (st === 'away') {
       fly = true;
       const lift = Math.min(1, since / 0.3), v = Math.max(0, (since - 0.3) / (def.away - 0.3));
@@ -2649,7 +2998,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     // 茎と葉
     px(g, 'p', x - 1, y - 9, 3, 10); px(g, 'n', x, y - 9, 1, 10);
     grid(g, ['pp....pp', 'pmp..pmp', '.pmppmp.'], x - 4, y - 2);
-    if (st === 'blown') { oell(g, x, y - 10, 2, 1, PAL.c, PAL.y); px(g, 6, x - 2, y - 13); px(g, 6, x + 2, y - 14); px(g, 5, x - 1, y - 12); px(g, 5, x + 1, y - 12); return; }
+    if (st === 'blown' || st === 'meet') { oell(g, x, y - 10, 2, 1, PAL.c, PAL.y); px(g, 6, x - 2, y - 13); px(g, 6, x + 2, y - 14); px(g, 5, x - 1, y - 12); px(g, 5, x + 1, y - 12); return; }
     const w = wob(since, 0.4, 1, 30), cx = x + w, cy = y - 17;
     g.fillStyle = PAL[5]; ell(g, cx, cy, 9, 9);
     g.fillStyle = PAL[6]; ell(g, cx - 1, cy - 1, 8, 8);
@@ -2697,9 +3046,20 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // ---------------- いけ ----------------
   // かえる（前から。すわっている）
   function frog(g, o, s, t, st, since, def) {
-    const { x, y } = o;
+    const { x, y } = o, m = meetOf(o, st);
     let fx = x, fy = y, sq = 0;
-    if (st === 'jump' && since < 0.5) { const u = since / 0.5; fx = Math.round(x - def.dx * (1 - u)); fy = Math.round(y - Math.sin(Math.PI * u) * 18); }
+    // ハムスターの頭を越えるところは front が描く。ここ（ハムスターより奥）では地面の影だけ
+    if (m === 'frogFoot') { const u = clamp(since / 0.85, 0, 1); shadow(g, Math.round(lerp(x + 2, x + Game.lands.MEET.frogFoot.dxB, ease(u))), y, 6, 0.12); return; }
+    if (m === 'frogBubble' || m === 'frogWeed') {
+      // あわ・水草へ跳ぶ。あわはパクッと食べてのどをふくらませる。水草には隠れる（隠れたあとは水草の絵が描く）
+      const b = m === 'frogWeed' ? mate(s, o) : null, tx = b ? b.x : x, ty = b ? b.y - 8 : y;
+      if (m === 'frogWeed' && since >= 0.36) return; // 葉の中へもぐった（あとは水草の絵が描く）
+      if (since < 0.45) { const u = since / (m === 'frogWeed' ? 0.36 : 0.45); fx = Math.round(lerp(x - def.dx, tx, u)); fy = Math.round(lerp(y, ty, u) - Math.sin(Math.PI * u) * 18); }
+      else sq = since < 0.9 ? 2 : since < 1.05 ? 1 : 0;
+    } else if (m === 'packFrog') {
+      // リュックのかえると一緒に「ケロケロ」: のどを 2 回ふくらませる（間に休み）
+      sq = since < 0.25 || (since > 0.4 && since < 0.65) ? 2 : 0;
+    } else if (st === 'jump' && since < 0.5) { const u = since / 0.5; fx = Math.round(x - def.dx * (1 - u)); fy = Math.round(y - Math.sin(Math.PI * u) * 18); }
     else if (st === 'away') {
       const wy = Game.config.layout.groundY + 14;
       if (since < 0.4) { const u = since / 0.4; fx = Math.round(x + 16 * u); fy = Math.round(y - Math.sin(Math.PI * u) * 14); }
@@ -2707,7 +3067,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       else { splash(g, x + 30, wy, (since - 0.85) / (def.away - 0.85)); return; }
     } else if (Math.floor(t * 1.3 + keyHash(o.key) * 9) % 7 === 0) sq = 1; // ときどき のどを ふくらませる
     const air = fy < y - 1;
-    shadow(g, fx, y, 8, air ? 0.12 : 0.22);
+    if (!o.noShadow) shadow(g, fx, y, 8, air ? 0.12 : 0.22);
     const by = fy - 5; // 体の真ん中
     // 後ろ足（たたんで横に）
     oell(g, fx - 7, fy - 2, 3, 2, PAL.m, PAL.g); oell(g, fx + 7, fy - 2, 3, 2, PAL.m, PAL.g);
@@ -2716,26 +3076,42 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     oell(g, fx, by, 8, 5 - sq, PAL.n, PAL.g);
     g.fillStyle = PAL.m; ell(g, fx - 1, by - 1, 7, 4 - sq);
     // おなか（のどがふくらむと大きく）
-    g.fillStyle = PAL.c; ell(g, fx, by + 2, 4 + sq * 2, 1 + sq);
+    // おなか（のどがふくらむと大きく。袋のときはおなかは普段のままで、袋を足す）
+    const psq = sq >= 2 ? 0 : sq;
+    g.fillStyle = PAL.c; ell(g, fx, by + 2, 4 + psq * 2, 1 + psq);
+    // のどの袋（口の下の丸いふくらみ。あごから少しはみ出す）
+    const pouch = sq >= 2;
     // 前足（指が 3 本）
     for (const s2 of [-1, 1]) { px(g, 'g', fx + s2 * 4 - 2, fy - 1, 5, 2); px(g, 'm', fx + s2 * 4 - 1, fy - 1, 3, 1); }
     // 目（頭の上に飛び出す）と口とほっぺ
     // 目: 頭の上の緑のこぶに、黒い目と白い光
     for (const ex of [-4, 4]) { oell(g, fx + ex, by - 5, 3, 3, PAL.m, PAL.g); px(g, 0, fx + ex - 1, by - 6, 3, 3); px(g, 0, fx + ex, by - 7); px(g, 6, fx + ex - 1, by - 6); }
+    if (pouch) { oell(g, fx, by + 4, 3, 2, PAL.c, PAL.g); px(g, 'x', fx + 1, by + 5, 2, 1); px(g, 6, fx - 2, by + 3); }
     px(g, 'g', fx - 3, by + 1, 7, 1); px(g, 'g', fx - 4, by); px(g, 'g', fx + 4, by);
     px(g, 'w', fx - 6, by, 2, 1); px(g, 'w', fx + 5, by, 2, 1);
     px(g, 'l', fx - 3, by - 3, 2, 1);
   }
 
   // あわ（ふわふわ浮く。虹色に光る）
-  function bubble(g, o, s, t) {
-    const { x, y } = o, by = y - 14 + Math.round(Math.sin(t * 2 + keyHash(o.key) * 6) * 1.5);
-    shadow(g, x, y, 4, 0.12);
+  function bubble(g, o, s, t, st, since) {
+    let { x, y } = o, rr = 6.5;
+    let shade = true;
+    if (meetOf(o, st) === 'frogBubble') {
+      if (since >= 0.45) return;
+      const a = mate(s, o);
+      // その時のかえるの口（跳んでいる途中も追う）へ吸いこまれる
+      if (a && since > 0.3) {
+        const dx = Game.lands.OBJ.frog.dx, w = since / 0.45, mx = lerp(a.x - dx, a.x, w), my = a.y - Math.sin(Math.PI * w) * 18 - 4;
+        const u = ease((since - 0.3) / 0.15); x = Math.round(lerp(x, mx, u)); y = Math.round(lerp(y, my + 14, u)); rr = lerp(6.5, 2, u); shade = false;
+      }
+    }
+    const by = y - 14 + Math.round(Math.sin(t * 2 + keyHash(o.key) * 6) * 1.5);
+    if (shade) shadow(g, x, y, 4, 0.12);
     const a0 = g.globalAlpha;
-    g.globalAlpha = a0 * 0.3; g.fillStyle = PAL.s; ell(g, x, by, 6, 6); g.globalAlpha = a0;
+    g.globalAlpha = a0 * 0.3; g.fillStyle = PAL.s; ell(g, x, by, Math.round(rr - 0.5), Math.round(rr - 0.5)); g.globalAlpha = a0;
     // ふち（上は白、下は水色、横に虹色）
     for (let i = 0; i < 40; i++) {
-      const a = (i / 40) * Math.PI * 2, rx = Math.round(x + Math.cos(a) * 6.5), ry = Math.round(by + Math.sin(a) * 6.5);
+      const a = (i / 40) * Math.PI * 2, rx = Math.round(x + Math.cos(a) * rr), ry = Math.round(by + Math.sin(a) * rr);
       const c = Math.sin(a) < -0.3 ? 6 : Math.cos(a) > 0.5 ? 'w' : Math.cos(a) < -0.5 ? 'l' : 's';
       px(g, c, rx, ry);
     }
@@ -2744,9 +3120,19 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   // 水草（3 本の葉がゆれる。はらうと大きくゆれる）
   function weed(g, o, s, t, st, since) {
-    const { x, y } = o, big = since < 1.2 ? (1 - since / 1.2) * 4 : 0;
+    const m = meetOf(o, st), hide = (o.st && o.st.keep === 'hide') || (m === 'frogWeed' && since >= 0.5);
+    if (m === 'frogWeed') since = since < 0.36 ? 9 : since - 0.36; // かえるが飛びこんだときに大きくゆれる
+    const { x, y } = o, big = since < 1.2 ? (1 - since / 1.2) * (m ? 2 : 4) : 0;
+    // 隠れたかえるの目（葉の間からのぞく。ときどきまばたき）
+    const eyes = () => {
+      const blink = Math.floor(t * 1.1 + keyHash(o.key) * 7) % 9 === 0;
+      for (const ex of [-4, 4]) { oell(g, x + ex, y - 10, 2, 2, PAL.m, PAL[0]); if (blink) px(g, 0, x + ex - 1, y - 10, 3, 1); else { px(g, 0, x + ex - 1, y - 11, 2, 2); px(g, 6, x + ex - 1, y - 11); } }
+    };
     shadow(g, x, y, 6);
-    for (const [dx, h, c, c2] of [[-5, 13, 'n', 'm'], [4, 11, 'n', 'm'], [0, 19, 'm', 'l'], [-2, 16, 'n', 'm']]) {
+    const BL = hide ? [[-5, 13, 'n', 'm'], [4, 11, 'n', 'm'], [-2, 16, 'n', 'm'], 'eyes', [0, 19, 'm', 'l']] : [[-5, 13, 'n', 'm'], [4, 11, 'n', 'm'], [0, 19, 'm', 'l'], [-2, 16, 'n', 'm']];
+    for (const B of BL) {
+      if (B === 'eyes') { eyes(); continue; } // 目は奥の葉の前、手前の真ん中の葉の後ろ（2 本の葉先の間からのぞく）
+      const [dx, h, c, c2] = B;
       for (let i = 0; i < h; i++) {
         const k = i / h, wdt = i > h - 3 ? 1 : 2;
         const sw = Math.round(Math.sin(t * 1.6 + i * 0.35 + dx) * (1 + k) + Math.sin(since * 10) * big * k);
@@ -2757,6 +3143,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       const sw = Math.round(Math.sin(t * 1.6 + h * 0.35 + dx) * 2 + Math.sin(since * 10) * big);
       px(g, 'p', x + dx + sw, y - h, 1, 1);
     }
+    // 飛びこんだしぶき: 葉のかけらが 2 枚はね上がる
+    if (m === 'frogWeed' && since < 0.3) for (const sd of [-1, 1]) { const v = since / 0.3, kx = Math.round(x + sd * (3 + v * 6)), ky = Math.round(y - 18 - Math.sin(Math.PI * v) * 6); px(g, 'm', kx, ky); px(g, 'm', kx + sd, ky - 1); px(g, 'p', kx - sd, ky + 1); }
   }
 
   // ---------------- はま ----------------
@@ -2781,7 +3169,17 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     px(g, shine ? 6 : 'x', cx - Math.round(w * 0.4), by - h + 1 - lift, 2, 1);
   }
   function shell(g, o, s, t, st, since) {
-    const { x, y } = o, open = st === 'open', tw = wob(since, 0.3, 1, 30);
+    const { x, y } = o, m = meetOf(o, st);
+    let open = st === 'open', tw = wob(since, 0.3, 1, 30), bub = -1, star = 0;
+    if (m) {
+      const was = before(o, st) === 'open';
+      // 泡が当たると開いて、泡をぷっと吐く / 麦わら帽子で通りすぎると開いて、真珠がきらり
+      const [t0, t1] = m === 'foamShell' ? [0.35, 0.95] : [0, 0.95];
+      open = was || (since >= t0 && since < t1); tw = since >= t0 ? wob(since - t0, 0.3, 1, 30) : 0;
+      if (m === 'foamShell' && since >= 0.55) bub = since < 0.65 ? 0 : (since - 0.65) / 0.55; // すきまの前で一瞬止まってから上がる
+      if (m === 'strawShell' && since >= 0.3 && since < 0.95) star = Math.sin(Math.PI * (since - 0.3) / 0.65);
+      if (m === 'foamShell' && since >= 0.35 && since < 0.55) for (const [dx, dy] of [[-9, -1], [9, -2]]) bubbleDot(g, x + dx, y + dy, 1); // 着いた泡のなごり（下の殻のふちの外）
+    }
     shadow(g, x, y, 8);
     // 下の殻
     oell(g, x, y - 2, 7, 2, PAL.v, PAL.g);
@@ -2789,16 +3187,25 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       oell(g, x, y - 3, 6, 2, PAL.x, PAL.v);
       oell(g, x, y - 4, 2, 2, PAL[6], PAL[5]); px(g, 6, x - 1, y - 6); px(g, 'w', x + 1, y - 3);
       // きらり
-      if (Math.sin(t * 5) > 0.3) { px(g, 6, x + 3, y - 8); px(g, 6, x + 2, y - 7, 3, 1); px(g, 6, x + 3, y - 6); }
+      if (star > 0) { /* きらりは、ふたの手前に描く（下） */ }
+      else if (Math.sin(t * 5) > 0.3) { px(g, 6, x + 3, y - 8); px(g, 6, x + 2, y - 7, 3, 1); px(g, 6, x + 3, y - 6); }
     }
     // 上の殻（開くと持ち上がる）と、ちょうつがいの耳
     scallop(g, x, y - 1, 7, 7, open ? 6 + tw : tw, true);
     px(g, 'g', x - 4, y - 2, 9, 2); px(g, 'x', x - 3, y - 2, 7, 1);
+    // 吐いた泡（ふわっと上がって消える）
+    if (bub >= 0 && bub < 1) bubbleDot(g, x + 3, Math.round(y - 3 - bub * 18), bub < 0.7 ? 1 : 0.4); // 止まる所は真珠の右下（下の殻の上。白い真珠に重ねない）
+    // 真珠のきらり（十字。真珠の右上、ふたより手前）
+    if (star > 0) { const r = 1 + Math.round(star * 2), sx = x + 3, sy = y - 7; px(g, 'k', sx - r - 1, sy); px(g, 'k', sx + r + 1, sy); px(g, 'k', sx, sy - r - 1); px(g, 'k', sx, sy + r + 1); px(g, 'l', sx - r, sy, r * 2 + 1, 1); px(g, 'l', sx, sy - r, 1, r * 2 + 1); px(g, 6, sx, sy); }
   }
 
   // かに（前から。はさみを上げて、目が飛び出す）
   function crab(g, o, s, t, st, since) {
-    const { x, y } = o;
+    const { x, y } = o, m = meetOf(o, st);
+    // 足元: 左のはさみをハムスターの足へのばして、ちょん / 泡: 泡まみれになって、泡が 1 つずつ消える
+    const reach = m === 'crabFoot' ? Math.sin(Math.PI * clamp((since - 0.05) / 0.5, 0, 1)) : 0, snip = m === 'crabFoot' && since > 0.22 && since < 0.4;
+    const suds = m === 'foamCrab' && since >= 0.4 ? 1 - (since - 0.4) / 1.0 : 0;
+    if (m) st = before(o, st);
     const off = st === 'scuttle' && since < 0.9 ? Math.round(Math.sin((since / 0.9) * Math.PI) * 20) : 0;
     const cx = x + off, cy = y - 5, leg = Math.floor(t * (off ? 12 : 2)) % 2;
     shadow(g, cx, y, 9);
@@ -2813,22 +3220,40 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     px(g, 'w', cx - 4, cy - 3, 3, 1);
     // はさみ
     for (const sd of [-1, 1]) {
-      const hx = cx + sd * 10, hy = cy - 5 + (off ? leg : 0);
-      px(g, 'g', cx + sd * 6 - (sd < 0 ? 2 : 0), cy - 3, 3, 2);
+      if (sd < 0 && m === 'crabFoot') continue;
+      const rx = 0, wig = suds > 0 ? Math.floor(since * 8) % 2 : 0;
+      const hx = cx + sd * 10 - rx, hy = cy - 5 + (off ? leg : 0) - wig;
+      px(g, 'g', cx + sd * 6 - (sd < 0 ? 2 : 0) - rx, cy - 3, 3 + rx, 2);
       oell(g, hx, hy, 3, 3, PAL.i, PAL.g);
-      px(g, 'g', hx - 1 + sd, hy - 3, 1, 3); // 切れこみ
+      px(g, 'g', hx - 1 + sd, hy - 3, 1, snip && sd < 0 ? 1 : 3); // 切れこみ（ちょんで閉じる）
       px(g, 'w', hx - sd, hy - 1);
     }
     // 目（棒の先）と口
-    for (const sd of [-1, 1]) { px(g, 'g', cx + sd * 2, cy - 7, 1, 3); oell(g, cx + sd * 2, cy - 8, 1, 1, PAL[6], PAL.g); px(g, 0, cx + sd * 2, cy - 8); }
+    const eyesC = () => { for (const sd of [-1, 1]) { px(g, 'g', cx + sd * 2, cy - 7, 1, 3); oell(g, cx + sd * 2, cy - 8, 1, 1, PAL[6], PAL.g); px(g, 0, cx + sd * 2, cy - 8); } };
+    eyesC();
     px(g, 'g', cx - 1, cy + 1, 3, 1);
+    // 泡まみれ: 体のまわりの泡が 1 つずつ消え、小さな泡が上がる
+    if (suds > 0) {
+      const B = [[-4, -1, 2], [3, -2, 2], [0, 0, 2], [-2, 2, 1], [5, 1, 1], [-6, 1, 1]];
+      const n = Math.ceil(B.length * suds);
+      for (let i = 0; i < n; i++) { const [dx, dy, r] = B[i]; oell(g, cx + dx, cy + dy, r, r, PAL[6], PAL[5]); px(g, 6, cx + dx - 1, cy + dy - r + 1); }
+      eyesC(); // 目は泡の手前に（かにの顔が見えるように）
+      for (let i = 0; i < 3; i++) { const v = ((since * 1.6 + i / 3) % 1); bubbleDot(g, cx - 3 + i * 3, Math.round(cy - 11 - v * 12), v < 0.8 ? 1 : 0.4); }
+    }
   }
 
   // 泡（はま）: 白い泡のかたまり
-  function foam(g, o, s, t) {
-    const { x, y } = o;
+  function foam(g, o, s, t, st, since) {
+    let { x, y } = o, k = 1;
+    const m = meetOf(o, st);
+    if (m) {
+      const T1 = m === 'foamCrab' ? 0.4 : 0.35, b = mate(s, o);
+      if (since >= T1 || !b) return;
+      const u = ease(since / T1); x = Math.round(lerp(x, b.x, u)); y = Math.round(lerp(y, b.y - 2, u) - Math.sin(Math.PI * u) * 10); k = 1 - u * 0.5;
+    }
     shadow(g, x, y, 7, 0.15);
-    for (const [dx, dy, r] of [[-5, -3, 3], [1, -6, 4], [5, -2, 3], [-1, -2, 3], [-3, -8, 2]]) {
+    for (const [dx0, dy0, r0] of [[-5, -3, 3], [1, -6, 4], [5, -2, 3], [-1, -2, 3], [-3, -8, 2]]) {
+      const dx = Math.round(dx0 * k), dy = Math.round(dy0 * k), r = Math.max(1, Math.round(r0 * k));
       const b = Math.round(Math.sin(t * 3 + dx) * 0.6), cy = y + dy + b;
       oell(g, x + dx, cy, r, r, PAL[6], PAL[5]);
       px(g, 's', x + dx + r - 1, cy + r - 1);
@@ -2839,14 +3264,24 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // ---------------- もり ----------------
   // きのこ（赤い傘に白い点。小さな顔）
   function mushroom(g, o, s, t, st, since) {
-    const { x, y } = o;
-    const sq = st === 'boing' && since < 0.5 ? Math.round(Math.sin((since / 0.5) * Math.PI * 2) * 2 * (1 - since / 0.5)) : 0;
+    const { x, y } = o, m = meetOf(o, st);
+    // 落ち葉が当たる（0.4 秒め）・ハムスターが跳ねる（すぐ）と、ぽよん
+    let sq = 0, ss = null, dn = 0;
+    if (m) {
+      // 全体がつぶれる（傘が下がって横に広がり、柄が短く）→ 行き過ぎて伸びる → 少しつぶれる → 止まる。柄の下は地面のまま
+      //   足元（ハムスターが跳ねる）は、ハムスターより少し先に縮む
+      const t0 = m === 'leafShroom' ? 0.4 : 0, v = since - t0;
+      if (v >= 0 && v < 0.6) [sq, ss, dn] = v < 0.18 ? [-2, 1, 3] : v < 0.32 ? [1, -1, -2] : v < 0.45 ? [-1, 1, 1] : [0, 0, 0];
+      st = before(o, st); since = 9;
+    }
+    if (st === 'boing' && since < 0.5) sq = Math.round(Math.sin((since / 0.5) * Math.PI * 2) * 2 * (1 - since / 0.5));
+    if (ss === null) ss = sq;
     shadow(g, x, y, 7);
     // 柄
-    oell(g, x, y - 4 + sq, 4, 4 - sq, PAL.c, PAL.g); px(g, 'x', x + 2, y - 5 + sq, 2, 4 - sq);
-    px(g, 0, x - 2, y - 4 + sq); px(g, 0, x + 1, y - 4 + sq); px(g, 'w', x - 3, y - 3 + sq); px(g, 'w', x + 2, y - 3 + sq);
+    oell(g, x, y - 4 + ss, 4, 4 - ss, PAL.c, PAL.g); px(g, 'x', x + 2, y - 5 + ss, 2, 4 - ss);
+    px(g, 0, x - 2, y - 4 + ss); px(g, 0, x + 1, y - 4 + ss); px(g, 'w', x - 3, y - 3 + ss); px(g, 'w', x + 2, y - 3 + ss);
     // 傘
-    const cy = y - 11 + sq, rx = 9 - sq, ry = 5 + sq;
+    const cy = y - 11 + sq + dn, rx = 9 - sq, ry = 5 + sq;
     oell(g, x, cy, rx, ry, PAL.h, PAL.g);
     g.fillStyle = PAL.i; ell(g, x - 1, cy - 1, rx - 1, ry - 1);
     px(g, 'c', x - rx + 2, cy + ry - 1, (rx - 2) * 2 + 1, 1); // ひだ
@@ -2857,22 +3292,33 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   // りんごの木（ゆらすと実が落ちる）
   function appletree(g, o, s, t, st, since, def) {
-    const { x, y } = o, sh = st === 'shake' ? wob(since, 0.5, 2, 40) : 0;
+    const { x, y } = o, m = meetOf(o, st);
+    // りんごを木に返す: 実が枝へ戻って（0.3 秒）、木がうれしそうに揺れる
+    let back = -1, sh = st === 'shake' ? wob(since, 0.5, 2, 40) : 0;
+    let grow = 0;
+    if (m === 'appleTree') {
+      back = clamp(since / 0.3, 0, 1);
+      const v = since - 0.3; sh = v < 0 ? 0 : v < 0.15 ? 2 : v < 0.3 ? -2 : v < 0.45 ? 1 : 0; grow = v >= 0 && v < 0.12 ? 1 : 0;
+    }
     shadow(g, x, y, 12);
     // 幹と根
     px(g, 'g', x - 3, y - 17, 7, 18); px(g, 'f', x - 2, y - 17, 5, 18); px(g, 'e', x - 1, y - 16, 1, 15);
     px(g, 'g', x - 5, y - 1, 11, 2); px(g, 'f', x - 4, y - 1, 9, 1);
     // 葉のかたまり（3 つの丸）
-    const cx = x + sh, cy = y - 25;
+    const cx = x + sh, cy = y - 25 - grow;
     for (const [dx, dy, rx, ry] of [[-6, 2, 7, 6], [6, 2, 7, 6], [0, -3, 9, 7]]) { g.fillStyle = PAL.g; ell(g, cx + dx, cy + dy, rx + 1, ry + 1); }
     for (const [dx, dy, rx, ry] of [[-6, 2, 7, 6], [6, 2, 7, 6], [0, -3, 9, 7]]) { g.fillStyle = PAL.o; ell(g, cx + dx, cy + dy, rx, ry); }
     for (const [dx, dy, rx, ry] of [[-7, 1, 5, 4], [5, 1, 5, 4], [-1, -4, 7, 5]]) { g.fillStyle = PAL.n; ell(g, cx + dx, cy + dy, rx, ry); }
     for (const [dx, dy, rx, ry] of [[-8, -1, 2, 1], [3, -1, 2, 1], [-3, -7, 3, 2]]) { g.fillStyle = PAL.m; ell(g, cx + dx, cy + dy, rx, ry); }
     // 実（まだ落ちていない分）
     const left = def.drops - ((o.st && o.st.n) || 0);
-    for (let i = 0; i < left; i++) {
-      const ax = cx + (i ? 6 : -6), ay = cy + 4 - i * 3;
-      oell(g, ax, ay, 2, 2, PAL.i, PAL.g); px(g, 6, ax - 1, ay - 1); px(g, 'f', ax, ay - 3);
+    const apple = (ax, ay) => { oell(g, ax, ay, 2, 2, PAL.i, PAL.g); px(g, 6, ax - 1, ay - 1); px(g, 'f', ax, ay - 3); };
+    for (let i = 0; i < left; i++) apple(cx + (i ? 6 : -6), cy + 4 - i * 3);
+    if (back >= 0 && back < 1 && since < 0.3 && grow === 0 && sh === 0) { /* 戻る途中 */ }
+    if (back >= 0 && left < def.drops) {
+      const i = left, ax = cx + (i ? 6 : -6), ay = cy + 4 - i * 3, u = ease(back);
+      apple(Math.round(lerp(x + 2, ax, u)), Math.round(lerp(y - 8, ay, u) - Math.sin(Math.PI * u) * 10));
+      if (back >= 1 && since < 0.36) px(g, 6, ax - 1, ay - 1, 2, 1); // ぴた（光が一瞬大きく）
     }
   }
 
@@ -2890,8 +3336,35 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     '....f....',
   ];
   const LEAFC = [['j', 'a'], ['k', 'j'], ['a', 'h']];
-  function leaf(g, o, s, t) {
+  function leaf(g, o, s, t, st, since) {
     const { x, y } = o, kh = keyHash(o.key), [C, D] = LEAFC[Math.floor(kh * 3)], tl = Math.round(Math.sin(t * 2 + kh * 5));
+    const m = meetOf(o, st);
+    // くるくる回る葉（上下を入れ替えて回って見せる）
+    const spin = (lx, ly, ph) => { const up = Math.floor(ph * 10) % 2; grid(g, up ? LEAF.slice().reverse() : LEAF, Math.round(lx) - 4, Math.round(ly) - 5, { C, D }); };
+    if (m === 'leafShroom') {
+      // きのこの傘へ飛んで、ぽよんと跳ね返って右上へ
+      const b = mate(s, o), a0 = g.globalAlpha;
+      if (!b) return;
+      if (since < 0.4) { const u = ease(since / 0.4); spin(lerp(x, b.x, u), lerp(y - 5, b.y - 22, u) - Math.sin(Math.PI * u) * 8, since); return; }
+      // 跳ね返って、右上の画面の外へ抜ける
+      const v = (since - 0.4) / 0.8;
+      spin(b.x + v * 70, b.y - 22 - v * 64 - Math.sin(Math.PI * Math.min(1, v * 2)) * 6, since);
+      return;
+    }
+    if (m === 'capeLeaf') {
+      // 背中（マント）のまわりを 1 周して、左上の外へ。輪のうしろ半分はハムスターの後ろ（props）、前半分は手前（front）に描く
+      // 輪の中心はマントの付け根の高さ。うしろ側は高く通って、背中の輪郭の上から葉先がのぞく
+      const L = Game.config.layout, u = since / 1.2, cxo = L.hamX - 4, cyo = L.footY - 20;
+      let lx, ly, back;
+      if (u < 0.25) { const w = ease(u / 0.25); lx = lerp(x, cxo + 18, w); ly = lerp(y - 5, cyo, w) - Math.sin(Math.PI * w) * 6; back = false; }
+      else if (u < 0.7) { const a = ((u - 0.25) / 0.45) * Math.PI * 2; lx = cxo + Math.cos(a) * 18; ly = cyo - Math.sin(a) * 12; back = Math.sin(a) > 0.35; }
+      else { const v = (u - 0.7) / 0.3; lx = cxo + 18 - v * 60; ly = cyo - v * 40; back = false; }
+      if (back === !!o.front) return;
+      spin(lx, ly, since);
+      // ついてくる葉のかけら（とがった 3 ドットに濃い点）
+      for (const k of [0, 1]) { const a = u * 12 + k * 3, bx = Math.round(lx + Math.cos(a) * 8), by = Math.round(ly + Math.sin(a) * 5); px(g, k ? 'k' : 'j', bx, by, 2, 1); px(g, k ? 'k' : 'j', bx + 1, by - 1); px(g, 'a', bx, by + 1); }
+      return;
+    }
     shadow(g, x, y, 5);
     grid(g, LEAF, x - 4, y - 10 + tl, { C, D });
   }
@@ -2899,21 +3372,46 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // ---------------- ゆきのおか ----------------
   function hat(g, hx, hy) { px(g, 0, hx - 5, hy, 11, 2); px(g, 0, hx - 3, hy - 6, 7, 6); px(g, 'i', hx - 3, hy - 2, 7, 1); px(g, 2, hx - 2, hy - 5, 1, 3); }
   // 雪だるま（帽子・マフラー・木の枝の腕）
+  // くり（雪だるまの鼻にする）
+  // くりの鼻（4×3。にんじんの付け根に。目と口を隠さない）
+  function nut(g, nx, ny) { grid(g, ['.gg.', 'gfeg', 'gffg', '.gg.'], nx - 1, ny - 2); }
   function snowman(g, o, s, t, st, since) {
-    const { x, y } = o, sw = wob(since, 0.7, 2, 20);
+    const { x, y } = o, m = meetOf(o, st);
+    let sw = m ? 0 : wob(since, 0.7, 2, 20), hy0 = 0, look = 0, blush = 0, arm = 0, sneeze = 0, nose = o.st && o.st.keep === 'nose' ? 1 : 0, fly = -1, flake = -1;
+    let big = 0, jump = 0;
+    if (m === 'nutSnowman') { if (since < 0.3) fly = since / 0.3; else { nose = 1; big = since < 0.55 ? 1 : 0; jump = since > 0.3 && since < 0.45 ? 1 : 0; } }
+    if (m === 'flakeSnowman') {
+      // 雪が鼻に当たって、吸って（頭を上げる）、ハクション（頭が前へはじける）
+      if (since < 0.35) flake = since / 0.35;
+      else if (since < 0.55) { hy0 = -2; sneeze = -1; } // 吸いこむ: 頭を上げて、目を半分、口を小さく
+      else if (since < 0.8) { sw = 3; sneeze = (since - 0.55) / 0.25; }
+    }
+    if (m === 'tophatSnowman') { look = -1; arm = since > 0.1 && since < 1.0 ? (since < 0.22 || since > 0.9 ? 0.5 : 1) : 0; sw = since > 0.35 && since < 1 ? -2 : 0; hy0 = since > 0.35 && since < 1 ? 1 : 0; }
+    if (m === 'scarfSnowman') { look = -1; blush = Math.sin(Math.PI * clamp((since - 0.1) / 1.0, 0, 1)); }
+    if (m) st = before(o, st);
     shadow(g, x, y, 10, 0.28);
-    // 腕
-    px(g, 'f', x - 13, y - 12, 6, 1); px(g, 'f', x - 14, y - 14, 1, 2); px(g, 'f', x - 11, y - 13);
+    const hx = x + sw, hy = y - 19 + hy0 - jump;
+    // 腕（シルクハット: 左の腕を頭へ上げて、先の枝分かれを帽子のつばに当てる）
+    if (arm === 0.5) { line(g, 'f', x - 8, y - 12, x - 13, y - 18); px(g, 'f', x - 14, y - 19); px(g, 'f', x - 12, y - 19); } // 上げる途中（斜めの短い腕）
+    else if (arm) { line(g, 'f', x - 8, y - 12, hx - 8, hy - 6); px(g, 'f', hx - 9, hy - 8, 1, 2); px(g, 'f', hx - 7, hy - 5, 2, 1); }
+    else { px(g, 'f', x - 13, y - 12, 6, 1); px(g, 'f', x - 14, y - 14, 1, 2); px(g, 'f', x - 11, y - 13); }
     px(g, 'f', x + 8, y - 13, 6, 1); px(g, 'f', x + 13, y - 15, 1, 2); px(g, 'f', x + 10, y - 14);
     // 体（下）と頭（上）。右下に影
     oell(g, x, y - 7, 9, 7, PAL[5], PAL[4]); g.fillStyle = PAL[6]; ell(g, x - 1, y - 8, 7, 5);
-    const hx = x + sw, hy = y - 19;
     oell(g, hx, hy, 6, 5, PAL[5], PAL[4]); g.fillStyle = PAL[6]; ell(g, hx - 1, hy - 1, 5, 4);
-    // 顔: 目・にんじんの鼻・口・ほっぺ
-    px(g, 0, hx - 3, hy - 2, 1, 2); px(g, 0, hx + 2, hy - 2, 1, 2);
-    px(g, 'g', hx, hy - 1, 4, 2); px(g, 'j', hx, hy - 1, 3, 1); px(g, 'k', hx, hy - 1);
-    px(g, 0, hx - 2, hy + 2); px(g, 0, hx - 1, hy + 3, 3, 1); px(g, 0, hx + 2, hy + 2);
-    px(g, 'w', hx - 5, hy + 1, 2, 1); px(g, 'w', hx + 4, hy + 1, 2, 1);
+    // 顔: 目・にんじんの鼻（くりを鼻にしたら くり）・口・ほっぺ
+    if (sneeze > 0) { px(g, 0, hx - 4, hy - 2); px(g, 0, hx - 3, hy - 1); px(g, 0, hx - 4, hy); px(g, 0, hx + 3, hy - 2); px(g, 0, hx + 2, hy - 1); px(g, 0, hx + 3, hy); } // ぎゅっ（＞ ＜）
+    else if (blush > 0.5) { px(g, 0, hx - 4 + look, hy - 1, 2, 1); px(g, 0, hx + 1 + look, hy - 1, 2, 1); } // にこっと目を閉じる
+    else if (sneeze < 0) { px(g, 0, hx - 3, hy - 1, 2, 1); px(g, 0, hx + 2, hy - 1, 2, 1); } // 吸いこむ: 半分閉じる
+    else if (big) { px(g, 0, hx - 4 + look, hy - 3, 2, 2); px(g, 0, hx + 2 + look, hy - 3, 2, 2); } // 目を丸く
+    else { px(g, 0, hx - 3 + look, hy - 2, 1, 2); px(g, 0, hx + 2 + look, hy - 2, 1, 2); }
+    if (nose) nut(g, hx, hy + 1); // にんじんの付け根の高さ（両目より下、口より上）
+    else { px(g, 'g', hx, hy - 1, 4, 2); px(g, 'j', hx, hy - 1, 3, 1); px(g, 'k', hx, hy - 1); }
+    if (sneeze > 0) { g.fillStyle = PAL.g; ell(g, hx, hy + 3, 2, 1); }
+    else if (sneeze < 0) px(g, 0, hx, hy + 2, 1, 1); // 小さな o
+    else { px(g, 0, hx - 2, hy + 2); px(g, 0, hx - 1, hy + 3, 3, 1); px(g, 0, hx + 2, hy + 2); }
+    if (blush > 0) { px(g, 'i', hx - 6, hy + 1, 3, 1); px(g, 'i', hx + 4, hy + 1, 3, 1); }
+    else { px(g, 'w', hx - 5, hy + 1, 2, 1); px(g, 'w', hx + 4, hy + 1, 2, 1); }
     // ボタン
     px(g, 0, x, y - 9); px(g, 0, x, y - 5);
     // マフラー
@@ -2921,14 +3419,28 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     px(g, 'h', x + 3, y - 12, 3, 5); px(g, 'i', x + 4, y - 12, 1, 4);
     // 帽子（1 度めにたたくと飛んでいく。シルクハットとして残るときは贈り物が描く）
     if (st !== 'hat') hat(g, hx, hy - 4);
-    else if (since < 0.9 && !o.st.gift) {
+    else if (!m && since < 0.9 && !o.st.gift) {
       const u = since / 0.9, a0 = g.globalAlpha;
       g.globalAlpha = a0 * (1 - u); hat(g, Math.round(hx + 20 * u), Math.round(hy - 4 - Math.sin(Math.PI * u) * 22)); g.globalAlpha = a0;
     }
+    // くりが鼻へ飛んでいく。にんじんはぽろっと落ちる
+    if (fly >= 0) { const u = ease(fly); nut(g, Math.round(lerp(x + 6, hx, u)), Math.round(lerp(y - 8, hy + 1, u) - Math.sin(Math.PI * u) * 8)); }
+    // にんじんは体の外（右）をくるっと回って落ちる
+    if (m === 'nutSnowman' && since >= 0.3 && since < 0.8) {
+      const v = (since - 0.3) / 0.5, cx2 = hx + 9 + Math.round(v * 5), cy2 = Math.round(lerp(hy - 1, y - 2, v * v)), up = Math.floor(v * 4) % 2;
+      if (up) { px(g, 'g', cx2, cy2 - 1, 2, 4); px(g, 'j', cx2, cy2 - 1, 1, 3); } else { px(g, 'g', cx2 - 1, cy2, 4, 2); px(g, 'j', cx2 - 1, cy2, 3, 1); }
+    }
+    // 雪の結晶が鼻へ（水色の十字に白い芯）/ ハクションで雪が前へ飛び散る（白地でも見える灰の粒）
+    if (flake >= 0) { const u = ease(flake), fx = Math.round(lerp(x + 22, hx + 3, u)), fy = Math.round(lerp(y - 18, hy, u)); px(g, 's', fx - 2, fy, 5, 1); px(g, 's', fx, fy - 2, 1, 5); px(g, 6, fx, fy); px(g, 4, fx - 2, fy + 1); px(g, 4, fx + 1, fy - 2); }
+    // 鼻のすぐ前から扇に散る（近い粒は 2×2、遠い粒は 1×1）
+    if (sneeze > 0) for (const [d, dy, c] of [[3, 0, 5], [5, -3, 4], [6, 3, 5], [8, -1, 4], [10, -4, 5], [11, 2, 4], [12, 4, 5]]) { const r = d * (0.4 + sneeze * 0.8), sz = r < 7 ? 2 : 1; px(g, c, Math.round(hx + 4 + r), Math.round(hy + 1 + dy * (0.5 + sneeze * 0.5)), sz, sz); }
+    // マフラーがおそろいで、ほっぺが赤くなる。小さなハートが上がる（半透明にせず、上がりきったら消える）
+    if (m === 'scarfSnowman' && since > 0.12 && since < 1.05) { const hy2 = Math.round(hy - 7 - (since - 0.12) * 8); grid(g, ['gg.gg', 'giwig', 'giiig', '.gig.', '..g..'], hx + 4, hy2 - 3); }
   }
 
   // 雪の結晶（回すと細い線が欠けるので回さない。ゆれて、ときどき光る）
-  function flake(g, o, s, t) {
+  function flake(g, o, s, t, st) {
+    if (st === 'meet') return;
     const { x, y } = o, kh = keyHash(o.key), fy = y - 20 + Math.round(Math.sin(t * 1.5 + kh * 6) * 2), fx = x + Math.round(Math.sin(t * 0.9 + kh * 4) * 1.5);
     shadow(g, x, y, 4, 0.12);
     const arms = (c, dx, dy) => {
@@ -2959,7 +3471,50 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     return true;
   }
 
-  Game.props = { draw, splash, shadow, grid };
+  // 組み合わせのうち、ハムスターより手前に描くもの（render.draw が物とハムスターのあとに呼ぶ）
+  //   綿毛がハムスターの鼻へ飛んで付き、ハクションで飛び散る / かえるがハムスターの頭を越える
+  function front(g, s, t) {
+    const m = s.meet; if (!m) return;
+    const L = Game.config.layout, since = s.t - m.t0, vis = (k) => k && Game.walk.visible(s).find((v) => v.key === k);
+    if (m.id === 'puffHam') {
+      const a = vis(m.keyA), nx = L.hamX + 19, ny = L.footY - 23;
+      if (since < 0.45 && a) {
+        const u = ease(since / 0.45), cx = Math.round(lerp(a.x, nx, u)), cy = Math.round(lerp(a.y - 17, ny, u) - Math.sin(Math.PI * u) * 6), r = Math.round(lerp(8, 3, u));
+        g.fillStyle = PAL[5]; ell(g, cx, cy, r + 1, r + 1); g.fillStyle = PAL[6]; ell(g, cx - 1, cy - 1, r, r);
+        const n = Math.max(6, r * 2);
+        for (let i = 0; i < n; i++) { const an = (i / n) * Math.PI * 2 + since * 6; px(g, 4, Math.round(cx + Math.cos(an) * r * 0.5), Math.round(cy + Math.sin(an) * r * 0.5)); px(g, i % 2 ? 5 : 4, Math.round(cx + Math.cos(an) * r), Math.round(cy + Math.sin(an) * r)); }
+      } else if (since < 0.66) {
+        // 鼻にくっついた綿毛
+        g.fillStyle = PAL[5]; ell(g, nx, ny, 3, 3); g.fillStyle = PAL[6]; ell(g, nx, ny, 2, 2);
+        for (const [dx, dy] of [[-3, -3], [3, -3], [4, 1], [-1, 4], [2, 4]]) px(g, 4, nx + dx, ny + dy);
+      } else if (since < 1.15) {
+        // ハクションで飛び散る: 綿毛の種が 1 つずつ（白い冠毛と 1 ドットの柄の落下傘）、前へふわっと
+        const v = (since - 0.66) / 0.49;
+        for (let i = 0; i < 5; i++) {
+          if (v > 0.75 + i * 0.05) continue;
+          const an = -0.8 + i * 0.35, qx = Math.round(nx + 2 + Math.cos(an) * (3 + v * 24) + i * 3 * v), qy = Math.round(ny + Math.sin(an) * (3 + v * 14) - v * 3 + Math.sin(v * 9 + i) * 1.5);
+          px(g, 5, qx - 2, qy, 5, 1); px(g, 6, qx - 1, qy - 1, 3, 1); px(g, 6, qx - 2, qy, 1, 1); px(g, 4, qx, qy + 1, 1, 2);
+        }
+      }
+    } else if (m.id === 'crabFoot') {
+      // かにの左のはさみが、地面ぞいにハムスターのつま先までのびて、開く → 閉じる → 戻る
+      const b = vis(m.keyB); if (!b) return;
+      const reach = Math.sin(Math.PI * clamp((since - 0.05) / 0.6, 0, 1)), cx = b.x, y = b.y;
+      const tip = Math.round(lerp(cx - 10, L.hamX + 12, reach)), hy = y - 3, snip = since > 0.25 && since < 0.42;
+      px(g, 'g', tip + 2, hy - 1, cx - 6 - tip - 2, 3); px(g, 'i', tip + 2, hy, cx - 6 - tip - 2, 1); // 腕
+      oell(g, tip, hy, 3, 2, PAL.i, PAL.g); px(g, 'w', tip, hy - 1);
+      if (snip) px(g, 'g', tip - 3, hy, 3, 1); else { px(g, 'g', tip - 3, hy - 1, 2, 1); px(g, 'g', tip - 3, hy + 1, 2, 1); px(g, 'p', tip - 2, hy, 1, 1); } // はさみ: 開く（上下に分かれる）→ 閉じる
+    } else if (m.id === 'capeLeaf') {
+      const b = vis(m.keyB); if (b) leaf(g, Object.assign({}, b, { front: true }), s, t, 'meet', since);
+    } else if (m.id === 'frogFoot') {
+      const b = vis(m.keyB); if (!b) return;
+      const u = clamp(since / 0.85, 0, 1), top = L.footY - Game.config.ham.h - 14, a0 = g.globalAlpha;
+      const fx = Math.round(lerp(b.x + 2, b.x + Game.lands.MEET.frogFoot.dxB, ease(u))), fy = Math.round(b.y - Math.sin(Math.PI * Math.min(1, u * 1.4)) * (b.y - top) + (u > 0.72 ? (u - 0.72) * 40 : 0));
+      frog(g, { x: fx, y: fy, key: b.key, noShadow: true }, s, t, null, 99, Game.lands.OBJ.frog);
+    }
+  }
+
+  Game.props = { draw, front, splash, shadow, grid };
 })();
 </script>
 <script>
@@ -3838,7 +4393,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       // 夜の濃さ（0〜1）: おやすみで暗くなり、眠っている間は夜、起きると明るくなる。夜の間は土地の物を消す（巣と身なりだけ）
       const night = nightLevel(s);
       // 物とハムスターを、足元の y の順に描く（奥から）
-      const list = night >= 1 ? [] : Game.walk.visible(s, cfg).map((o) => ({ y: o.y, o }));
+      // 組み合わせで動かした側（飛んでいる・跳んでいる）は、同じ高さの相手より手前に
+      const list = night >= 1 ? [] : Game.walk.visible(s, cfg).map((o) => ({ y: o.y + (s.meet && s.meet.keyA === o.key ? 0.5 : 0), o }));
       list.push({ y: L.footY, ham: true });
       if (s.sight && s.sight.kind === 'squirrel') list.push({ y: L.footY + 2, pal: true }); // りす（ハムスターの隣）
       list.sort((a, b) => a.y - b.y);
@@ -3852,6 +4408,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         drawObj(g, o, s, t);
         g.globalAlpha = 1;
       }
+      // 組み合わせのうち、ハムスターより手前に描くもの
+      if (night < 1) Game.props.front(g, s, t);
       // 運んでいるごはん: 指より上に、白い縁つきで。口のまわりに、ここへ という輪が脈打つ（贈り物は体のまわりに大きな輪）
       if (s.carry) {
         const gift = s.carry.kind === 'gift', pulse = (Math.sin(t * 8) + 1) / 2;
@@ -3879,10 +4437,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     drawHam(g, s, t, inNest) {
       const L = Game.config.layout, p = hamPose(s, t), sink = inNest ? p.sink || 0 : 0;
       // 影
-      if (!sink) { g.globalAlpha = 0.25; g.fillStyle = PAL[0]; ell(g, L.hamX, L.footY, 15, 2); g.globalAlpha = 1; }
-      const img = hamFrame(Object.assign({}, p, { rot: 0, flip: false, sink: 0 }));
+      const lift = p.lift || 0; // 体ごと持ち上げる（ぽよん）。影は地面に残して小さく
+      if (!sink) { g.globalAlpha = 0.25; g.fillStyle = PAL[0]; ell(g, L.hamX, L.footY, lift ? 13 : 15, 2); g.globalAlpha = 1; }
+      const img = hamFrame(Object.assign({}, p, { rot: 0, flip: false, sink: 0, lift: 0 }));
       g.save();
-      g.translate(L.hamX, L.footY - 17 + sink);
+      g.translate(L.hamX, L.footY - 17 + sink - lift);
       if (p.rot) g.rotate((p.rot * Math.PI) / 2);
       if (p.flip) g.scale(-1, 1);
       g.drawImage(img, -HC.ox, -HC.oy + 17);
@@ -3907,6 +4466,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 //   ?fast=1（歩く分を 10 倍）/ ?awake=1（巣で眠らずに始める）/
 //   ?rare=gift（まれな驚きの贈り物を、少し歩くたびに出す）/ ?rare=tophat（雪だるまの帽子が必ずシルクハットとして残る）/
 //   ?got=all（身なりを全部集めて、ごはんを 60 ためこんだ旅）/ ?rare=sight（景色の驚きを、終わって少し歩くたびに出す）/ ?rare=rainbow|koi|whale|squirrel|star（その驚きだけを。場所の指定がなければ、その土地から）
+//   ?meet=<id>（その組み合わせがすぐ起きる場面から。lands.js の MEET。保存しない）
 //   季節ごとの版（dev/build-lands.mjs）は window.HOPPE_WALK_URL に '?land=2&nosave=1' などを埋めてあり、URL の代わりに読む
 (function () {
   const Game = (window.Game = window.Game || {});
@@ -3915,7 +4475,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const lt = (path) => Game.lang.t(path);
 
   if (q.get('fast') === '1') for (const k of Object.keys(cfg.walk.credit)) cfg.walk.credit[k] *= 10;
-  const nosave = q.get('nosave') === '1';
+  const meetId = Game.lands.MEET[q.get('meet')] ? q.get('meet') : null;
+  const nosave = q.get('nosave') === '1' || !!meetId;
   if (q.get('rare') === 'gift') Object.assign(cfg.rare, { every: 40, p: 1, minGap: 0, gift: 1 });
   if (q.get('rare') === 'tophat') cfg.rare.tophat = 1;
   if (q.get('rare') === 'sight') Object.assign(cfg.rare, { every: 40, p: 1, minGap: 0, gift: 0 });
@@ -3943,7 +4504,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     audio: null, fx: null, haptics: null, picker: null,
     parent: Game.parent.create(), // 親の操作（右上の印を押し続ける → 左下の「おとな」→ 親の画面）
     log: [],       // 確かめ用: 起きた出来事（通しテストが読む）
+    later: [],     // 少しあとに鳴らす・出す演出 { t, fn }（組み合わせの動きに合わせる）
   });
+  if (meetId) Game.meet.stage(app.walk, meetId, cfg);
   const note = (e) => { app.log.push(e); if (app.log.length > 300) app.log.shift(); };
   const mix = () => Game.world.mixAt(Game.walk.hamWx(app.walk, cfg), cfg);
   const key = () => Game.walk.landHere(app.walk, cfg).key;
@@ -4095,7 +4658,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         A.play('swish', { gain: Math.min(1.4, 0.6 + Math.hypot(e.vx, e.vy)) });
         break;
       }
-      case 'blow': blowFx(e, e.vx, e.vy); break;
+      // はらった物が組み合わせの相手へ飛ぶときは、普段の飛ぶ粒を出さない（組み合わせの絵が描く）
+      case 'blow': if (e.met) { HP.play('hit'); A.play('fwoosh'); } else blowFx(e, e.vx, e.vy); break;
+      case 'meet': meetFx(e); break;
       case 'step':
         A.play('step');
         // 雪には足あと
@@ -4161,6 +4726,39 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         break;
     }
   }
+  // 組み合わせ（lands.js の MEET）: 普段の反応と同じ大きさ（擬音は S か M）。指で起こしたときだけ振動
+  //   [秒, 音, 音の追加, 擬音, 擬音の色, 擬音の大きさ, 擬音の位置（'b' 相手の上 / 'h' ハムスターの頭）]
+  const MEETFX = {
+    bugFlower:     [[0.5, 'bloom', { gain: 0.5, up: 12 }, 'chon', '#e43b44', 'S', 'b']],
+    seedFlower:    [[0, 'pop'], [0.35, 'bloom', { up: 12 }, 'paa', '#fee761', 'M', 'b']],
+    puffHam:       [[0.5, 'achoo', null, 'hakushon', '#ffffff', 'M', 'h']],
+    crownFlower:   [[0.15, 'bloom', { gain: 0.5, up: 7 }, 'pekori', '#f6757a', 'S', 'b']],
+    frogBubble:    [[0.45, 'pop', null, 'paku', '#63c74d', 'M', 'b']],
+    frogWeed:      [[0.4, 'swish', null, 'rustle', '#63c74d', 'S', 'b']],
+    frogFoot:      [[0, 'hop', null, 'pyoon', '#63c74d', 'M', 'h'], [0.75, 'plip', { gain: 0.6 }]],
+    packFrog:      [[0, 'croak'], [0.35, 'croak', { gain: 0.8 }, 'kerokero', '#63c74d', 'M', 'b']],
+    foamCrab:      [[0.4, 'plip', null, 'bukubuku', '#2ce8f5', 'M', 'b'], [0.6, 'plip', { gain: 0.7 }], [0.8, 'plip', { gain: 0.5 }]],
+    foamShell:     [[0.35, 'clam'], [0.6, 'pop', { gain: 0.6 }, 'puu', '#ffffff', 'S', 'b']],
+    crabFoot:      [[0, 'scuttle'], [0.15, 'poke', null, 'chon', '#e43b44', 'S', 'h']],
+    strawShell:    [[0.1, 'clam'], [0.45, 'twinkle', { up: 12 }, 'kirari', '#fee761', 'S', 'b']],
+    leafShroom:    [[0.4, 'boing', null, 'poyon', '#e43b44', 'M', 'b']],
+    appleTree:     [[0.3, 'pop', null, 'stash', '#e43b44', 'S', 'b'], [0.4, 'shake', { gain: 0.5 }]],
+    shroomFoot:    [[0, 'boing', null, 'poyon', '#e43b44', 'M', 'h']],
+    capeLeaf:      [[0, 'fwoosh', { gain: 0.7 }, 'hirahira', '#feae34', 'S', 'h']],
+    nutSnowman:    [[0.3, 'pop', null, 'pita', '#ffffff', 'S', 'b']],
+    flakeSnowman:  [[0.35, 'achoo', null, 'hakushon', '#ffffff', 'M', 'b']],
+    tophatSnowman: [[0.3, 'hat', { gain: 0.4 }, 'kyoro', '#ffffff', 'S', 'b']],
+    scarfSnowman:  [[0.3, 'bloom', { gain: 0.4, up: 7 }, 'po', '#f6757a', 'S', 'b']],
+  };
+  function meetFx(e) {
+    if (e.finger) app.haptics.play('hit');
+    for (const [sec, snd, opt, w, color, tier, where] of MEETFX[e.id] || []) {
+      app.later.push({ t: app.time + sec, fn: () => {
+        if (snd) app.audio.play(snd, Object.assign({}, opt && opt.gain != null ? { gain: opt.gain } : {}, opt && opt.up != null ? { hz: hz(opt.up) } : {}));
+        if (w) where === 'h' ? word(w, color, L.hamX + 14, hamTop() - 6, tier) : word(w, color, e.x, e.y - 18, tier);
+      } });
+    }
+  }
   function blowFx(e, vx, vy) {
     const A = app.audio, F = app.fx;
     app.haptics.play('hit');
@@ -4210,6 +4808,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     // 親の画面が開いている間は、旅は止まる
     if (app.parent.phase === 'open') { app.fx.update(dt); app.audio.tick(); return; }
     for (const e of Game.walk.step(s, dt, cfg)) show(e);
+    // 少しあとの演出（組み合わせ）
+    if (app.later.length) { const due = app.later.filter((x) => x.t <= app.time); app.later = app.later.filter((x) => x.t > app.time); for (const x of due) x.fn(); }
     // 掘っている間: 土が飛び、ザッザッと鳴る
     if (s.ham.act === 'dig') {
       app.digT += dt;
