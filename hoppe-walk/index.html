@@ -207,11 +207,12 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     poke: { ms: 450 },                    // つつかれた顔の長さ
     roll: { ms: 900 },                    // 転がって起き上がるまで
     find: { every: 40, p: 0.35 },         // なぞる地面をこれだけ（ドット）なぞるごとに、この確率で物が出る
-    blow: { r: 30 },                      // はらったとき、指からこの距離（ドット）の「はらう物」が飛ぶ
+    // はらったとき、指がなぞった線からこの距離（ドット）の「はらう物」が飛ぶ。redirect … 物の上に指を置いて（置いた瞬間に飛ぶ）からこの秒のうちにはらうと、はらった向きの相手と組み合わせになる
+    blow: { r: 30, redirect: 0.8 },
     // 組み合わせ（meet.js）: foot … 足元とみなす、物の立つ高さと足元の線の差（ドット）/ blowLen … はらった物が進むとみなす距離 /
-    //   landPad … 跳んだ先の当たりを、相手の r + pad よりさらに広げる量 / hamR … 飛んできた物が当たる、ハムスターの丸の半径 /
+    //   landPad … 跳んだ先の当たりを、相手の r + pad よりさらに広げる量 / hamR … 飛んできた物が当たる、ハムスターの丸の半径 / hamLen … ハムスターへ飛ぶ物が届く長さ / hamSpread … 遠いほど当たりを広げる割合（ずれ ÷ 距離）/
     //   passX・footX … 身なり・足元で出会う所（hamX から前へのドット。真ん中まで来ると体に隠れるので、少し前で起こす）
-    meet: { foot: 6, blowLen: 60, landPad: 4, hamR: 14, passX: 34, footX: 26 },
+    meet: { foot: 6, blowLen: 60, landPad: 4, hamR: 14, hamLen: 120, hamSpread: 0.25, passX: 34, footX: 26 },
     // 一緒に触る（together.js）: win … 「同時」とみなす間（秒）/ gap … 終わってから次を起こさない間（秒）/ banzaiGap … ばんざいどうしの間（秒）/
     //   ms … 反応の長さ / skyMin … 空をこすったとみなす、指ごとの距離（ドット）/ skyWin … 2 本の指が「同じころ」こすっている間（秒）
     together: { win: 0.35, gap: 2, banzaiGap: 8, ms: { hug: 1300, banzai: 1300, pair: 1600, skybow: 2600 }, skyMin: 12, skyWin: 0.3 },
@@ -303,7 +304,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 // 入るもの: { id, x, y, t }（ドット、ミリ秒）。出すもの（出来事の列）:
 //   press   { id, x, y }            … 指が触れた瞬間
 //   stroke  { id, x, y, px, py, d } … slop を超えて動いたあと、動くたび（px,py: 前の位置、d: その間の距離）
-//   flick   { id, x, y, vx, vy }    … 離す直前の flickMs の間の速さが flickSpeed 以上（release の前に出す）
+//   flick   { id, x, y, vx, vy, x0, y0 } … 離す直前の flickMs の間の速さが flickSpeed 以上（release の前に出す。x0,y0 は触れた所）
 //   release { id, x, y, moved }     … 指が離れた
 //   cancel  { id }                  … 指が取り消された（ブラウザに奪われたなど）
 // 押しっぱなし（動かさずに置いたまま）は、press のあと何も出さない。
@@ -340,7 +341,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (f.moved) {
       const a = f.path[0], dt = Math.max(1, ev.t - a.t);
       const vx = (ev.x - a.x) / dt, vy = (ev.y - a.y) / dt;
-      if (Math.hypot(vx, vy) >= cfg.touch.flickSpeed) out.push({ type: 'flick', id: f.id, x: ev.x, y: ev.y, vx, vy });
+      if (Math.hypot(vx, vy) >= cfg.touch.flickSpeed) out.push({ type: 'flick', id: f.id, x: ev.x, y: ev.y, vx, vy, x0: f.x0, y0: f.y0 });
     }
     out.push({ type: 'release', id: f.id, x: ev.x, y: ev.y, moved: f.moved });
     return out;
@@ -476,6 +477,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 //   'sky'（空の帯ぜんぶ）| 'water'（x のまわり w の水面と、その上）| 'far'（遠景の x のまわり w）| 'pal'（ハムスターの隣を歩く小さな動物）
 //   every … 触らなくても、この秒ごとに 2 段めの動きをする（鯉がはねる・くじらが潮を吹く）、extend … 触ると、残りをこの秒まで延ばす
 //   eatMs … りすがごはんを食べている長さ（その間は触っても反応しない）、stay … ごはんをもらうたびに、いる時間をこの秒だけ延ばす
+//   りすの同行（pal.js）: keep … 一緒に歩いている間は、帰るのをこの秒あとより前にしない、maxS … 出てからこの秒で必ず帰る、
+//     lv1 / lv2 … 仲良しの段が上がる、一緒に歩いた距離（ドット）、feedD … ごはん 1 回で足す距離、noseMs / giftMs … ハムスターが鼻をくっつけるしぐさの長さ（おみやげのときは、置いてくれた物を見るぶん長い）
 //   lock … 2 段めの動き（はねる・潮を吹く・跳ねる）の途中は、触っても反応しない
 // ひまわりの種は、どの土地でも低い割合で出る（いつものごはん）
 (function () {
@@ -527,7 +530,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     rainbow:  { ms: 9000, area: 'sky', extend: 3 },                 // はらっぱ: 虹がかかる。空をたたくと、そこがきらめいて音階が鳴る
     koi:      { ms: 7500, area: 'water', w: 24, every: 2.6, extend: 2.5, lock: 0.9 }, // いけ: 鯉がはねる。鯉の所の水をたたくと、そこからまたはねる
     whale:    { ms: 9000, area: 'far', w: 28, every: 3.2, extend: 3, par: 0.3, lock: 1.6 }, // はま: 遠くの海でくじらが潮を吹く。たたくと大きく吹く
-    squirrel: { ms: 16000, area: 'pal', w: 12, drop: 'acorn', lock: 0.45, eatMs: 1400, stay: 6 },     // もり: りすが隣を一緒に歩く。つつくと跳ねて、1 度めはどんぐりを落とす
+    squirrel: { ms: 16000, area: 'pal', w: 12, drop: 'acorn', lock: 0.45, eatMs: 1400, stay: 6,
+                keep: 5, maxS: 60, lv1: 80, lv2: 240, feedD: 60, noseMs: 1600, giftMs: 2300 },     // もり: りすが隣を一緒に歩く。つつくと跳ねて、1 度めはどんぐりを落とす
     star:     { ms: 8000, area: 'sky', every: 2.4, extend: 3 },                          // ゆきのおか: 空が少し暗くなって流れ星。空をたたくと、そこから星が流れる
   };
 
@@ -692,6 +696,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 //   sightHit { kind, n, x, y, auto?, spawn? } … 景色の驚きの 2 段めの反応（触った・触らなくても時々。spawn はりすが落としたどんぐり）
 //   palFeed { kind, x, y } … りすにごはんを渡した（りすが食べる）
 //   meet / meetEnd … 組み合わせ（meet.js）/ together / togetherEnd … 一緒に触った（together.js）
+//   palUp / palBye / palNose / palWave / palGift … りすの同行（pal.js）
 (function () {
   const Game = (window.Game = window.Game || {});
   const RNG = Game.rng, W = () => Game.world;
@@ -764,7 +769,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   const addCredit = (s, n, cfg) => { s.credit = Math.min(cfg.walk.max, s.credit + n); };
-  const BUSY = ['dig', 'eat', 'roll', 'poke', 'beg', 'sleep', 'wake', 'wear', 'bed', 'sneeze', 'bounce', 'hug', 'banzai'];
+  const BUSY = ['dig', 'eat', 'roll', 'poke', 'beg', 'sleep', 'wake', 'wear', 'bed', 'sneeze', 'bounce', 'hug', 'banzai', 'nose'];
+  const PL = () => Game.pal; // りすの同行（pal.js）
   const M = () => Game.meet; // 組み合わせ（meet.js）
   const TG = () => Game.together; // 一緒に触る（together.js）
   // 身なりの組み合わせの間は、立ち止まって見る（歩き続けると、物がハムスターの体の後ろへ流れて見えなくなる）
@@ -859,12 +865,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     switch (def.area) {
       case 'water': return { x: Math.round(st.sx0 - (s.d - st.d0)), y: L.groundY };
       case 'far': return { x: Math.round(st.sx0 - (s.d - st.d0) * def.par), y: L.skyH - 4 };
-      case 'pal': {
-        // 右から走ってきて隣に並び、終わりにまた右へ走っていく
-        const home = L.hamX + 40, out = V.w + 12, u = s.t - st.t0, left = st.until - s.t, run = 1.2;
-        const k = u < run ? 1 - u / run : left < run ? 1 - left / run : 0;
-        return { x: Math.round(home + (out - home) * k * k), y: L.footY + 2 };
-      }
+      case 'pal': { const p = PL().pos(s, cfg); return { x: p.x, y: p.y }; } // りす（走ってくる・隣を歩く・別れる。pal.js）
       default: return { x: Math.round(V.w / 2), y: Math.round(L.skyH / 2) };
     }
   }
@@ -904,16 +905,18 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     out.push(e);
   }
 
+  // 贈り物を選ぶ: その土地の 2 つから。まだ持っていない物を先に、どちらも持っていたら着ていない物を先に（りすのおみやげも）
+  function pickGift(s, land) {
+    const fresh = land.gifts.filter((it) => !s.got.includes(it)), unworn = land.gifts.filter((it) => s.wear[Game.lands.GIFT[it].slot] !== it);
+    return RNG.pick(s, fresh.length ? fresh : unworn.length ? unworn : land.gifts);
+  }
   // まれな驚き（step から）。画面に 1 つの土地だけが見えていて、その土地に景色の驚きがあれば、割合 gift で贈り物、残りで景色の驚き
   //   cfg.rare.force（確かめ用）があれば、いつもその景色の驚き
   function rare(s, cfg, out) {
     if (cfg.rare.force && SIGHT()[cfg.rare.force]) { startSight(s, cfg.rare.force, cfg, out); return; }
     const m0 = W().mixAt(s.d, cfg), m1 = W().mixAt(s.d + cfg.view.w, cfg), here = Game.lands.LANDS[m0.a];
     if (m0.u === 0 && m1.u === 0 && m0.a === m1.a && here.rare.length && RNG.next(s) >= cfg.rare.gift) { startSight(s, RNG.pick(s, here.rare), cfg, out); return; }
-    const land = Game.lands.LANDS[W().pickLand(hamWx(s, cfg) + 60, RNG.next(s), cfg)];
-    // その土地の 2 つから。まだ持っていない物を先に、どちらも持っていたら着ていない物を先に
-    const fresh = land.gifts.filter((it) => !s.got.includes(it)), unworn = land.gifts.filter((it) => s.wear[Game.lands.GIFT[it].slot] !== it);
-    const item = RNG.pick(s, fresh.length ? fresh : unworn.length ? unworn : land.gifts);
+    const item = pickGift(s, Game.lands.LANDS[W().pickLand(hamWx(s, cfg) + 60, RNG.next(s), cfg)]);
     const L = cfg.layout, x = cfg.view.w - L.edge - 26 - Math.round(RNG.next(s) * 20);
     const y = cfg.world.yMin + 10 + Math.round(RNG.next(s) * (cfg.world.yMax - cfg.world.yMin - 10));
     const p = addFree(s, 'gift', x + s.d, y, -16, item);
@@ -931,7 +934,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // りすの口の当たり（隣にいる間。ハムスターの口より近いときだけ）
   function palHit(s, x, y, cfg) {
     const st = s.sight;
-    if (!st || SIGHT()[st.kind].area !== 'pal' || st.until - s.t < 1.2) return false;
+    if (!st || !PL().open(s)) return false; // 別れる途中は渡せない
     const p = sightPos(s, cfg), pad = cfg.feed.pad / 2, L = cfg.layout;
     const box = { x0: p.x - 10 - pad, x1: p.x + 10 + pad, y0: p.y - 24 - pad, y1: p.y + 4 + pad };
     if (!inBox(box, x, y) && !inBox(box, x, y - cfg.feed.lift)) return false;
@@ -945,6 +948,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     st.until = Math.min(st.until + SIGHT()[st.kind].stay, s.t + 30);
     addCredit(s, cfg.walk.credit.feed, cfg);
     out.push({ type: 'palFeed', kind: c.kind, x: p.x, y: p.y - 12 });
+    PL().fed(s, cfg, out); // 一緒に食べたぶん、仲良くなる
   }
   // 運んだ物を渡す: ごはんは、りすの口かハムスターの口へ。贈り物はハムスターへ
   function handOver(s, c, x, y, cfg, out) {
@@ -988,7 +992,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
           s.fingers[e.id] = { on: 'sight', acc: 0 };
           // 2 段めの動き（はねる・潮を吹く・跳ねる）の途中は反応しない
           const sd = SIGHT()[s.sight.kind], eating = s.sight.ate != null && s.t - s.sight.ate < sd.eatMs / 1000;
-          if (!(sd.lock && s.t - s.sight.t1 < sd.lock) && !eating) { addCredit(s, C.hit, cfg); hitSight(s, e.x, e.y, cfg, out); }
+          const leaving = sd.area === 'pal' && !PL().open(s); // りすが別れる途中
+          if (!(sd.lock && s.t - s.sight.t1 < sd.lock) && !eating && !leaving) { addCredit(s, C.hit, cfg); hitSight(s, e.x, e.y, cfg, out); }
         } else if (inBox(hamBox(cfg, cfg.touch.pad), e.x, e.y)) {
           addCredit(s, C.hit, cfg);
           // ほかの指もハムスターに触れていたら、ぎゅっ（つつく代わり）
@@ -1050,11 +1055,18 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       case 'flick': {
         if (!f || f.on === 'carry' || f.on === 'fed' || f.on === 'ham') break;
         out.push({ type: 'flick', x: e.x, y: e.y, vx: e.vx, vy: e.vy });
-        // 指の近くの「はらう物」が飛ぶ
+        // 指がなぞった線（触れた所 → 離した所）の近くの「はらう物」が飛ぶ
+        const x0 = e.x0 != null ? e.x0 : e.x, y0 = e.y0 != null ? e.y0 : e.y;
+        const sx = e.x - x0, sy = e.y - y0, sl = Math.hypot(sx, sy) || 1;
+        const near = (o) => { const u = Math.max(0, Math.min(sl, ((o.x - x0) * sx + (o.cy - y0) * sy) / sl)); return Math.hypot(o.x - (x0 + (sx * u) / sl), o.cy - (y0 + (sy * u) / sl)) <= cfg.blow.r; };
         for (const o of visible(s, cfg)) {
           const def = OBJ()[o.kind];
-          if (def.act !== 'blow' || (o.st && o.st.st && (!def.again || o.st.st === 'meet')) || locked(s, def, o.st)) continue;
-          if (Math.hypot(o.x - e.x, o.cy - e.y) > cfg.blow.r) continue;
+          if (def.act !== 'blow' || locked(s, def, o.st)) continue;
+          // 綿毛の上に指を置いてからはらったとき: 置いた瞬間にもう飛んでいる。少しの間なら、はらった向きの相手と組み合わせにする
+          const redir = f.on === 'obj' && f.key === o.key && o.st && o.st.st === blownSt(def) && s.t - o.st.t <= cfg.blow.redirect;
+          if (redir) { const meets = []; if (M().tryBlow(s, o, e.vx, e.vy, cfg, meets)) out.push(...meets); continue; }
+          if (o.st && o.st.st && (!def.again || o.st.st === 'meet')) continue;
+          if (!near(o)) continue;
           // 通り道に相手がいれば組み合わせ（飛んだあとの状態は組み合わせの終わりに決まる）
           const meets = [], met = M().tryBlow(s, o, e.vx, e.vy, cfg, meets);
           if (!met) { const st = stOf(s, o.key); st.st = blownSt(def); st.t = s.t; }
@@ -1108,7 +1120,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       else if (h.act === 'dig') { s.stash += s.cheeks; const n = s.cheeks; s.cheeks = 0; setAct(s, 'stand'); out.push({ type: 'stash', n, stash: s.stash }); }
       else if (h.act === 'wake') { setAct(s, 'stand'); out.push({ type: 'awake' }); }
       else if (h.act === 'bed') { setAct(s, 'sleep'); out.push({ type: 'asleep' }); }
-      else if (['eat', 'poke', 'roll', 'idle', 'beg', 'wear', 'sneeze', 'bounce', 'hug', 'banzai'].includes(h.act)) setAct(s, h.act === 'idle' ? 'sit' : 'stand');
+      else if (['eat', 'poke', 'roll', 'idle', 'beg', 'wear', 'sneeze', 'bounce', 'hug', 'banzai', 'nose'].includes(h.act)) setAct(s, h.act === 'idle' ? 'sit' : 'stand');
     }
     // 組み合わせの反応の終わり
     M().step(s, cfg, out);
@@ -1126,6 +1138,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       while (s.stepAcc >= cfg.walk.stepEvery) { s.stepAcc -= cfg.walk.stepEvery; out.push({ type: 'step', ground: landHere(s, cfg).scratch }); }
       // 通りすぎた物と、身なり・足元で出会う
       M().passBy(s, d0, cfg, out);
+      PL().walked(s, mv, cfg, out); // りすと一緒に歩いた
     } else if (h.act === 'walk') { setAct(s, 'stand'); out.push({ type: 'stop' }); }
     // 何もしないと座る。座っている間は、ときどき待つしぐさ
     if (h.act === 'stand' && !s.carry && !s.pet && s.t - s.lastTouch >= cfg.idle.sitMs / 1000) {
@@ -1139,7 +1152,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const sg = s.sight;
     if (sg) {
       const def = SIGHT()[sg.kind];
-      if (s.t >= sg.until) { s.sight = null; out.push({ type: 'sightEnd', kind: sg.kind }); }
+      if (def.area === 'pal') PL().tick(s, cfg, out); // りすは別れ方があるので pal.js で
+      else if (s.t >= sg.until) { s.sight = null; out.push({ type: 'sightEnd', kind: sg.kind }); }
       else if (def.every && s.t - sg.t1 >= def.every && sg.until - s.t > 1.2) {
         sg.t1 = s.t; const p = sightPos(s, cfg);
         out.push({ type: 'sightHit', kind: sg.kind, n: sg.n, x: p.x, y: p.y, auto: true });
@@ -1175,7 +1189,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     return [{ type: 'bed' }];
   }
 
-  Game.walk = { create, touch, step, bedtime, visible, hamBox, busy, landHere, hamWx, sightPos, sightAt, addFree, stOf, locked, setAct };
+  Game.walk = { create, touch, step, bedtime, visible, hamBox, busy, landHere, hamWx, sightPos, sightAt, addFree, stOf, locked, setAct, giftOut, pickGift };
 })();
 </script>
 <script>
@@ -1271,8 +1285,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const toHam = ids.find((k) => T()[k].b === 'ham');
     if (toHam && hamFree(s)) {
       const c = { x: cfg.layout.hamX, y: cfg.layout.footY - cfg.meet.hamR };
-      const r = seg(c.x, c.y, o.x, o.cy, ux, uy, L);
-      if (r.d <= cfg.meet.hamR && r.u > 0) best = { id: toHam, t: null, u: r.u, x: c.x, y: c.y };
+      // ハムスターへは、画面の端からでも届く。遠いほど向きのずれを許す（小さい子のはらいは向きがぶれる）
+      const M = cfg.meet, r = seg(c.x, c.y, o.x, o.cy, ux, uy, M.hamLen);
+      if (r.d <= M.hamR + pad + r.u * M.hamSpread && r.u > 0) best = { id: toHam, t: null, u: r.u, x: c.x, y: c.y };
     }
     for (const t of Wk().visible(s, cfg)) {
       if (t.key === o.key) continue;
@@ -1510,6 +1525,158 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   Game.together = { hug, press, hit, sky, release, step, stage, kick, IDS };
+})();
+</script>
+<script>
+// りすの同行（ルール側の純粋な関数。DOM・音・絵に触らない）。設計書 2026-11-21-hoppe-walk-pal-design.md。
+// りす（景色の驚き、もり。lands.js の SIGHT.squirrel）が隣にいる間に一緒に歩いた距離 walked で、仲良しの段 lv（0〜2）が上がる。
+//   歩いている間は帰らない（keep 秒）。出てから maxS 秒で必ず帰る。ごはんをあげると walked に feedD を足す。
+//   別れ方 bye.kind: run（段 0。右へ走って帰る）/ nose（段 1。鼻と鼻をくっつけて、端で振り返って跳ねる）/
+//   gift（段 2。鼻をくっつけたあと、おみやげの身なりを前に置いていく）
+// walk.js が呼ぶ: walked（歩いた）/ fed（ごはんを食べた）/ tick（終わりと別れ方の時刻）/ pos（いまの位置と向き）/ open（触れるか）
+// 状態（s.sight に足す）: walked, lv, upT（段が上がった時刻）, bye = { kind, t0 }, end（最後の時刻）, noseT, waveT
+// 出来事: palUp { lv, x, y } / palBye { kind, x, y } / palNose { x, y } / palWave { x, y } /
+//   palToss { item, x, y }（おみやげを投げた）/ palGift { key, item, x, y }（おみやげが着いた）/ sightEnd { kind }
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const Wk = () => Game.walk;
+  const DEF = () => Game.lands.SIGHT.squirrel;
+  const RUN = 1.2; // 走ってくる・走って帰る秒
+  const PAL_GIFT_DX = 31; // おみやげを置く所（ハムスターの x から前へ。投げている間の絵は sight.js）
+
+  // 別れ方の時刻表（bye.t0 からの秒）。appr … 鼻先へ寄る、kiss … 跳んで鼻をくっつける（touch で出来事）、
+  //   back … 跳んで下がる（おみやげを前足に持つ）、toss … おみやげをハムスターの前へ投げる（着いたら palGift）、edge … 画面の端まで走る、wave … 振り返って跳ねる、out … 走って帰る
+  const SEQ = {
+    run: { out: [0, 1.2] },
+    nose: { appr: [0, 0.45], kiss: [0.45, 1.15], touch: 0.62, edge: [1.35, 2.05], wave: [2.05, 2.5], out: [2.5, 2.95] },
+    gift: { appr: [0, 0.45], kiss: [0.45, 1.15], touch: 0.62, back: [1.25, 1.55], toss: [1.6, 2.0], edge: [2.15, 2.75], wave: [2.75, 3.2], out: [3.2, 3.65] },
+  };
+  const len = (k) => SEQ[k].out[1];
+
+  const isPal = (s) => !!(s.sight && Game.lands.SIGHT[s.sight.kind].area === 'pal');
+  // 隣を歩いているか（走ってくる途中・別れる途中でない）
+  const beside = (s) => isPal(s) && !s.sight.bye && s.t - s.sight.t0 >= RUN;
+  // 触れるか（つつく・ごはんを渡す）: 別れる途中は触れない
+  const open = (s) => isPal(s) && !s.sight.bye;
+  // ハムスターが鼻をくっつけられるか
+  const hamOk = (s) => ['walk', 'stand', 'sit', 'idle'].includes(s.ham.act) && !s.carry && !s.meet && !s.tog;
+
+  function up(s, cfg, out) {
+    const st = s.sight, d = DEF();
+    const lv = st.walked >= d.lv2 ? 2 : st.walked >= d.lv1 ? 1 : 0;
+    while ((st.lv || 0) < lv) {
+      st.lv = (st.lv || 0) + 1; st.upT = s.t;
+      const p = pos(s, cfg);
+      out.push({ type: 'palUp', lv: st.lv, x: p.x, y: p.y - 26 });
+    }
+  }
+
+  // 歩いた（mv ドット）。隣にいる間だけ数えて、帰る時刻を延ばす
+  function walked(s, mv, cfg, out) {
+    if (!beside(s)) return;
+    const st = s.sight, d = DEF();
+    st.walked = (st.walked || 0) + mv;
+    st.until = Math.min(st.t0 + d.maxS, Math.max(st.until, s.t + d.keep));
+    up(s, cfg, out);
+  }
+  // ごはんを食べた（walk.feedPal から）
+  function fed(s, cfg, out) {
+    const st = s.sight, d = DEF();
+    st.walked = (st.walked || 0) + d.feedD;
+    st.until = Math.min(st.until, st.t0 + d.maxS);
+    up(s, cfg, out);
+  }
+
+  // 別れ方を決めて始める
+  function bye(s, cfg, out) {
+    const st = s.sight, d = DEF(), lv = st.lv || 0;
+    // 鼻をくっつけるのは、ハムスターが手すきのとき。手がふさがっていたら少し待つ（待ちすぎたら走って帰る）
+    if (lv >= 1 && !hamOk(s) && s.t < st.t0 + d.maxS + 4) { st.until = s.t + 0.4; return; }
+    const kind = lv >= 1 && hamOk(s) ? (lv >= 2 && !Wk().giftOut(s) ? 'gift' : 'nose') : 'run';
+    st.bye = { kind, t0: s.t }; st.end = s.t + len(kind);
+    if (kind !== 'run') Wk().setAct(s, 'nose', (kind === 'gift' ? d.giftMs : d.noseMs) / 1000);
+    const p = pos(s, cfg);
+    out.push({ type: 'palBye', kind, x: p.x, y: p.y });
+  }
+
+  // 景色の驚きの時刻（walk.step から。りすのときだけ）
+  function tick(s, cfg, out) {
+    const st = s.sight;
+    if (!st.bye) { if (s.t >= st.until) bye(s, cfg, out); return; }
+    const S = SEQ[st.bye.kind], v = s.t - st.bye.t0, L = cfg.layout;
+    if (S.touch != null && st.noseT == null && v >= S.touch) {
+      st.noseT = s.t; const p = pos(s, cfg);
+      out.push({ type: 'palNose', x: p.x - 10, y: p.y - 22 });
+    }
+    // おみやげ: 下がるときに選んで前足に持ち、投げて、着いたら地面の贈り物にする
+    if (S.back && st.giftItem == null && v >= S.back[0]) st.giftItem = Wk().pickGift(s, Game.lands.LANDS.find((l) => l.rare.includes(st.kind)));
+    if (S.toss && st.tossT == null && v >= S.toss[0]) { st.tossT = s.t; const p = pos(s, cfg); out.push({ type: 'palToss', item: st.giftItem, x: p.x - 9, y: p.y - 12 }); }
+    if (S.toss && st.gift == null && v >= S.toss[1]) {
+      const x = L.hamX + PAL_GIFT_DX, y = L.footY + 4;
+      const f = Wk().addFree(s, 'gift', x + s.d, y, null, st.giftItem);
+      st.gift = f.key;
+      out.push({ type: 'palGift', key: f.key, item: st.giftItem, x, y });
+    }
+    if (S.wave && st.waveT == null && v >= S.wave[0]) {
+      st.waveT = s.t; const p = pos(s, cfg);
+      out.push({ type: 'palWave', x: p.x, y: p.y - 24 });
+    }
+    if (s.t >= st.end) { s.sight = null; out.push({ type: 'sightEnd', kind: st.kind }); }
+  }
+
+  // いまの位置と向き { x, y, flip（左を向く）, hop（跳ねている高さ）, run（走っている）}
+  const ease = (a, b, k) => a + (b - a) * k;
+  const inn = (v, [a, b]) => v >= a && v < b;
+  const at = (v, [a, b]) => Math.max(0, Math.min(1, (v - a) / (b - a)));
+  function pos(s, cfg = Game.config) {
+    const st = s.sight, L = cfg.layout, V = cfg.view;
+    const home = L.hamX + 40, outX = V.w + 12, nose = L.hamX + 34, back = L.hamX + 58, edge = V.w - 14, y = L.footY + 2;
+    const u = s.t - st.t0;
+    if (!st.bye) {
+      // 右から走ってきて隣に並ぶ
+      const k = u < RUN ? 1 - u / RUN : 0;
+      return { x: Math.round(home + (outX - home) * k * k), y, flip: u < RUN, hop: 0, run: u < RUN };
+    }
+    const S = SEQ[st.bye.kind], v = s.t - st.bye.t0;
+    if (st.bye.kind === 'run') { const k = at(v, S.out); return { x: Math.round(home + (outX - home) * k * k), y, flip: false, hop: 0, run: true }; }
+    // 鼻先へ寄る → 跳んで鼻をくっつける（上がって、少し止まって、下りる）
+    if (v < S.appr[1]) return { x: Math.round(ease(home, nose, at(v, S.appr))), y, flip: true, hop: 0, run: true };
+    if (v < S.kiss[1]) {
+      const k = at(v, S.kiss), H = 11; // 鼻の高さ（ハムスターは前へかがむ）
+      const hop = k < 0.25 ? Math.round(H * Math.sin((k / 0.25) * Math.PI / 2)) : k < 0.7 ? H : Math.round(H * Math.cos(((k - 0.7) / 0.3) * Math.PI / 2));
+      return { x: nose, y, flip: true, hop, run: false };
+    }
+    let x = nose;
+    if (S.back) {
+      // 跳んで下がって、おみやげを投げる（投げる瞬間に小さく跳ねる）
+      if (v < S.back[0]) return { x, y, flip: true, hop: 0, run: false };
+      if (v < S.back[1]) { const k = at(v, S.back); return { x: Math.round(ease(nose, back, k)), y, flip: true, hop: Math.round(5 * Math.sin(k * Math.PI)), run: false }; }
+      x = back;
+      if (v < S.toss[1]) { const k = at(v, S.toss); return { x, y, flip: true, hop: k > 0 && k < 0.3 ? Math.round(3 * Math.sin((k / 0.3) * Math.PI)) : 0, run: false }; }
+    }
+    if (v < S.edge[0]) return { x, y, flip: true, hop: 0, run: false };
+    if (v < S.edge[1]) { const k = at(v, S.edge); return { x: Math.round(ease(x, edge, k)), y, flip: false, hop: 0, run: true }; }
+    // 端で振り返って跳ねる（2 回）
+    if (v < S.wave[1]) { const k = at(v, S.wave); return { x: edge, y, flip: true, hop: Math.round(6 * Math.abs(Math.sin(k * 2 * Math.PI))), run: false }; }
+    const k = at(v, S.out);
+    return { x: Math.round(ease(edge, outX, k * k)), y, flip: false, hop: 0, run: true };
+  }
+
+  // ---- 確かめ用（?pal=<段>・dev/meets.html・テスト）----
+  // もりで、りすが隣にいて、その段まで一緒に歩いた場面。少しで別れる（in 秒あと）
+  function stage(s, lv, cfg = Game.config, inSec = 0.4) {
+    const LANDS = Game.lands.LANDS, d = DEF();
+    Game.meet.clear(s, Math.max(0, LANDS.findIndex((l) => l.rare.includes('squirrel'))) * cfg.land.len + 300, cfg);
+    s.tog = null; s.togNext = 0;
+    const walked = [0, d.lv1, d.lv2][lv] || 0;
+    s.sight = { kind: 'squirrel', t0: s.t - RUN - 2, until: s.t + inSec, sx0: 0, d0: s.d, n: 1, t1: s.t - 5, hx: 0, hy: 0, walked, lv };
+    return { lv };
+  }
+
+  // 鼻をくっつけている間か（りすの目を閉じて、前足をハムスターのほっぺに添える）
+  const kissing = (s) => { const st = s.sight; if (!st || !st.bye || !SEQ[st.bye.kind].kiss) return false; const v = s.t - st.bye.t0, K = SEQ[st.bye.kind]; return v >= K.touch - 0.05 && v < K.kiss[1] - 0.1; };
+
+  Game.pal = { kissing, GIFT_DX: PAL_GIFT_DX, walked, fed, tick, pos, open, beside, stage, SEQ, len };
 })();
 </script>
 <script>
@@ -2974,6 +3141,19 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         else { delete p.paws; p.eyes = 'happy'; p.mouth = 'none'; }
         if (u >= 0.12 && u < 0.62) p.lift = Math.round(7 * Math.sin((Math.PI * (u - 0.12)) / 0.5));
         break;
+      // りすの同行: 別れぎわに、りすと鼻と鼻をくっつける（りすが寄ってくるのを見る → 前へかがんで目を細める → ほっぺが赤い）
+      //   時刻は pal.js の SEQ（appr 0〜0.45、kiss 0.45〜1.15、touch 0.62）に合わせる
+      case 'nose':
+        p.blush = u >= 0.62;
+        if (u < 0.45) p.look = 1;
+        else if (u < 0.52) { p.lean = 1; p.look = 1; }
+        else if (u < 0.58) { p.lean = 2; p.bob = 2; p.eyes = 'happy'; }
+        else if (u < 1.05) { p.lean = 3; p.bob = 3; p.eyes = 'happy'; }
+        else if (u < 1.15) { p.lean = 1; p.bob = 1; p.eyes = 'happy'; }
+        else p.look = 1; // 下りたりすを見る
+        // おみやげを投げてくれたら、目を丸くして小さく口を開ける
+        if (s.sight && s.sight.bye && s.sight.bye.kind === 'gift' && u >= 1.6) { p.eyes = 'wide'; p.mouth = 'small'; p.look = 1; }
+        break;
       default: if (cyc(2.7, 10) === 0) p.eyes = 'closed'; break;
     }
     if (s.pet && s.t - s.pet.lastT <= cfg.pet.gapMs / 1000 && h.act !== 'roll') p.eyes = 'happy';
@@ -2983,6 +3163,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       const v = s.t - s.meet.t0;
       if (v < 0.45) { p.look = 1; p.eyes = 'open'; } else if (v < 1.0) { p.eyes = 'happy'; p.bob = v < 0.55 || v > 0.9 ? 1 : 2; p.lean = 1; }
     }
+    // りすが別れて走っていく・端で振り返る: 目で見送る
+    if (s.sight && s.sight.bye && s.sight.bye.kind !== 'run' && ['stand', 'walk'].includes(h.act)) { p.eyes = 'open'; p.look = 1; }
     // かえるが頭を越える: 上を見て、少し縮む
     if (s.meet && s.meet.id === 'frogFoot' && ['walk', 'stand'].includes(h.act)) { const v = s.t - s.meet.t0; if (v < 0.6) { p.eyes = 'wide'; p.squash = v > 0.1 && v < 0.45 ? 1 : 0; p.hatY = -1; } }
     // 景色の驚きが始まったとき: 目を丸くして口を開ける
@@ -3753,6 +3935,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const BIG = ['.ggg.ggg.', 'g6iigiiig', 'g6iiiiiig', 'giiiiiihg', '.giiiihg.', '..giihg..', '...ghg...', '....g....'];
   const SMALL = ['.gg.gg.', 'gwwgwwg', 'gwwwwwg', '.gwwwg.', '..gwg..', '...g...'];
   const SMALL_R = SMALL.map((r) => r.replace(/w/g, 'i'));
+  const BIG_PINK = BIG.map((r) => r.replace(/i/g, 'w').replace(/h/g, 'i')); // 桃色の大きなハート（地 w、影 i）
   const GROW = { flower: 5 }; // 反応で背が伸びる量（ドット）
   const REDDISH = ['flower', 'shell', 'ladybug', 'strawberry', 'apple', 'crab', 'mushroom'];
   const put = (g, name, rows, x, y) => { const c = img(name, rows); g.drawImage(c, Math.round(x - c.width / 2), Math.round(y - c.height / 2)); };
@@ -3836,7 +4019,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     else if (tg.id === 'skybow') skybow(g, s, u);
   }
 
-  Game.togart = { draw };
+  // ハート 1 つ（りすの同行でも使う）。big: 9×8、でなければ 7×6 のピンク
+  //   pink: 大きなハートも桃色にする（小さなハートと続けて出すとき。赤は影だけ）
+  const heart = (g, x, y, big, pink) => (big ? (pink ? put(g, 'bigP', BIG_PINK, x, y) : put(g, 'big', BIG, x, y)) : put(g, 'small', SMALL, x, y));
+
+  Game.togart = { draw, heart };
 })();
 </script>
 <script>
@@ -4023,9 +4210,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   // ---- りす ----
   const palCache = {};
-  // f: 0/1 走るコマ、sit: 座っている、flip: 左を向く
-  function squirrel(f, sit, flip) {
-    const k = f + ':' + sit + ':' + flip;
+  // f: 0/1 走るコマ、sit: 座っている、flip: 左を向く、kiss: 目を閉じて、前足を前へ伸ばす（鼻と鼻）
+  function squirrel(f, sit, flip, kiss = false) {
+    const k = f + ':' + sit + ':' + flip + ':' + kiss;
     if (palCache[k]) return palCache[k];
     const c = Game.bake.mk(32, 30), g = c.getContext('2d'), x = 16, y = 27;
     // しっぽ（大きくふさふさ、背中で巻く）
@@ -4040,11 +4227,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     g.fillStyle = PAL.g; g.fillRect(x + 1, y - 20, 3, 4); g.fillStyle = PAL.a; g.fillRect(x + 2, y - 19, 1, 3);
     oell(g, x + 4, y - 12, 4, 4, PAL.a);
     g.fillStyle = PAL.c; ell(g, x + 6, y - 10, 2, 1);
-    g.fillStyle = PAL[0]; g.fillRect(x + 5, y - 14, 1, 2); g.fillRect(x + 9, y - 11, 1, 1);
-    g.fillStyle = PAL[6]; g.fillRect(x + 5, y - 14, 1, 1);
+    g.fillStyle = PAL[0]; g.fillRect(x + 9, y - 11, 1, 1);
+    if (kiss) g.fillRect(x + 4, y - 13, 2, 1); // 閉じた目（横 1 本）
+    else { g.fillRect(x + 5, y - 14, 1, 2); g.fillStyle = PAL[6]; g.fillRect(x + 5, y - 14, 1, 1); }
     // 足
     g.fillStyle = PAL.f;
-    if (sit) { g.fillRect(x - 2, y, 3, 1); g.fillRect(x + 2, y, 3, 1); g.fillRect(x + 4, y - 6, 2, 2); }
+    if (kiss) { g.fillRect(x - 3, y, 3, 1); g.fillRect(x + 2, y, 3, 1); g.fillStyle = PAL.g; g.fillRect(x + 6, y - 9, 4, 4); g.fillStyle = PAL.a; g.fillRect(x + 7, y - 8, 2, 2); g.fillStyle = PAL.c; g.fillRect(x + 8, y - 8, 1, 2); } // 前足を前へ（縁つきの 2×2、先はクリーム）
+    else if (sit) { g.fillRect(x - 2, y, 3, 1); g.fillRect(x + 2, y, 3, 1); g.fillRect(x + 4, y - 6, 2, 2); }
     else if (f) { g.fillRect(x - 4, y, 3, 1); g.fillRect(x + 4, y - 1, 3, 1); }
     else { g.fillRect(x - 1, y, 3, 1); g.fillRect(x + 1, y, 3, 1); }
     if (flip) { const d = Game.bake.mk(32, 30), dg = d.getContext('2d'); dg.translate(32, 0); dg.scale(-1, 1); dg.drawImage(c, 0, 0); return (palCache[k] = d); }
@@ -4052,17 +4241,38 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
   // りすが食べているごはんの色（小さく、前足に持つ）
   const FOOD = { seed: ['0', 'c'], strawberry: ['i', 'm'], corn: ['l', 'm'], acorn: ['e', 'f'], apple: ['i', 'n'], chestnut: ['f', 'e'] };
+  // ハムスターのしぐさに合わせて、隣のりすも小さく跳ねる（まねっこ）: しぐさ → [始まる秒, 高さ, 長さ]
+  //   はじめの CROUCH 秒は 1 ドット縮んで（まねの合図）、そのあと跳ねる
+  const MIMIC = { poke: [0.05, 6, 0.45], bounce: [0.08, 7, 0.5], banzai: [0.12, 8, 0.55], sneeze: [0.6, 5, 0.4] }, CROUCH = 0.12;
   function drawSquirrel(g, s, t) {
-    const L = Game.config.layout, def = Game.lands.SIGHT.squirrel, st = s.sight, p = Game.walk.sightPos(s), u = s.t - st.t0, left = st.until - s.t;
+    const def = Game.lands.SIGHT.squirrel, st = s.sight, P = Game.pal, q = P.pos(s), p = { x: q.x, y: q.y };
     const eating = st.ate != null && s.t - st.ate < def.eatMs / 1000;
-    const coming = u < 1.2, going = left < 1.2, moving = !eating && (coming || going || s.ham.act === 'walk');
-    const f = moving ? Math.floor(t * (coming || going ? 12 : 7)) % 2 : 0;
-    const hop = !eating && s.t - st.t1 < 0.45 && st.n > 0 ? Math.round(10 * Math.sin(((s.t - st.t1) / 0.45) * Math.PI)) : 0;
-    // 影
-    g.globalAlpha = 0.25; g.fillStyle = PAL[0]; ell(g, p.x, p.y, 7, 1); g.globalAlpha = 1;
+    const moving = !eating && (q.run || (P.beside(s) && s.ham.act === 'walk'));
+    const f = moving ? Math.floor(t * (q.run ? 12 : 7)) % 2 : 0;
+    // 跳ねる: つついた / 別れの動き / まねっこ
+    let hop = q.hop;
+    if (!eating && !st.bye && s.t - st.t1 < 0.45 && st.n > 0) hop = Math.round(10 * Math.sin(((s.t - st.t1) / 0.45) * Math.PI));
+    const mm = MIMIC[s.ham.act];
+    let crouch = 0;
+    if (!hop && !eating && mm && P.beside(s)) {
+      const w = s.t - s.ham.t0 - mm[0];
+      if (w > 0 && w < CROUCH) crouch = 1;
+      else if (w >= CROUCH && w < CROUCH + mm[2]) hop = Math.round(mm[1] * Math.sin(((w - CROUCH) / mm[2]) * Math.PI));
+    }
+    // 影（跳ぶと小さく。足の真下）
+    g.globalAlpha = 0.25; g.fillStyle = PAL[0]; ell(g, p.x + (q.flip ? -1 : 1), p.y, hop > 6 ? 5 : hop > 2 ? 6 : 7, 1); g.globalAlpha = 1;
     // 食べている間: 座って、前足でごはんを持って、もぐもぐ（頭が小さく上下する）
-    const chew = eating ? Math.floor(t * 8) % 2 : 0;
-    g.drawImage(squirrel(f, !moving && !hop, coming), p.x - 16, p.y - 27 - hop - (moving ? f : 0) + chew);
+    const chew = eating ? Math.floor(t * 8) % 2 : 0, kiss = P.kissing(s);
+    g.drawImage(squirrel(kiss ? 0 : f, !kiss && !moving && !hop, q.flip, kiss), p.x - 16, p.y - 27 - hop - (moving ? f : 0) + chew + crouch);
+    // おみやげ: 下がる間は前足に持ち、投げると弧を描いてハムスターの前へ（着いたら地面の贈り物。render.js）
+    const S = st.bye && P.SEQ[st.bye.kind], v = st.bye ? s.t - st.bye.t0 : 0;
+    if (S && S.back && st.giftItem && st.gift == null && v >= S.back[0]) {
+      const L = Game.config.layout, hx = p.x - 9, hy = p.y - 10 - hop; // 口元を隠さない高さ
+      const tx = L.hamX + P.GIFT_DX, ty = L.footY + 4 + Game.lands.OBJ.gift.cy;
+      const k = v < S.toss[0] ? 0 : Math.min(1, (v - S.toss[0]) / (S.toss[1] - S.toss[0]));
+      const gx = Math.round(hx + (tx - hx) * k), gy = Math.round(hy + (ty - hy) * k - 14 * Math.sin(k * Math.PI));
+      g.drawImage(Game.ham.icon(st.giftItem), gx - 16, gy - 14);
+    }
     if (eating) {
       const [c1, c2] = FOOD[st.food] || FOOD.acorn, fx = p.x + 6, fy = p.y - 8 + chew;
       g.fillStyle = PAL.g; ell(g, fx, fy, 3, 3);
@@ -4070,6 +4280,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       g.fillStyle = PAL[c2]; g.fillRect(fx - 1, fy - 3, 3, 1);
       if (Math.floor(t * 8) % 3 === 0) { g.fillStyle = PAL.c; g.fillRect(fx + 3 + chew, fy + 3, 1, 1); } // こぼれるかけら
     }
+    // ハート: 仲良しの段が上がった（りすの上）・鼻をくっつけた（鼻と鼻の上）。ふわっと上がって消える
+    const H = Game.togart.heart;
+    // 段が上がった: 出る瞬間だけ大きく、0.9 秒で 8 ドット上がって消える
+    if (st.upT != null && s.t - st.upT < 0.9) { const a = s.t - st.upT; H(g, p.x + 2, p.y - 34 - hop - Math.round(a * 9), st.lv >= 2 || a < 0.1, true); }
+    if (st.noseT != null && s.t - st.noseT < 1.1) { const L = Game.config.layout; H(g, L.hamX + 22, L.footY - 36 - Math.round((s.t - st.noseT) * 6), false); }
   }
 
   const S = {
@@ -4791,7 +5006,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 //   ?rare=gift（まれな驚きの贈り物を、少し歩くたびに出す）/ ?rare=tophat（雪だるまの帽子が必ずシルクハットとして残る）/
 //   ?got=all（身なりを全部集めて、ごはんを 60 ためこんだ旅）/ ?rare=sight（景色の驚きを、終わって少し歩くたびに出す）/ ?rare=rainbow|koi|whale|squirrel|star（その驚きだけを。場所の指定がなければ、その土地から）
 //   ?meet=<id>（その組み合わせがすぐ起きる場面から。lands.js の MEET。保存しない）/
-//   ?tog=<id>（一緒に触る hug|banzai|pair|skybow がすぐ起こせる場面から。保存しない）
+//   ?tog=<id>（一緒に触る hug|banzai|pair|skybow がすぐ起こせる場面から。保存しない）/
+//   ?pal=0|1|2（もりで、りすがその段まで一緒に歩いたところ。少しで別れる。保存しない）
 //   季節ごとの版（dev/build-lands.mjs）は window.HOPPE_WALK_URL に '?land=2&nosave=1' などを埋めてあり、URL の代わりに読む
 (function () {
   const Game = (window.Game = window.Game || {});
@@ -4802,7 +5018,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   if (q.get('fast') === '1') for (const k of Object.keys(cfg.walk.credit)) cfg.walk.credit[k] *= 10;
   const meetId = Game.lands.MEET[q.get('meet')] ? q.get('meet') : null;
   const togId = Game.together.IDS.includes(q.get('tog')) ? q.get('tog') : null;
-  const nosave = q.get('nosave') === '1' || !!meetId || !!togId;
+  const palLv = ['0', '1', '2'].includes(q.get('pal')) ? +q.get('pal') : null;
+  const nosave = q.get('nosave') === '1' || !!meetId || !!togId || palLv != null;
   if (q.get('rare') === 'gift') Object.assign(cfg.rare, { every: 40, p: 1, minGap: 0, gift: 1 });
   if (q.get('rare') === 'tophat') cfg.rare.tophat = 1;
   if (q.get('rare') === 'sight') Object.assign(cfg.rare, { every: 40, p: 1, minGap: 0, gift: 0 });
@@ -4834,6 +5051,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   });
   if (meetId) Game.meet.stage(app.walk, meetId, cfg);
   if (togId) Game.together.stage(app.walk, togId, cfg);
+  if (palLv != null) Game.pal.stage(app.walk, palLv, cfg, 3);
   const note = (e) => { app.log.push(e); if (app.log.length > 300) app.log.shift(); };
   const mix = () => Game.world.mixAt(Game.walk.hamWx(app.walk, cfg), cfg);
   const key = () => Game.walk.landHere(app.walk, cfg).key;
@@ -4925,6 +5143,16 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       case 'palFeed':
         HP.play('hit'); A.play('munch'); A.play('squeak', { delay: 0.7 });
         word('munch', '#feae34', e.x, e.y - 22, 'S'); F.burstDots(e.x + 4, e.y, '#fee761');
+        break;
+      // りすの同行（pal.js）: 指で起こしたものではないので振動なし（おみやげだけ「驚き」）
+      case 'palUp': A.play('twinkle', { hz: hz(12), gain: 0.5 }); A.play('squeak', { delay: 0.12 }); break; // 仲良しの段が上がった（ハートは sight.js）
+      case 'palBye': A.play('scuttle', { gain: e.kind === 'run' ? 1 : 0.5 }); break;
+      case 'palNose': A.play('squeak'); A.play('squeak', { delay: 0.16, gain: 0.6 }); word('chu', '#f6757a', e.x + 4, e.y - 12, 'S'); break; // 鼻と鼻
+      case 'palWave': A.play('squeak', { gain: 0.6 }); break; // 端で振り返って跳ねる
+      case 'palToss': A.play('swish'); break; // おみやげを投げた
+      case 'palGift':
+        HP.play('rare'); A.play('drop'); A.play('gift', { hz: hz(), delay: 0.2 });
+        word('poto', '#feae34', e.x + 8, e.y - 24, 'S'); F.burstDots(e.x, e.y - 10, '#fee761');
         break;
       case 'back': break;
       case 'beg': {
