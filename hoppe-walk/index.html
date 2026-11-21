@@ -66,7 +66,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       // 音ごとの大きさの倍率
       level: { ripple: 1, pop: 1, swish: 1, rustle: 1, scratch: 2.2, bloom: 1, buzz: 1, fwoosh: 1, hop: 1, grab: 1, drop: 1, munch: 1, cheek: 1, poke: 1, pet: 1, roll: 1, step: 1, dig: 1, stash: 1, find: 1, yawn: 1,
         beg: 1, croak: 1, clam: 1, scuttle: 1, boing: 1, shake: 1, hat: 1, plip: 1, sand: 1, crunch: 1, wake: 1, snore: 1, gift: 1, wear: 1,
-        rainbow: 1, twinkle: 1, splash: 1, whale: 1, spout: 1, squeak: 1, shoot: 1, achoo: 1, together: 1 },
+        rainbow: 1, twinkle: 1, splash: 1, whale: 1, spout: 1, squeak: 1, shoot: 1, achoo: 1, together: 1, chirp: 1, quack: 1, gull: 1 },
       sfx: {
         // ポロン（何もない所に触れた。高さは曲の音階から vars.hz）
         ripple: [{ k: 'chime', mul: 1, type: 'triangle', vol: 0.16, a: 0.004, dec: 0.45 }, { k: 'chime', mul: 2, type: 'sine', vol: 0.04, a: 0.002, dec: 0.25 }],
@@ -165,6 +165,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         spout: [{ k: 'noise', f: 800, q: 0.6, vol: 0.2, a: 0.08, dec: 1.0, sweep: 2.5 }, { k: 'chime', mul: 2, type: 'sine', vol: 0.05, a: 0.1, dec: 0.6, delay: 0.25 }],
         // チュッ（りす）
         squeak: [{ k: 'tone', f: 1700, type: 'sine', vol: 0.1, dec: 0.05, slide: 1.3 }, { k: 'tone', f: 1950, type: 'sine', vol: 0.09, dec: 0.06, slide: 1.25, delay: 0.09 }],
+        // ちいさな景色: ピピッ（小鳥。高い 2 音が下がって上がる）/ グワッ（かも。鼻にかかった低い音を 2 つ）/ ミャア（かもめ。上がって下がる長めの音）
+        chirp: [{ k: 'tone', f: 3200, type: 'sine', vol: 0.07, dec: 0.045, slide: 0.75 }, { k: 'tone', f: 3500, type: 'sine', vol: 0.07, dec: 0.05, slide: 0.8, delay: 0.08 }],
+        quack: [{ k: 'tone', f: 330, type: 'sawtooth', vol: 0.05, a: 0.01, dec: 0.12, slide: 0.8 }, { k: 'noise', f: 1100, q: 5, vol: 0.05, dec: 0.1 }, { k: 'tone', f: 310, type: 'sawtooth', vol: 0.04, a: 0.01, dec: 0.1, slide: 0.75, delay: 0.16 }],
+        gull: [{ k: 'tone', f: 1250, type: 'triangle', vol: 0.08, a: 0.03, dec: 0.1, slide: 1.25 }, { k: 'tone', f: 1550, type: 'triangle', vol: 0.08, a: 0.01, dec: 0.32, slide: 0.6, delay: 0.12 }],
         // キラーン（流れ星。高い音がすっと下りて、音階の 2 音が残る）
         shoot: [{ k: 'tone', f: 2600, type: 'sine', vol: 0.06, a: 0.01, dec: 0.7, slide: 0.5 }, { k: 'chime', mul: 2, type: 'sine', vol: 0.08, dec: 0.8, delay: 0.15 },
           { k: 'chime', mul: 3, type: 'sine', vol: 0.05, dec: 0.9, delay: 0.3 }],
@@ -213,6 +217,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     //   landPad … 跳んだ先の当たりを、相手の r + pad よりさらに広げる量 / hamR … 飛んできた物が当たる、ハムスターの丸の半径 / hamLen … ハムスターへ飛ぶ物が届く長さ / hamSpread … 遠いほど当たりを広げる割合（ずれ ÷ 距離）/
     //   passX・footX … 身なり・足元で出会う所（hamX から前へのドット。真ん中まで来ると体に隠れるので、少し前で起こす）
     meet: { foot: 6, blowLen: 60, landPad: 4, hamR: 14, hamLen: 120, hamSpread: 0.25, passX: 34, footX: 26 },
+    // ちいさな景色（little.js。種類ごとの長さと動きは lands.js の LITTLE）: 歩いた距離 every ごとに確率 p で抽選。前のが去ってから gap 歩くまでは出さない
+    //   cueGain … 出たときの小さな音の大きさ / lock … 触ったあと、次に反応するまで（秒）
+    little: { every: 40, p: 0.6, gap: 40, cueGain: 0.3, lock: 0.6 },
     // 一緒に触る（together.js）: win … 「同時」とみなす間（秒）/ gap … 終わってから次を起こさない間（秒）/ banzaiGap … ばんざいどうしの間（秒）/
     //   ms … 反応の長さ / skyMin … 空をこすったとみなす、指ごとの距離（ドット）/ skyWin … 2 本の指が「同じころ」こすっている間（秒）
     together: { win: 0.35, gap: 2, banzaiGap: 8, ms: { hug: 1300, banzai: 1300, pair: 1600, skybow: 2600 }, skyMin: 12, skyWin: 0.3 },
@@ -535,41 +542,63 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     star:     { ms: 8000, area: 'sky', every: 2.4, extend: 3 },                          // ゆきのおか: 空が少し暗くなって流れ星。空をたたくと、そこから星が流れる
   };
 
+  // 景色の細かい変化（ちいさな景色。設計書 2026-11-21-hoppe-walk-little-design.md）。little.js が動かし、littleart.js が描く
+  //   layer: sky（空と遠景。景色の驚きのあと）| water（なぞる水の上）| ground（地面の帯の奥。物より奥）
+  //   ms: 去り始めるまで（外へ出きるか、その場の動きが終わるまで待つ）/ par: 歩いたとき流れる割合（遠景と同じ）/ bw, bh: 当たりの箱の半分（pad は別）/ fly: 触ると逃げて、画面の外へ出たら去る（逃げる途中はもう触れない）、
+  //   again: 触ると去る時刻を延ばす（その場のもの）/ cue: 出たときの小さな音 / sfx・word: 触ったときの音・擬音 / color: 擬音の色
+  const LITTLE = {
+    butterfly: { layer: 'sky',    ms: 10500, par: 0.1,  bw: 5, bh: 5, fly: true, sfx: 'twinkle', word: 'hirahira', color: '#fee761' },
+    birds:     { layer: 'sky',    ms: 7000, par: 0.08, bw: 8, bh: 6, fly: true, cue: 'chirp', sfx: 'chirp', word: 'pipi', color: '#ffffff' },
+    fluff:     { layer: 'sky',    ms: 8000, par: 0.45, bw: 9, bh: 9, again: 1.6, sfx: 'fwoosh', word: 'fuwa', color: '#ffffff' },
+    dragonfly: { layer: 'sky',    ms: 6400, par: 0.6,  bw: 5, bh: 4, fly: true, sfx: 'buzz', word: 'sui', color: '#2ce8f5' },
+    ripple:    { layer: 'water',  ms: 5000, par: 1,    bw: 9, bh: 6, again: 2.6, sfx: 'plip', word: 'pochan', color: '#2ce8f5' },
+    ducks:     { layer: 'water',  ms: 12000, par: 1,    bw: 12, bh: 6, cue: 'quack', sfx: 'quack', word: 'guwa', color: '#feae34' },
+    gull:      { layer: 'sky',    ms: 8000, par: 0.1,  bw: 7, bh: 4, fly: true, cue: 'gull', sfx: 'gull', word: 'myaa', color: '#ffffff' },
+    flyfish:   { layer: 'sky',    ms: 6000, par: 0.2,  bw: 6, bh: 6, again: 1.2, sfx: 'plip', word: 'pichi', color: '#2ce8f5' },
+    turtle:    { layer: 'sky',    ms: 5000, par: 0.2,  bw: 6, bh: 5, again: 3, sfx: 'pop', word: 'puka', color: '#63c74d' },
+    leaves:    { layer: 'sky',    ms: 8000, par: 0.3,  bw: 4, bh: 4, sfx: 'rustle', word: 'hira', color: '#feae34' },
+    kotori:    { layer: 'sky',    ms: 7000, par: 0.6,  bw: 5, bh: 4, fly: true, cue: 'chirp', sfx: 'chirp', word: 'chichi', color: '#ffffff' },
+    mole:      { layer: 'ground', ms: 5200, par: 1,    bw: 6, bh: 6, again: 3, sfx: 'pop', word: 'pokon', color: '#feae34' },
+    rabbit:    { layer: 'sky',    ms: 11000, par: 0.45, bw: 5, bh: 5, sfx: 'hop', word: 'hop', color: '#ffffff' },
+    fox:       { layer: 'sky',    ms: 12000, par: 0.45, bw: 7, bh: 5, sfx: 'crunch', word: 'zubo', color: '#feae34' },
+    enaga:     { layer: 'sky',    ms: 10000, par: 0.08, bw: 7, bh: 5, fly: true, cue: 'chirp', sfx: 'chirp', word: 'chiriri', color: '#ffffff' },
+  };
+
   const LANDS = [
     {
       id: 'harappa', name: 'はらっぱ', key: 0, far: 'clouds', scratch: 'grass',
       colors: { sky: ['r', 's', '#9fe8f0'], hill: 'n', hill2: 'o', ground: 'm', groundLine: 'n', soil: 'n', soilDark: 'o', blade: 'm' },
       spawn: [{ kind: 'flower', weight: 5 }, { kind: 'ladybug', weight: 2 }, { kind: 'puff', weight: 3 }, { kind: 'seed', weight: 3 }],
       find: [{ kind: 'seed', weight: 3 }, { kind: 'hopper', weight: 2 }],
-      gifts: ['crown', 'lei'], rare: ['rainbow'],
+      gifts: ['crown', 'lei'], rare: ['rainbow'], little: ['butterfly', 'birds', 'fluff'],
     },
     {
       id: 'ike', name: 'いけ', key: 1, far: 'reeds', scratch: 'water',
       colors: { sky: ['r', 's', '#c8f4f8'], hill: 'o', hill2: 'p', ground: 'n', groundLine: 'o', soil: 'r', soilDark: 'q', blade: 's' },
       spawn: [{ kind: 'frog', weight: 3 }, { kind: 'bubble', weight: 4 }, { kind: 'weed', weight: 3 }, { kind: 'strawberry', weight: 3 }, { kind: 'seed', weight: 1 }],
       find: [{ kind: 'frog', weight: 2 }, { kind: 'bubble', weight: 2 }, { kind: 'strawberry', weight: 1 }],
-      gifts: ['leafhat', 'frogpack'], rare: ['koi'],
+      gifts: ['leafhat', 'frogpack'], rare: ['koi'], little: ['dragonfly', 'ripple', 'ducks'],
     },
     {
       id: 'hama', name: 'はま', key: 2, far: 'sea', scratch: 'sand',
       colors: { sky: ['q', 'r', 's'], hill: 'r', hill2: 'q', ground: 'c', groundLine: 'd', soil: 'd', soilDark: 'y', blade: 'c' },
       spawn: [{ kind: 'shell', weight: 4 }, { kind: 'crab', weight: 3 }, { kind: 'foam', weight: 3 }, { kind: 'corn', weight: 3 }, { kind: 'seed', weight: 1 }],
       find: [{ kind: 'shell', weight: 2 }, { kind: 'crab', weight: 2 }, { kind: 'corn', weight: 1 }],
-      gifts: ['straw', 'shells'], rare: ['whale'],
+      gifts: ['straw', 'shells'], rare: ['whale'], little: ['gull', 'flyfish', 'turtle'],
     },
     {
       id: 'mori', name: 'もり', key: 3, far: 'trees', scratch: 'leaves',
       colors: { sky: ['r', '#9fe8f0', 'c'], hill: 'a', hill2: 'f', ground: 'e', groundLine: 'f', soil: 'f', soilDark: 'g', blade: 'j' },
       spawn: [{ kind: 'mushroom', weight: 4 }, { kind: 'appletree', weight: 2 }, { kind: 'leaf', weight: 4 }, { kind: 'acorn', weight: 3 }, { kind: 'seed', weight: 1 }],
       find: [{ kind: 'acorn', weight: 3 }, { kind: 'mushroom', weight: 1 }],
-      gifts: ['acorn', 'cape'], rare: ['squirrel'],
+      gifts: ['acorn', 'cape'], rare: ['squirrel'], little: ['leaves', 'kotori', 'mole'],
     },
     {
       id: 'yuki', name: 'ゆきのおか', key: 4, far: 'snowhills', scratch: 'snow',
       colors: { sky: ['3', '4', '5'], hill: '5', hill2: '4', ground: '6', groundLine: '5', soil: '6', soilDark: '5', blade: '4' },
       spawn: [{ kind: 'snowman', weight: 2 }, { kind: 'flake', weight: 4 }, { kind: 'chestnut', weight: 3 }, { kind: 'seed', weight: 1 }],
       find: [{ kind: 'chestnut', weight: 2 }, { kind: 'seed', weight: 1 }],
-      gifts: ['knit', 'scarf'], rare: ['star'],
+      gifts: ['knit', 'scarf'], rare: ['star'], little: ['rabbit', 'fox', 'enaga'],
     },
   ];
 
@@ -601,7 +630,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     scarfSnowman:  { how: 'pass',  a: 'scarf',     b: 'snowman',   ms: 1200 },
   };
 
-  Game.lands = { OBJ, LANDS, GIFT, SIGHT, MEET };
+  Game.lands = { OBJ, LANDS, GIFT, SIGHT, MEET, LITTLE };
 })();
 </script>
 <script>
@@ -773,6 +802,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const PL = () => Game.pal; // りすの同行（pal.js）
   const M = () => Game.meet; // 組み合わせ（meet.js）
   const TG = () => Game.together; // 一緒に触る（together.js）
+  const LI = () => Game.little; // ちいさな景色（little.js）
   // 身なりの組み合わせの間は、立ち止まって見る（歩き続けると、物がハムスターの体の後ろへ流れて見えなくなる）
   const watching = (s) => !!(s.meet && Game.lands.MEET[s.meet.id].how === 'pass');
   const busy = (s, cfg) => !!s.carry || (s.pet && s.t - s.pet.lastT <= cfg.pet.gapMs / 1000) || BUSY.includes(s.ham.act) || watching(s);
@@ -1005,8 +1035,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         } else {
           const ground = e.y >= L.groundY;
           s.fingers[e.id] = { on: ground ? 'ground' : 'empty', acc: 0 };
-          addCredit(s, C.tap, cfg);
-          out.push({ type: 'tap', x: e.x, y: e.y, ground });
+          // ちいさな景色に触れた（何もない所と同じく、そのままなぞれる）
+          const li = LI().at(s, e.x, e.y, cfg);
+          if (li >= 0) { addCredit(s, C.hit, cfg); LI().hit(s, e.x, e.y, li, cfg, out); }
+          else { addCredit(s, C.tap, cfg); out.push({ type: 'tap', x: e.x, y: e.y, ground }); }
         }
         // 3 本めの指が続けて触れたら、ばんざい
         TG().press(s, e, cfg, out);
@@ -1164,6 +1196,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       s.rareNext = s.d + cfg.rare.every;
       if (s.d - s.rareLast >= cfg.rare.minGap && !giftOut(s) && !s.sight && RNG.next(s) < cfg.rare.p) { s.rareLast = s.d; rare(s, cfg, out); }
     }
+    // ちいさな景色: 歩いた距離で抽選する。景色の驚きが出たら、去り始める（外へ出て去る）
+    if (s.sight && s.little) s.little.until = Math.min(s.little.until, s.t);
+    LI().step(s, cfg, out);
     // 運ばれないまま、贈り物がハムスターの所まで流れてきたら、振り返って自分で拾って身につける（贈り物はなくならない）
     if (canWear(s) && h.act !== 'wear') {
       const p = s.free.find((q) => q.kind === 'gift' && q.wx - s.d <= cfg.layout.hamX + 4);
@@ -1348,7 +1383,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // 距離 d の所で、置いた物だけの場面にする（区切りの物は出さない。ハムスターは起きて立つ）。一緒に触る（together.js）の場面も使う
   function clear(s, d, cfg = Game.config) {
     s.d = d; s.nest = s.d - 600;
-    s.objs = {}; s.free = []; s.meet = null; s.carry = null; s.pet = null; s.fingers = {}; s.credit = 0; s.sight = null;
+    s.objs = {}; s.free = []; s.meet = null; s.little = null; s.carry = null; s.pet = null; s.fingers = {}; s.credit = 0; s.sight = null;
     s.rareNext = s.d + cfg.rare.every; s.rareLast = s.d;
     s.bareTo = s.d + cfg.view.w + 80;
     Wk().setAct(s, 'stand');
@@ -1677,6 +1712,214 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const kissing = (s) => { const st = s.sight; if (!st || !st.bye || !SEQ[st.bye.kind].kiss) return false; const v = s.t - st.bye.t0, K = SEQ[st.bye.kind]; return v >= K.touch - 0.05 && v < K.kiss[1] - 0.1; };
 
   Game.pal = { kissing, GIFT_DX: PAL_GIFT_DX, walked, fed, tick, pos, open, beside, stage, SEQ, len };
+})();
+</script>
+<script>
+// 景色の細かい変化（ちいさな景色。ルール側の純粋な関数。DOM・音・絵に触らない）。設計書 2026-11-21-hoppe-walk-little-design.md。
+// 歩いた距離で、ときどき遠くの景色に小さな生き物が現れては去る。土地ごとに 3 個（lands.js の LITTLE と各土地の little）。
+//   同時に 1 つ。景色の驚き・混ざる区間・夜の間は出ない。乱数は旅の乱数と別（s.lrng）なので、まれな驚きや物の並びは変わらない。
+// walk.js が呼ぶ: step（抽選と終わり）/ at（指の下か）/ hit（触った）。絵（littleart.js）は parts で位置を読む。
+// 状態: s.little = { kind, t0, until, d0, x0, y0, r, n, t1, hi, pz }（保存しない）、s.littleNext / s.littleLast（距離）、s.lrng
+// 出来事: little { kind, x, y }（出た）/ littleHit { kind, n, x, y }（触った）/ littleEnd { kind }
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const RNG = Game.rng;
+  const T = () => Game.lands.LITTLE;
+  const W = () => Game.world;
+  const PI = Math.PI, sin = Math.sin, cos = Math.cos, abs = Math.abs;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const ease = (k) => k * k * (3 - 2 * k);
+
+  // とんぼ: 来る → 止まる → すいっ → 止まる … → 去る（[秒, x, y]。x, y は x0, y0 からのずれ）
+  const DRAGON = [[0, 0, 0], [0.4, -36, 2], [1.8, -36, 2], [2.1, -60, -4], [3.6, -60, -4], [3.9, -82, 4], [5.4, -82, 4], [5.8, -122, -10], [6.4, -160, -16]];
+  function path(list, u) {
+    for (let i = 1; i < list.length; i++) {
+      const [ta, xa, ya] = list[i - 1], [tb, xb, yb] = list[i];
+      if (u < tb) { const k = ease(clamp((u - ta) / (tb - ta), 0, 1)); return { x: xa + (xb - xa) * k, y: ya + (yb - ya) * k, still: xa === xb }; }
+    }
+    const l = list[list.length - 1]; return { x: l[1], y: l[2], still: false };
+  }
+  // 先頭の 1 羽がくるっと回る（触ったとき。a は 0〜1）
+  const loop = (hu, len = 0.7) => { if (hu == null || hu > len) return { x: 0, y: 0 }; const a = (hu / len) * 2 * PI; return { x: -5 * sin(a), y: -5 * (1 - cos(a)) }; };
+  // きつね: 飛びこみの段取り（pz から）: かがむ 0.4 → 跳ぶ 0.6 → 雪の中 1.8 → 出る 0.4 → 歩いて去る
+  const FOX = { crouch: 0.4, jump: 0.6, snow: 1.8, out: 0.4 };
+  const foxLen = FOX.crouch + FOX.jump + FOX.snow + FOX.out;
+  const LEAF_END = 56; // 葉はここまで落ちたら消える（木の帯に入れない。絵は手前で段で小さくする）
+
+  // いまの位置（画面のドット）。部分ごと（鳥の群れ・綿毛・葉）に { x, y, ... } を返す。先頭が当たりと出来事の位置
+  function parts(s, cfg = Game.config) {
+    const st = s.little, def = T()[st.kind], L = cfg.layout;
+    const u = s.t - st.t0, hu = st.n ? s.t - st.t1 : null, sc = (s.d - st.d0) * def.par;
+    const X = (x) => st.x0 + x - sc, Y = (y) => st.y0 + y;
+    switch (st.kind) {
+      case 'butterfly': {
+        let x = -15 * u + 4 * sin(1.3 * u), y = 5 * sin(2.1 * u) + 2 * sin(6.3 * u);
+        if (hu != null) { x -= 12 * hu; y -= 26 * hu; }
+        return [{ x: X(x), y: Y(y), u }];
+      }
+      case 'birds': {
+        const f = hu != null ? 20 * hu : 0, lp = loop(hu), bx = -25 * u - f, by = 2 * sin(1.4 * u);
+        return [{ x: X(bx + lp.x), y: Y(by + lp.y), u }, { x: X(bx + 7), y: Y(by - 4), u: u + 0.2 }, { x: X(bx + 7), y: Y(by + 4), u: u + 0.4 }];
+      }
+      case 'fluff': {
+        const out = [];
+        for (let i = 0; i < 5; i++) {
+          const v = u - i * 0.5, sp = hu != null ? (i - 2) * 7 * ease(clamp(hu / 0.8, 0, 1)) : 0, sq = hu != null ? -6 * ease(clamp(hu / 0.8, 0, 1)) * (i % 2 ? 1 : 0.5) : 0;
+          if (v < 0) { out.push({ x: X((i - 2) * 4), y: Y(0), hide: true, i }); continue; }
+          out.push({ x: X((i - 2) * 4 - 7 * v + 3 * sin(1.7 * v + i) + sp), y: Y(-(i % 2) * 2 - 9 * v + sq), i, v });
+        }
+        // 当たりと出来事は、いちばんのぼった綿毛の所
+        return out.filter((p) => !p.hide).concat(out.filter((p) => p.hide));
+      }
+      case 'dragonfly': {
+        const p = path(DRAGON, u); let x = p.x, y = p.y + (p.still ? sin(u * 9) * 0.8 : 0);
+        if (hu != null) { x -= 30 * hu; y -= 40 * hu; }
+        return [{ x: X(x), y: Y(y), still: p.still && hu == null, u }];
+      }
+      case 'ripple': { const v = hu != null ? hu : u - 0.4; return [{ x: X(0), y: Y(0), u, v, done: v > 2.2 }]; }
+      case 'ducks': {
+        const x = -15 * u;
+        return [{ x: X(x), y: Y(sin(u * 3) * 0.5), u }, { x: X(x + 10), y: Y(1 + sin(u * 3 + 1) * 0.5), u, chick: true, i: 1 }, { x: X(x + 19), y: Y(1 + sin(u * 3 + 2) * 0.5), u, chick: true, i: 2 }];
+      }
+      case 'gull': {
+        let x = -21 * u, y = 3 * sin(0.9 * u);
+        if (hu != null) { x -= 10 * hu; y -= 14 * sin(clamp(hu / 1.2, 0, 1) * PI / 2); }
+        return [{ x: X(x), y: Y(y), u }];
+      }
+      case 'flyfish': {
+        // 3 回跳ねる（触ると、そこから大きく 1 回）
+        const x = -13 * u;
+        let y = 3, v = null;
+        for (let i = 0; i < 3; i++) { const a = 0.5 + 1.7 * i; if (u >= a && u < a + 0.7) { v = (u - a) / 0.7; y = -6 * sin(PI * v); } }
+        if (hu != null && hu < 0.9) { v = hu / 0.9; y = -11 * sin(PI * v); }
+        return [{ x: X(x), y: Y(y), v, under: v == null }];
+      }
+      case 'turtle': { const v = hu != null ? hu : u; return [{ x: X(0), y: Y(0), v, done: v > 3.6 }]; }
+      case 'leaves': {
+        const out = [];
+        for (let i = 0; i < 3; i++) {
+          const v = u - i * 1.2;
+          const y = Math.round(-6 + 11 * v);
+          out.push({ x: X((i - 1) * 22 + 7 * sin(1.6 * v + i)), y, i, v, hide: v < 0 || y > LEAF_END, spin: st.hi === i && hu != null && hu < 0.6 ? hu / 0.6 : null });
+        }
+        return out;
+      }
+      case 'kotori': {
+        let x, y;
+        if (u < 0.6) { x = -6 * (u / 0.6); y = -18 * (u / 0.6); } else { const v = u - 0.6; x = -6 - 22 * v; y = -18 + 3 * abs(sin(5 * v)); }
+        if (hu != null) { x -= 15 * hu; y -= 8 * sin(clamp(hu / 0.4, 0, 1) * PI / 2); }
+        return [{ x: X(x), y: Y(y), u }];
+      }
+      case 'mole': { const v = hu != null ? hu : u; return [{ x: X(0), y: Y(0), v, done: v > 5 }]; }
+      case 'rabbit': {
+        // 4 回跳ねて少し止まる（耳を動かす）。触ると高く跳ねる
+        const per = 2.6, k = Math.floor(u / per), w = u - k * per, n = Math.min(4, Math.floor(w / 0.5)), fr = w < 2 ? (w % 0.5) / 0.5 : 0;
+        let x = -9 * (k * 4 + n + (w < 2 ? fr : 0)), y = w < 2 ? -4 * sin(PI * fr) : 0;
+        if (hu != null && hu < 0.6) { const v = hu / 0.6; y = -10 * sin(PI * v); }
+        return [{ x: X(x), y: Y(y), u, rest: w >= 2 && (hu == null || hu >= 0.6), hop: w < 2 || (hu != null && hu < 0.6) }];
+      }
+      case 'fox': {
+        // 歩いて来て、雪に頭から飛びこむ（しっぽだけ見える）→ 出て、歩いて去る
+        const pz = st.pz, a = Math.min(u, pz), v = u - pz;
+        let x = -8 * a, y = 0, ph = 'walk', k = 0;
+        if (v >= 0) {
+          if (v < FOX.crouch) { ph = 'crouch'; k = v / FOX.crouch; }
+          else if (v < FOX.crouch + FOX.jump) { ph = 'jump'; k = (v - FOX.crouch) / FOX.jump; x -= 9 * k; y = -8 * sin(PI * k); }
+          else if (v < foxLen - FOX.out) { ph = 'snow'; k = (v - FOX.crouch - FOX.jump) / FOX.snow; x -= 9; }
+          else if (v < foxLen) { ph = 'out'; k = (v - foxLen + FOX.out) / FOX.out; x -= 9; }
+          else { ph = 'walk'; x -= 9 + 20 * (v - foxLen); } // 去るときは小走り
+        }
+        return [{ x: X(x), y: Y(y), ph, k, u }];
+      }
+      case 'enaga': {
+        const lp = loop(hu), f = hu != null ? 18 * hu : 0;
+        return [0, 1].map((i) => ({ x: X(-17 * u - f + i * 10 + (i ? 0 : lp.x)), y: Y(i * 3 - 5 * abs(sin(3.2 * u + i * 0.9)) + (i ? 0 : lp.y)), u: u + i * 0.3, i }));
+      }
+    }
+    return [{ x: X(0), y: Y(0) }];
+  }
+  const pos = (s, cfg) => parts(s, cfg)[0];
+
+  // 出す
+  function start(s, kind, cfg, out) {
+    const L = cfg.layout, V = cfg.view, r = () => RNG.next(s.lrng);
+    const at = {
+      butterfly: [142, 38 + r() * 12], birds: [145, 14 + r() * 20], fluff: [70 + r() * 40, L.skyH - 6],
+      dragonfly: [142, 44 + r() * 6], ripple: [46 + r() * 64, L.groundY + 14 + r() * 40], ducks: [142, L.groundY + 12],
+      gull: [145, 18 + r() * 22], flyfish: [110 + r() * 14, L.skyH - 10], turtle: [56 + r() * 50, L.skyH - 9],
+      leaves: [58 + r() * 40, 0], kotori: [96 + r() * 22, L.skyH - 14], mole: [48 + r() * 60, 95 + r() * 5],
+      rabbit: [140, L.skyH - 4], fox: [138, L.skyH - 4], enaga: [145, 30 + r() * 18],
+    }[kind];
+    s.little = { kind, t0: s.t, until: s.t + T()[kind].ms / 1000, d0: s.d, x0: Math.round(at[0]), y0: Math.round(at[1]), r: r(), n: 0, t1: -99, hi: null, pz: 3.4 };
+    s.littlePrev = kind;
+    const p = pos(s, cfg);
+    out.push({ type: 'little', kind, x: Math.round(p.x), y: Math.round(p.y) });
+  }
+
+  const night = (s) => ['sleep', 'bed', 'wake'].includes(s.ham.act);
+  // 画面に 1 つの土地だけが見えているとき、その土地
+  function oneLand(s, cfg) {
+    const m0 = W().mixAt(s.d, cfg), m1 = W().mixAt(s.d + cfg.view.w, cfg);
+    return m0.u === 0 && m1.u === 0 && m0.a === m1.a ? Game.lands.LANDS[m0.a] : null;
+  }
+
+  // 画面から出たか（時間で消さずに、外へ出きるか、その場の動きが終わるまで待つ）
+  function gone(s, cfg) {
+    const V = cfg.view;
+    return parts(s, cfg).every((p) => p.hide || p.done || p.under || p.x < -15 || p.x > V.w + 15 || p.y < -12 || p.y > V.h + 12);
+  }
+  // 抽選と終わり（walk.step から、歩いたあとに毎回）。until は「去り始める」時刻
+  function step(s, cfg, out) {
+    const C = cfg.little;
+    if (!s.lrng) { s.lrng = { rng: (s.seed ^ 0x2f6a3c1) | 0 }; s.littleNext = s.d + C.every; s.littleLast = s.d - C.gap; }
+    const st = s.little;
+    if (st && s.t >= st.until && (gone(s, cfg) || s.t >= st.until + 8)) { s.little = null; s.littleLast = s.d; out.push({ type: 'littleEnd', kind: st.kind }); }
+    if (s.d < s.littleNext) return;
+    s.littleNext = s.d + C.every;
+    if (s.little || s.sight || night(s) || s.d - s.littleLast < C.gap) return;
+    const land = oneLand(s, cfg);
+    if (C.force) { start(s, C.force, cfg, out); return; }
+    if (!land || RNG.next(s.lrng) >= C.p) return;
+    const list = land.little.filter((k) => k !== s.littlePrev);
+    start(s, list[Math.floor(RNG.next(s.lrng) * list.length)], cfg, out);
+  }
+
+  // 指の下か（触ったあと lock 秒は反応しない）。当たった部分の番号を返す（なければ -1）
+  function at(s, x, y, cfg = Game.config) {
+    const st = s.little;
+    if (!st || s.t - st.t1 < cfg.little.lock) return -1;
+    const def = T()[st.kind];
+    if (def.fly && st.n) return -1; // 逃げている途中
+    pad = cfg.touch.pad, ps = parts(s, cfg);
+    return ps.findIndex((p) => !p.hide && abs(x - p.x) <= def.bw + pad && abs(y - p.y) <= def.bh + pad);
+  }
+
+  // 触った
+  function hit(s, x, y, i, cfg, out) {
+    const st = s.little, def = T()[st.kind], u = s.t - st.t0;
+    if (st.kind === 'fox' && (u < st.pz || u > st.pz + foxLen)) st.pz = u; // 歩いているときは、そこで飛びこむ
+    st.n++; st.t1 = s.t;
+    if (st.kind === 'leaves') st.hi = parts(s, cfg)[i].i;
+    if (def.fly) st.until = Math.min(st.until, s.t); // 逃げて、外へ出たら去る
+    if (def.again) st.until = Math.max(st.until, s.t + def.again);
+    if (st.kind === 'fox') st.until = Math.max(st.until, s.t + foxLen + 2.5);
+    const p = parts(s, cfg)[i] || pos(s, cfg);
+    out.push({ type: 'littleHit', kind: st.kind, n: st.n, x: Math.round(p.x), y: Math.round(p.y) });
+  }
+
+  // ---- 確かめ用（?little=<id>・dev/little.html・テスト）----
+  // その土地の真ん中で、すぐ出す
+  function stage(s, kind, cfg = Game.config) {
+    const i = Game.lands.LANDS.findIndex((l) => l.little.includes(kind));
+    Game.meet.clear(s, Math.max(0, i) * cfg.land.len + 300, cfg);
+    s.tog = null; s.togNext = 0;
+    s.lrng = { rng: (s.seed ^ 0x2f6a3c1) | 0 }; s.littleNext = s.d + cfg.little.every; s.littleLast = s.d;
+    const out = [];
+    start(s, kind, cfg, out);
+    return out;
+  }
+
+  Game.little = { step, at, hit, parts, pos, stage, start, FOX, foxLen };
 })();
 </script>
 <script>
@@ -2047,7 +2290,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         chon: 'チョン', paa: 'パーッ', hakushon: 'ハクション', pekori: 'ペコリ', paku: 'パクッ', pyoon: 'ピョーン', kerokero: 'ケロケロ',
         bukubuku: 'ブクブク', puu: 'プッ', kirari: 'キラリ', hirahira: 'ヒラヒラ', pita: 'ピタッ', kyoro: 'キョロキョロ', po: 'ポッ',
         // 一緒に触る（together.js）
-        gyu: 'ギュッ', banzai: 'バンザーイ', nakayoshi: 'ナカヨシ' },
+        gyu: 'ギュッ', banzai: 'バンザーイ', nakayoshi: 'ナカヨシ',
+        // ちいさな景色（lands.js の LITTLE）
+        pipi: 'ピピッ', sui: 'スイッ', pochan: 'ポチャン', guwa: 'グワッ', myaa: 'ミャア', pichi: 'ピチッ', puka: 'プカッ', chichi: 'チチッ', pokon: 'ポコッ', zubo: 'ズボッ', chiriri: 'チリリ' },
       // 親の画面（字の読める大人のため。ひらがな）
       parent: { adult: 'おとな', title: 'おとなの へや', sleep: 'おやすみ', sound: 'おと', vol0: 'ちいさい', vol1: 'ふつう', vol2: 'おおきい',
         haptics: 'ぶるぶる', on: 'あり', off: 'なし', back: 'もどる' },
@@ -4321,6 +4566,236 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 })();
 </script>
 <script>
+// ちいさな景色の絵（演出側。walk の s.little を読むだけ）。設計書 2026-11-21-hoppe-walk-little-design.md。
+// 位置は little.parts（ルール側）。ここは形と、その場の小さな動き（羽ばたき・まばたき）だけ。
+// 層: sky / water / ground。どれも景色の驚きのあと、物とハムスターより奥（render.draw から）。
+// 作り: 近い生き物（空の鳥・ちょうちょ・水の上）は濃い縁。遠い生き物（遠くの海・丘）は縁を細く、小さく。
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const { PAL } = Game.sprites;
+  const { ell, oell } = Game.ham;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const R = Math.round;
+  const px = (g, c, x, y, w = 1, h = 1) => { g.fillStyle = PAL[c] || c; g.fillRect(R(x), R(y), w, h); };
+  // 文字の格子を、(cx, cy) を真ん中にして描く（'.' は透明。flip で左右を返す）
+  function spr(g, rows, cx, cy, flip = false) {
+    const w = Math.max(...rows.map((r) => r.length)), h = rows.length, x0 = R(cx) - (w >> 1), y0 = R(cy) - (h >> 1);
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) {
+      const ch = rows[j][flip ? w - 1 - i : i] || '.';
+      if (ch !== '.') px(g, ch, x0 + i, y0 + j);
+    }
+  }
+  // 1 ドットの楕円の輪（段で消す: k が大きいほど、点をまびく）
+  function ringE(g, c, cx, cy, rx, ry, thin = 0) {
+    g.fillStyle = PAL[c];
+    const n = Math.max(8, R((rx + ry) * 6)), pts = [], seen = new Set();
+    for (let i = 0; i < n; i++) { const a = (i / n) * Math.PI * 2, x = R(cx + Math.cos(a) * rx), y = R(cy + Math.sin(a) * ry), k = x + ',' + y; if (!seen.has(k)) { seen.add(k); pts.push([x, y]); } }
+    pts.forEach(([x, y], i) => { if (!thin || i % thin === 0) g.fillRect(x, y, 1, 1); });
+  }
+
+  // ---- ちょうちょ（上から見た形。羽を開く ↔ 閉じる）----
+  // 縁はだいだい（黒い縁だと暗く、はちに見えた）
+  const BF_OPEN = ['..g...g..', '...g.g...', '.jj.g.jj.', 'jllkgkllj', 'jllgggllj', '.jkkgkkj.', '..jj.jj..'];
+  const BF_SHUT = ['..g...g..', '...g.g...', '..j.g.j..', '..jlglj..', '..jlglj..', '...kgk...', '...j.j...'];
+  function butterfly(g, p, t) { spr(g, Math.floor(t * 8) % 2 ? BF_SHUT : BF_OPEN, p.x, p.y); }
+
+  // ---- 遠くの鳥（影絵。羽を上げる ↔ 下げる）----
+  const BIRD_UP = ['1...1', '.1.1.', '..1..'], BIRD_DN = ['.....', '11.11', '..1..']; // 上げる ↔ 水平
+  const bird = (g, p, t) => spr(g, Math.floor((t + (p.u || 0)) * 5) % 2 ? BIRD_DN : BIRD_UP, p.x, p.y);
+
+  // ---- 綿毛の種（組み合わせの綿毛と同じ形: 白い冠毛と 1 ドットの柄）----
+  // 上へ開いた白い冠毛と、柄の先の茶色い種（きのこに見えないように）
+  const SEED = ['6.6.6', '.565.', '..4..', '..f..'];
+  const seed = (g, x, y) => spr(g, SEED, x, y + 1);
+
+  // ---- とんぼ（横から。左を向く。羽はすばやく震える）----
+  // 頭 3 ドット・太い胸・灰青の縁の羽。止まっている間は羽を動かさない（飛ぶ間は 8 回/秒）
+  const DF_A = ['..44.44....', '.4664664...', '00iiihhhhhh', '.0ii.......'], DF_B = ['...........', '.44444444..', '00iiihhhhhh', '.0ii.......'];
+  function dragonfly(g, p, t) { spr(g, !p.still && Math.floor(t * 8) % 2 ? DF_B : DF_A, p.x, p.y); }
+
+  // ---- みずのわ（魚の口がぱくっ → 輪が 2 つ広がる）----
+  function ripple(g, p) {
+    const v = p.v;
+    if (v < 0) return;
+    // 口（0.1〜0.6 秒）
+    if (v > 0.1 && v < 0.6) { const open = v >= 0.2 && v < 0.45; spr(g, open ? ['.jj.', 'j00j', '.jj.'] : ['.jj.', 'jjjj'], p.x, p.y - (open ? 2 : 1)); } // 閉じる → 開く → 閉じる
+    for (const d of [0.2, 0.7]) {
+      const k = (v - d) / 1.4;
+      if (k < 0 || k > 1) continue;
+      ringE(g, k < 0.5 ? 6 : 5, p.x, p.y, 2 + k * 9, 1 + k * 3, k > 0.75 ? 3 : k > 0.5 ? 2 : 0);
+    }
+    if (v > 0.15 && v < 0.5) { const h = R(Math.sin(((v - 0.15) / 0.35) * Math.PI) * 4); px(g, 6, p.x - 3, p.y - 2 - h); px(g, 6, p.x + 3, p.y - 1 - h); }
+  }
+
+  // ---- かもの親子（横から。左へ泳ぐ。水の上に背中と頭）----
+  // 下の行は水の線（置物に見えないように）。鳴くコマはくちばしを開く
+  const DUCK = ['..ggg......', '.gdeeg.....', 'kke0eg....g', '..geeggggfg', '.gddeeeeefg', '.geeeeeeffg', '.sssssssss.'];
+  const DUCK_Q = ['..ggg......', 'kgdeeg.....', 'k.e0eg....g', 'kkgeeggggfg', '.gddeeeeefg', '.geeeeeeffg', '.sssssssss.'];
+  const CHICK = ['.ggg....', 'kl0lg..g', '.gllgglg', '.gllllkg', '..ssssss'];
+  function ducks(g, ps, t, s) {
+    const st = s.little, hu = st.n ? s.t - st.t1 : null;
+    for (const p of ps) {
+      const hop = p.chick && hu != null && hu < 0.5 ? R(Math.sin((hu / 0.5) * Math.PI) * (p.i === 1 ? 3 : 2)) : 0;
+      const quack = !p.chick && hu != null && hu < 0.4;
+      // 子は跳ねても、水の線は水面に残す
+      if (p.chick) { spr(g, CHICK.slice(0, 4), p.x, p.y - 2 - hop); spr(g, ['..ssssss'], p.x, p.y); }
+      else spr(g, quack ? DUCK_Q : DUCK, p.x, p.y - 3);
+      // うしろの波
+      if (Math.floor(t * 3 + (p.i || 0)) % 2) { px(g, 6, R(p.x) + (p.chick ? 3 : 6), R(p.y) + 1, 2, 1); }
+    }
+  }
+
+  // ---- かもめ（前から見た M の形。羽ばたいては滑る）----
+  // 頭の中にくちばし。羽ばたきは 4 回/秒で 上 → 滑る → 下 → 滑る、ときどき長く滑る
+  const GULL_GLIDE = ['1.......1', '55.....55', '.665.566.', '...6k6...', '....5....'];
+  const GULL_UP = ['1.......1', '.5.....5.', '.55...55.', '..66k66..', '....5....'];
+  const GULL_DN = ['.........', '.........', '1556.6551', '...6k6...', '....5....'];
+  function gull(g, p, t) { const ph = (t * 0.6) % 3, f = Math.floor(t * 4) % 4; spr(g, ph < 1.6 ? GULL_GLIDE : [GULL_UP, GULL_GLIDE, GULL_DN, GULL_GLIDE][f], p.x, p.y); }
+
+  // ---- とびうお（遠くの海面を跳ねる。跳ねている間だけ見える）----
+  // 長い胸びれ（とびうおの羽）。上る間は頭を上げ、下る間は頭を下げる
+  const FISH = ['....566.', '...566..', 'qq0qqqqq', '5555555q'];
+  const FISH_UP = ['....566.', '..q566..', 'q0qqqqqq', '5555555q'], FISH_DN = ['....566.', '...566..', '..qqqqqq', 'q0q5555q', '55......'];
+  function flyfish(g, p, s) {
+    const sea = s.little.y0;
+    if (p.under) return;
+    spr(g, p.v < 0.35 ? FISH_UP : p.v > 0.65 ? FISH_DN : FISH, p.x, p.y - 1);
+    // 出る所と入る所のしぶき
+    if (p.v < 0.2 || p.v > 0.8) { px(g, 6, R(p.x) - 2, sea - 1); px(g, 6, R(p.x) + 2, sea - 1); px(g, 6, R(p.x), sea - 2); }
+  }
+
+  // ---- うみがめ（遠くの海から頭を出して、きょろきょろ、もぐる）----
+  const TURTLE_0 = ['.ooo.........', 'om0o..ooooo..', 'ommooonnmmno.', '.oo.oonnmnnno'];
+  const TURTLE = [TURTLE_0, TURTLE_0.map((r, j) => (j === 1 ? 'o0mo' + r.slice(4) : r)), TURTLE_0.map((r, j) => (j === 0 ? '....' : TURTLE_0[j - 1].slice(0, 4)) + r.slice(4))];
+  function turtle(g, p, s) {
+    const v = p.v, L = Game.config.layout, x = R(p.x), y = R(p.y);
+    if (v > 3.6) return;
+    const up = v < 0.3 ? v / 0.3 : v > 3.0 ? 1 - (v - 3.0) / 0.4 : 1;
+    if (up <= 0) { if (v < 3.6) { px(g, 6, x - 1, y - 1 - R((v - 3.4) * 10)); px(g, 6, x + 2, y - 2 - R((v - 3.4) * 8)); } return; }
+    // 頭は甲羅（8×3）より小さく。目を 1 列ずらす・頭を 1 行下げる、で見回す。下の行は水の線。沈むときは上から行を減らす
+    const look = v > 0.3 && v < 3.0 ? Math.floor((v - 0.3) / 0.8) % 3 : 0, sink = R((1 - up) * 4);
+    const rows = TURTLE[look].slice(0, 4 - sink);
+    spr(g, Array(sink).fill('.............').concat(rows, ['sssssssssssss']), x + 3, y - 2);
+  }
+
+  // ---- まいおちる葉（揺れながら落ちる。触った葉はくるっと回る）----
+  // 5×4 の葉と柄（斜め・正面・横の 3 コマで揺れる・回る）。木の帯に入る前に、段で小さくして消える
+  const LEAF = [['...jk', '.jjkj', 'jjkj.', 'ajj..', 'a....'], ['.jjj.', 'jjkjj', 'jjkjj', '.jkj.', '..a..'], ['.....', '.....', 'ajjjk', '.....']];
+  const LEAF_S = [['.j.', 'jkj', '.a.'], ['j']];
+  const LEAF_C = [{}, { j: 'a', k: 'j', a: 'f' }, { j: 'k', k: 'l', a: 'f' }];
+  function leaves(g, ps) {
+    for (const p of ps) {
+      if (p.hide) continue;
+      const fr = p.spin != null ? Math.floor(p.spin * 6) % 3 : Math.floor((Math.sin(1.6 * p.v + p.i) + 1) * 1.5) % 3;
+      const base = p.y > 52 ? LEAF_S[1] : p.y > 46 ? LEAF_S[0] : LEAF[fr];
+      const rows = base.map((r) => r.replace(/[jka]/g, (c) => LEAF_C[p.i][c] || c));
+      spr(g, rows, p.x, p.y, p.i === 1);
+    }
+  }
+
+  // ---- こがら（黒い帽子、白いほお、うすい茶色の体。左へぱたぱた）----
+  // 黒い帽子・白いほお・黒い喉・うすい茶の腹・灰の羽・しっぽ。羽ばたきは 2×2 の羽を背の上 ↔ 腹の下へ（7 回/秒）
+  const KOTORI = ['..000.....', '.00000....', '0006600ggg.', '.066cccg333g', '..0cccc3gg.', '...gggg....'];
+  function kotori(g, p, t) {
+    const up = Math.floor(t * 7) % 2, x0 = R(p.x) - 5, y0 = R(p.y) - 3;
+    spr(g, KOTORI, p.x, p.y);
+    if (up) px(g, 3, x0 + 8, y0 + 1, 2, 2); else px(g, 3, x0 + 7, y0 + 5, 2, 2);
+  }
+
+  // ---- もぐら（土の山から顔を出して、きょろきょろ、もぐる）----
+  function mole(g, p) {
+    const v = p.v, x = R(p.x), y = R(p.y);
+    const up = v < 0.3 ? 0 : v < 0.6 ? (v - 0.3) / 0.3 : v < 3.4 ? 1 : v < 3.8 ? 1 - (v - 3.4) / 0.4 : 0;
+    const mound = v < 0.3 ? v / 0.3 : v > 4.4 ? Math.max(0, 1 - (v - 4.4) / 0.6) : 1;
+    if (mound <= 0) return;
+    // 頭から胴が山の穴へ続く。手は胴の横。山はドームで、上が明るい。沈むときは穴の線より下を描かない
+    const h = R(up * 6), look = v > 0.6 && v < 3.4 ? (Math.floor((v - 0.6) / 0.7) % 3) - 1 : 0;
+    const x0 = x - 5, hole = y - 2; // 穴の線（山の上の行）
+    if (mound < 1) { const r = R(2 + mound * 3); g.fillStyle = PAL.g; ell(g, x, y + 1, r + 1, 1); g.fillStyle = PAL.f; ell(g, x, y + 1, r, 0); return; }
+    px(g, 0, x0 + 3, hole, 5, 1); // 穴
+    if (h > 0) {
+      const L1 = look + 1, head = ['....000....', '...03330...', ['..0030330..', '..0303030..', '..0330300..'][L1], ['..03w3330..', '..033w330..', '..0333w30..'][L1], '..0333330..', '...03330...'];
+      const top = hole - h; // 頭のてっぺん
+      for (let j = 0; j < head.length; j++) {
+        const yy = top + j; if (yy > hole) break;
+        for (let i = 0; i < 11; i++) { const ch = head[j][i]; if (ch !== '.') px(g, ch, x0 + i, yy); }
+      }
+    }
+    spr(g, ['.gg.....gg.', 'gffdddddffg', 'gfffffffffg'], x, y);
+    if (h >= 4) { px(g, 'w', x0 + 1, hole, 2, 1); px(g, 'w', x0 + 8, hole, 2, 1); } // 山の縁に手をかける
+  }
+
+  // ---- ゆきうさぎ（遠くの丘を跳ねる。止まると耳を動かす）----
+  // 横向き: 白とピンクの 2 ドット幅の耳、顔の前の目と鼻、丸い腰。止まると耳を後ろへ倒す
+  const RAB = ['..33.....', '.3w63....', '.3w63....', '.366633..', '30666663.', '3w6666663', '.36666553', '..33.333.'];
+  const RAB_EAR = ['...33....', '..3w63...', '.3w63....', '.366633..', '30666663.', '3w6666663', '.36666553', '..33.333.'];
+  function rabbit(g, p, t) { spr(g, p.rest && Math.floor(t * 2) % 2 ? RAB_EAR : RAB, p.x, p.y - 3); }
+
+  // ---- きつね（歩いて、雪に頭から飛びこむ → しっぽだけ → 出てくる）----
+  function foxBody(g, x, y, t, walk) {
+    const step = walk ? Math.floor(t * 6) % 2 : 0;
+    px(g, 'g', x - 1, y - 1, 1, 2 - step); px(g, 'g', x + 1, y - 1, 1, 1 + step); px(g, 'g', x + 4, y - 1, 1, 1 + step); px(g, 'g', x + 6, y - 1, 1, 2 - step); // 足
+    oell(g, x + 3, y - 3, 3, 1, PAL.j, PAL.g); px(g, 'k', x + 2, y - 4, 3, 1);                  // 体
+    oell(g, x + 9, y - 4, 2, 1, PAL.j, PAL.g); px(g, 6, x + 11, y - 4, 1, 1);                  // しっぽ（先が白）
+    oell(g, x - 2, y - 4, 1, 1, PAL.j, PAL.g); px(g, 'g', x - 3, y - 8, 1, 2); px(g, 'g', x - 1, y - 8, 1, 2); px(g, 'j', x - 2, y - 7); // 頭と三角の耳
+    px(g, 0, x - 2, y - 5); px(g, 6, x - 3, y - 3, 2, 1); px(g, 0, x - 5, y - 4);              // 目、白い口元、鼻
+  }
+  const FOX_DIVE = ['........g6', '......ggjg', '.....gjjg.', '..g.gjkjg.', '..ggjjjg..', '.gjjjg....', 'gj0jg.....', 'g66g......', '0g........'];
+  // 雪の中: 斜めのおしり・上へ出た後ろ足・白い先のしっぽ。雪の山を前にかぶせる
+  const FOX_SNOW = ['........g6..', '...g..ggjg..', '...g.gjjg...', '....gjkjg...', '...gjjjg....', '..6666666...', '.666666666..', '555555555...'];
+  function fox(g, p, t) {
+    const x = R(p.x), y = R(p.y);
+    if (p.ph === 'walk') { foxBody(g, x, y, t, true); return; }
+    if (p.ph === 'crouch') { foxBody(g, x, y + 1, t, false); return; }
+    if (p.ph === 'jump') {
+      // 上る間は体のまま、てっぺんから頭を下にして雪へ（回さずにコマで）
+      if (p.k < 0.45) foxBody(g, x, y, t, false); else spr(g, FOX_DIVE, x - 1, y - 3);
+      return;
+    }
+    if (p.ph === 'snow') {
+      // 雪から斜めのおしり・後ろ足・白い先のしっぽだけ（先を左右にふる）
+      const w = Math.floor(t * 3) % 2;
+      spr(g, w ? ['.......g6...'].concat(FOX_SNOW.slice(1)) : FOX_SNOW, x, y - 3);
+      if (p.k < 0.15) for (const [dx, dy] of [[-3, -3], [8, -4], [0, -5], [6, -6]]) px(g, 6, x + 3 + dx, y + dy - R(p.k * 20));
+      return;
+    }
+    // 出る: 頭に雪
+    foxBody(g, x, y, t, false); px(g, 6, x - 3, y - 7, 3, 1);
+  }
+
+  // ---- しまえなが（白い丸い体、長い黒い尾。波のように跳ねて飛ぶ）----
+  // 縁は 3（空の色 4 に溶けないように）。体と同じくらい長い尾。羽は体の後ろ寄りの 2×2 を上下に（7 回/秒）
+  const ENAGA = ['..33333.....', '.3666663....', '306066611...', '3w666661000000', '.3666663....', '..33333.....'];
+  const ENAGA_B = ['..33333.....', '.3666663....', '306066663...', '3w666611000000', '.3666613....', '..33333.....'];
+  function enaga(g, p, t) { spr(g, Math.floor((t + (p.i || 0) * 0.13) * 7) % 2 ? ENAGA_B : ENAGA, p.x + 4, p.y); }
+
+  // 層ごとに描く
+  function draw(g, s, t) {
+    const st = s.little; if (!st) return;
+    const ps = Game.little.parts(s);
+    switch (st.kind) {
+      case 'butterfly': butterfly(g, ps[0], t); break;
+      case 'birds': for (const p of ps) bird(g, p, t); break;
+      case 'fluff': for (const p of ps) if (!p.hide) seed(g, p.x, p.y); break;
+      case 'dragonfly': dragonfly(g, ps[0], t); break;
+      case 'ripple': ripple(g, ps[0]); break;
+      case 'ducks': ducks(g, ps, t, s); break;
+      case 'gull': gull(g, ps[0], t); break;
+      case 'flyfish': flyfish(g, ps[0], s); break;
+      case 'turtle': turtle(g, ps[0], s); break;
+      case 'leaves': leaves(g, ps); break;
+      case 'kotori': kotori(g, ps[0], t); break;
+      case 'mole': mole(g, ps[0]); break;
+      case 'rabbit': rabbit(g, ps[0], t); break;
+      case 'fox': fox(g, ps[0], t); break;
+      case 'enaga': for (const p of ps) enaga(g, p, t); break;
+    }
+  }
+
+  Game.littleart = { draw };
+})();
+</script>
+<script>
 // 指の動きを、窓の中のドット座標にして渡すだけ。指は何本でも 1 本ずつ別々に（何本まで扱うかは touch.js が決める）。
 // 出すもの: { type: 'down' | 'move' | 'up' | 'cancel', id, x, y, t }（ドット、ミリ秒）
 // 手のひらが乗っていても、ほかの指は効く（HOPPE BRIDGE の「最初の 1 本だけ」の作りはやめた）
@@ -4924,6 +5399,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       // 景色の驚き（虹・流れ星・くじらは景色の上、鯉は水の上）
       Game.sight.sky(g, s, t, x0, w, top);
       Game.sight.water(g, s, t);
+      // ちいさな景色（空・遠景・水面・地面の帯の奥。物より奥）
+      Game.littleart.draw(g, s, t);
       const nestX = s.nest - d, nestOn = nestX > x0 - 30 && nestX < x0 + w + 30;
       if (nestOn) { drawNest(g, nestX, L.footY, false); drawPile(g, nestX, L.footY, s.stash); }
 
@@ -5007,7 +5484,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 //   ?got=all（身なりを全部集めて、ごはんを 60 ためこんだ旅）/ ?rare=sight（景色の驚きを、終わって少し歩くたびに出す）/ ?rare=rainbow|koi|whale|squirrel|star（その驚きだけを。場所の指定がなければ、その土地から）
 //   ?meet=<id>（その組み合わせがすぐ起きる場面から。lands.js の MEET。保存しない）/
 //   ?tog=<id>（一緒に触る hug|banzai|pair|skybow がすぐ起こせる場面から。保存しない）/
-//   ?pal=0|1|2（もりで、りすがその段まで一緒に歩いたところ。少しで別れる。保存しない）
+//   ?pal=0|1|2（もりで、りすがその段まで一緒に歩いたところ。少しで別れる。保存しない）/
+//   ?little=<id>（ちいさな景色をその土地から。lands.js の LITTLE。少し歩くたびに出る。保存しない）
 //   季節ごとの版（dev/build-lands.mjs）は window.HOPPE_WALK_URL に '?land=2&nosave=1' などを埋めてあり、URL の代わりに読む
 (function () {
   const Game = (window.Game = window.Game || {});
@@ -5019,7 +5497,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const meetId = Game.lands.MEET[q.get('meet')] ? q.get('meet') : null;
   const togId = Game.together.IDS.includes(q.get('tog')) ? q.get('tog') : null;
   const palLv = ['0', '1', '2'].includes(q.get('pal')) ? +q.get('pal') : null;
-  const nosave = q.get('nosave') === '1' || !!meetId || !!togId || palLv != null;
+  const littleId = Game.lands.LITTLE[q.get('little')] ? q.get('little') : null;
+  const nosave = q.get('nosave') === '1' || !!meetId || !!togId || palLv != null || !!littleId;
+  if (littleId) Object.assign(cfg.little, { every: 20, gap: 20, force: littleId });
   if (q.get('rare') === 'gift') Object.assign(cfg.rare, { every: 40, p: 1, minGap: 0, gift: 1 });
   if (q.get('rare') === 'tophat') cfg.rare.tophat = 1;
   if (q.get('rare') === 'sight') Object.assign(cfg.rare, { every: 40, p: 1, minGap: 0, gift: 0 });
@@ -5034,6 +5514,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // 確かめ用: 身なりを全部集めて、ごはんをたくさんためこんだ旅（巣の山と並んだ身なりを見る）
   if (q.get('got') === 'all') { trip.got = Object.keys(Game.lands.GIFT); trip.stash = Math.max(trip.stash, 60); }
   if (forceSight && !q.has('land') && !q.has('d')) trip.d = Game.lands.LANDS.findIndex((l) => l.rare.includes(forceSight)) * cfg.land.len;
+  if (littleId && !q.has('land') && !q.has('d')) trip.d = Game.lands.LANDS.findIndex((l) => l.little.includes(littleId)) * cfg.land.len + 200;
   const settings = nosave ? Game.save.parseSettings(null) : Game.save.loadSettings(cfg);
 
   const app = (Game.app = {
@@ -5139,6 +5620,15 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       // 景色の驚き（lands.js の SIGHT）
       case 'sight': sightFx(e); break;
       case 'sightHit': sightHitFx(e); break;
+      // ちいさな景色: 出たときは小さな音だけ（鳴く生き物）。触ると音と擬音 S（振動なし）
+      case 'little': { const d = Game.lands.LITTLE[e.kind]; if (d.cue) A.play(d.cue, { gain: cfg.little.cueGain }); break; }
+      case 'littleHit': {
+        const d = Game.lands.LITTLE[e.kind];
+        A.play(d.sfx, { hz: hz(12), gain: 0.8 });
+        word(d.word, d.color, e.x, Math.max(12, e.y - 12), 'S');
+        if (e.kind === 'ripple') F.ripple(e.x, e.y, '#ffffff');
+        break;
+      }
       // りすにごはんをあげた: もぐもぐして、チュッと喜ぶ
       case 'palFeed':
         HP.play('hit'); A.play('munch'); A.play('squeak', { delay: 0.7 });
