@@ -30,7 +30,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     // ステージの数字を決め直す回数の上限。テスト: 確かめる種の数、一例の数字に逃げてよい割合、でたらめな解き方が落ちずに渡りきれる割合の上限（1-3 から）
     gen: { lineGap: 3, tries: 60, testSeeds: 40, fallbackMax: 0.02, randomMax: 0.2, maxNum: 6 }, // maxNum: 編 2 の立て札の分子の上限（細かい切れはしを何枚も並べる谷を出さない）
     save: { progress: 'hoppe-bridge.progress', settings: 'hoppe-bridge.settings', tips: 'hoppe-bridge.tips', version: 1 },
-    tips: ['count', 'cut', 'carry', 'go', 'route', 'story', 'bench', 'recut'], // 手本（指の絵）: 切る数をなぞる・切る・運ぶ・わたる。一度できたら出さない。route: 分かれ道で道を選ぶ。story: おはなしを見たか。bench: 切れはしを台にのせる。recut: 台の切れはしを切る
+    tips: ['count', 'cut', 'carry', 'go', 'route', 'story', 'bench', 'recut', 'merge', 'limit'], // 手本（指の絵）: 切る数をなぞる・切る・運ぶ・わたる。一度できたら出さない。route: 分かれ道で道を選ぶ。story: おはなしを見たか。bench: 切れはしを台にのせる。recut: 台の切れはしを切る。merge: 台の切れはしをまとめる。limit: 枚数の上限の文
     help: { falls: 3 },         // 同じ谷でこの回数落ちると「かさねて みる」が出る
 
     // 置き場所（窓の中のドット）。render と input の当たりが同じものを使う
@@ -55,7 +55,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       slash: { reach: 20, min: 6, slop: 3 }, // 上から下へ板を横切るスワイプ: 板の上これだけの範囲から始められる／これだけ下へ動いて板の下へ抜けたら切る／縦か横かを決めるまでの遊び
       pieceSlop: 8,             // 切れはしをつまめる、絵の外の余裕（いちばん近い山を選ぶ）
       ham: { w: 50, h: 20, pull: 9 }, // わたる の引き始めを受ける範囲（画面の左端から探検家の前まで。端のジェスチャーを避けて前から引ける）と、右へこれだけ引いたら わたる
-      reward: { x: 8, y: 122, w: 119, h: 106, arc: 40 }, // ごほうびの舞台（クリアの札の下）と、宝石が並ぶ弧の半径
+      reward: { x: 8, y: 122, w: 119, h: 106, arc: 40 },
+      merge: { frameUp: 2, frameDown: 1 }, // まとめる枠: 台の切れはしの上・下にこれだけはみ出す // ごほうびの舞台（クリアの札の下）と、宝石が並ぶ弧の半径
     },
 
     // 背景: 空と山。y は橋の踏み板（deckY）から上へ／下へのドット
@@ -82,7 +83,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       music: { vol: 0.55, fade: 0.6, lead: 0.13, leadDec: 0.55, pad: 0.022, padIn: 0.35, padHz: 1400, bass: 0.07, bright: 0.035 },
       // 音ごとの大きさの倍率。聞こえる大きさを測ってそろえたもの（小さいスピーカーで、0.1 秒の窓のいちばん大きいところ）。
       // ねらい: 節目の音（がっしり・キュウ・クリアなど）＞ ふつうの音（のこぎり・コトン・ギシギシなど）＞ 何度も鳴る小さい音（カチ・もぐっ）
-      level: { click: 1.45, saw: 1.75, knock: 0.65, creak: 1.65, fit: 1.1, sturdy: 1.85, wonder: 1.95, miss: 0.95, trip: 2, kyu: 0.6, back: 0.65, munch: 1.85, pon: 1.7, deny: 3.2, gem: 1.1 },
+      level: { petta: 1.3, click: 1.45, saw: 1.75, knock: 0.65, creak: 1.65, fit: 1.1, sturdy: 1.85, wonder: 1.95, miss: 0.95, trip: 2, kyu: 0.6, back: 0.65, munch: 1.85, pon: 1.7, deny: 3.2, gem: 1.1 },
       sfx: {
         // カチ（切る数が 1 段変わる。段が上がるほど高い）
         click: [{ k: 'click', noiseHz: 3200, q: 1.2, noiseMs: 8, noiseVol: 0.6, toneHz: 1300, toneMs: 20, toneVol: 0.14, stepUp: 1.08 }],
@@ -112,6 +113,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         pon: [{ k: 'tone', f: 520, type: 'sine', vol: 0.25, a: 0.002, dec: 0.12, slide: 0.35 }, { k: 'noise', f: 1200, vol: 0.1, dec: 0.03 }],
         // 宝石を 1 つ数える（数えるごとに高く。曲と同じハ長調の音: ミ・ソ・ラ・ド）
         gem: [{ k: 'tone', f: 1319, type: 'triangle', vol: 0.13, dec: 0.1, semis: [0, 3, 5, 8] }, { k: 'tone', f: 1976, type: 'triangle', vol: 0.1, dec: 0.2, delay: 0.06, semis: [0, 3, 5, 8] }],
+        // ペタッ（台の切れはしをまとめる。柔らかく、低めに 2 つ重ねる）
+        petta: [{ k: 'noise', f: 500, type: 'lowpass', vol: 0.3, dec: 0.05 }, { k: 'tone', f: 196, type: 'sine', vol: 0.3, a: 0.003, dec: 0.08, slide: 0.85 }, { k: 'noise', f: 420, type: 'lowpass', vol: 0.25, dec: 0.06, delay: 0.07 }, { k: 'tone', f: 165, type: 'sine', vol: 0.28, a: 0.003, dec: 0.1, slide: 0.85, delay: 0.07 }],
         // これ以上置けない
         deny: [{ k: 'tone', f: 196, type: 'square', vol: 0.12, dec: 0.06 }],
       },
@@ -126,6 +129,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       click: [8],                            // カチ（蛇腹の目盛りが 1 段変わる）
       saw: [30, 160, 30, 160, 30, 160, 30],  // ザクッ（のこぎりを 4 回引く音に合わせる）
       place: [15],                           // コトン（置く）。振動をオンにしたときの確かめにも
+      merge: [18, 60, 18],                   // ペタッ（台の切れはしをまとめる）: 短く 2 回、置くより少し重い
       take: [8],                             // 切れはしをつまみ上げる
       route: [8],                            // 分かれ道で道を移る
       step: [10],                            // トン（渡る一歩）
@@ -142,6 +146,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     anim: {
       walk: 60,                 // 歩く速さ（ドット/秒）
       tagHop: 0.12,             // 台の札の分数が変わったとき、数字が 1 ドットはずむ秒
+      merge: 0.3,               // まとめた線がすっと消える秒
+      mergeNo: 0.25,            // まとめられないとき、赤い枠が 1 回揺れる秒
+      limitGlow: 1.2,           // 上限で置けないとき、上限の印がゆっくり光る秒
       stepSec: 0.12,            // 走りのコマ送り（6 コマで一回り。0・3 コマ目で体が沈む）
       wonder: 0.6,              // あれ？
       fall: 0.8,                // 落ちる
@@ -207,8 +214,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const keyOf = (boards, pieces) => boards + '|' + pieces.join(',');
 
   // 1 つの谷の渡り方を全部: 渡ったあとの手持ちごとに、使った枚数の最少 k と、同じ長さだけで埋めたときの最少 ku（なければ Infinity）。Map<key, { boards, pieces, k, ku }>
-  function crossings(hand, len, cfg, recut) {
-    if (recut) return crossingsRecut(hand, len, cfg);
+  function crossings(hand, len, cfg, recut, merge) {
+    if (recut) return crossingsRecut(hand, len, cfg, merge);
     const out = new Map(), seen = new Set();
     const pick = (boards, pieces) => {
       // 同じ長さをまとめて、長さごとに何枚使うかを決める
@@ -248,7 +255,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   // 切り直しのあるステージの渡り方。切り方の組み合わせが多いので、「この谷で使う分だけ切る」に絞って調べる
   // （使わない切り方は、あとの谷で切っても同じ）。使う切れはしは長い順に選び、切ったら、できた切れはしをすぐ使うか、さらに切る（must）
-  function crossingsRecut(hand, len, cfg) {
+  // merge: 同じ長さの切れはし n 枚を 1 枚にまとめることもできる（設計書③）
+  function crossingsRecut(hand, len, cfg, merge) {
     const out = new Map(), seen = new Set(), U = cfg.unit, dropped = [];
     // 切る数は 2・3・5 だけを調べる。4 つに切るのは「2 つに切って、できたものをまた 2 つに切る」と同じ切れはしが作れて、
     // 使わないほうが粗いまま残る（粗いものはあとで細かくできるので、損をしない）。切れる数は、その約数も全部切れる数なので、途中の長さもいつも作れる
@@ -269,13 +277,22 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       seen.add(key);
       const cap = Math.min(rem, last);
       const use = (l) => { if (l <= cap) rec(boards, swap(pieces, l, 0, 0), rem - l, l, 0, k + 1, uni === -1 || uni === l ? l : 0); };
-      // 同じ長さの切れはしをもう持っているなら、それを作るためには切らない（持っているほうを使えば、粗いものが残る）
-      const again = (l) => { for (const n of optsOf(l)) { const m = l / n; if ((m <= cap || optsOf(m).length) && !pieces.includes(m)) rec(boards, swap(pieces, l, m, n), rem, last, m, k, uni); } };
-      if (must) { use(must); again(must); return; }
+      // まとめる: 長さ l の切れはし n 枚を 1 枚に（まとめた 1 枚が 1/m で、m は切れる数）。まとめた 1 枚は、この谷ですぐ使うか、さらに切る・まとめる（must）。
+      // この谷で使わないまとめ方は調べない（あとの谷でいつでもまとめられる）。切ったばかりの切れはしもまとめられる（1/4 → 1/12 × 3 → 1/6 と 1/12）
+      const join = (bs, ps, l) => {
+        const cnt = ps.filter((p) => p === l).length;
+        for (let n = 2; n <= cnt; n++) { const big = l * n; if (U % big === 0 && cfg.cuts.includes(U / big) && (big <= cap || optsOf(big).length)) { const p = ps.slice(); for (let c = 0; c < n; c++) p.splice(p.indexOf(l), 1); p.push(big); rec(bs, p.sort((a, b) => b - a), rem, last, big, k, uni); } }
+      };
+      // 切る。同じ長さの切れはしをもう持っているなら、それを作るためには切らない（持っているほうを使えば、粗いものが残る）。
+      // ただし、まとめられるステージでは、切ってすぐにまとめる（数をそろえてまとめるため。1/6 と 1/12 から 1/4 を作る）
+      const cutTo = (bs, ps, m) => { if (!pieces.includes(m)) rec(bs, ps, rem, last, m, k, uni); else if (merge) join(bs, ps, m); };
+      const again = (l) => { for (const n of optsOf(l)) { const m = l / n; if (m <= cap || optsOf(m).length) cutTo(boards, swap(pieces, l, m, n), m); } };
+      if (must) { use(must); again(must); if (merge) join(boards, pieces, must); return; }
       const lens = [...new Set(pieces)];
       for (const l of lens) use(l);
       for (const l of lens) again(l);
-      if (boards > 0) for (const n of steps) if (!pieces.includes(U / n)) rec(boards - 1, swap(pieces, 0, U / n, n), rem, last, U / n, k, uni);
+      if (merge) for (const l of lens) join(boards, pieces, l);
+      if (boards > 0) for (const n of steps) cutTo(boards - 1, swap(pieces, 0, U / n, n), U / n);
     };
     rec(hand.boards, hand.pieces.slice().sort((a, b) => b - a), len, Infinity, 0, 0, -1);
     // 省く: 同じ長さの切れはし n 枚を 1 枚にまとめた手持ち（切る前の姿）でも、同じかそれより少ない枚数で渡れているなら、
@@ -303,11 +320,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // 覚え書きつきの道具一式（ステージ 1 つぶん）
   function solverFor(stage, cfg) {
     // 分かれ道（g.fork = [上の道, 下の道]）は、道ごとの長さを並べて持つ。渡り方には、どちらの道か（o）を付ける
-    const lens = stage.gaps.map((g) => (g.fork ? g.fork.map((f) => f.len) : [g.len])), minPar = stage.gaps.map((g) => (g.fork ? g.fork.map((f) => f.minPar || 0) : [g.minPar || 0])), memoX = new Map(), memoC = new Map();
+    const lens = stage.gaps.map((g) => (g.fork ? g.fork.map((f) => f.len) : [g.len])), limits = stage.gaps.map((g) => (g.fork ? g.fork.map((f) => f.limit || Infinity) : [g.limit || Infinity])), minPar = stage.gaps.map((g) => (g.fork ? g.fork.map((f) => f.minPar || 0) : [g.minPar || 0])), memoX = new Map(), memoC = new Map();
     const cross = (hand, gi) => {
       const key = gi + '#' + keyOf(hand.boards, hand.pieces);
       let v = memoX.get(key);
-      if (!v) { v = []; lens[gi].forEach((len, o) => { for (const r of crossings(hand, len, cfg, !!stage.recut).values()) v.push({ boards: r.boards, pieces: r.pieces, k: r.k, ku: r.ku, o }); }); memoX.set(key, v); }
+      if (!v) { v = []; lens[gi].forEach((len, o) => { for (const r of crossings(hand, len, cfg, !!stage.recut, !!stage.merge).values()) if (r.k <= limits[gi][o]) v.push({ boards: r.boards, pieces: r.pieces, k: r.k, ku: r.ku <= limits[gi][o] ? r.ku : Infinity, o }); }); memoX.set(key, v); }
       return v;
     };
     const can = (hand, gi) => {
@@ -544,6 +561,61 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       cands: [{ part: 'seq', parts: [{ part: 'recut', dens: [2, 3], counts: [2] }, { part: 'forkRecut', dens: [4, 5], counts: [2, 3], coarse: 'same' }] },
               { part: 'seq', parts: [{ part: 'forkRecut', dens: [2], counts: [2], coarse: 'other' }, { part: 'recut', dens: [3, 4, 5, 6], counts: [2] }] },
               { part: 'seq', parts: [{ part: 'same', dens: [4, 5, 6] }, { part: 'forkRecut', dens: [2, 3], counts: [2, 3], coarse: 'same' }] }] },
+    // ---- 編 3（設計書③）: 台の切れはしを k ずつまとめる。谷に枚数の上限 ----
+    { id: '8-1', area: 8, mode: 'hand', recut: true, merge: true, fixed: true, example: { boards: 0, pieces: [30, 30], gaps: [60], limits: [1] } },      // はじめてのまとめ直し
+    { id: '8-2', area: 8, mode: 'hand', recut: true, merge: true, fixed: true, example: { boards: 0, pieces: [15, 15, 15, 15, 15, 15], gaps: [90], limits: [3] } }, // 6/8 → 3/4
+    // 3 ずつまとめる（2 ずつだと赤い枠）
+    { id: '8-3', area: 8, mode: 'hand', recut: true, merge: true, example: { boards: 0, pieces: [20, 20, 20], gaps: [60], limits: [1], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'merge', dens: [6], ks: [3], n: 2 }, { part: 'merge', dens: [12], ks: [3] }] },
+    // 台にのせる枚数を自分で決める（谷ごとにまとめる数が違う）
+    { id: '8-4', area: 8, mode: 'hand', recut: true, merge: true, example: { boards: 0, pieces: Array(9).fill(10), gaps: [30, 60], limits: [1, 1], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'merge', dens: [12], n: 2, sameD: true, distinctK: true, p1: true }, { part: 'merge', dens: [8], n: 2, sameD: true, distinctK: true, p1: true }] },
+    // 上限のある谷と、ない谷（上限のない谷は、まとめるとがっしり、まとめないとギシギシ）
+    { id: '8-5', area: 8, mode: 'hand', recut: true, merge: true, example: { boards: 0, pieces: Array(8).fill(15), gaps: [90, 30], limits: [3, 0], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'merge', dens: [8], n: 2, free: true }, { part: 'merge', dens: [6, 12], n: 2, free: true }] },
+    // まとめ
+    { id: '8-6', area: 8, mode: 'hand', recut: true, merge: true, tries: 3, example: { boards: 0, pieces: [20, 20, 20, 15, 15, 15, 15, 10, 10, 10, 10], gaps: [60, 60, 40], limits: [1, 0, 1], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'seq', maxPieces: 12, parts: [{ part: 'merge', dens: [6, 12], ks: [3] }, { part: 'merge', dens: [8], free: true }, { part: 'merge', dens: [12], p1: true }] },
+              { part: 'seq', maxPieces: 12, parts: [{ part: 'merge', dens: [10], free: true }, { part: 'merge', dens: [6, 12], ks: [3] }, { part: 'merge', dens: [8, 12], ks: [2, 4] }] }] },
+
+    // ---- エリア 9: いちばん おおきく（立て札は約さない。上限は約した分子） ----
+    { id: '9-1', area: 9, mode: 'hand', recut: true, merge: true, example: { boards: 0, pieces: Array(6).fill(15), gaps: [90], signs: [{ n: 6, d: 8 }], limits: [3], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'merge', raw: true, ks: [2], dens: [8] }, { part: 'merge', raw: true, ks: [2], dens: [6, 10] }] },
+    // 2 ずつでは足りない（4 ずつ、または 2 ずつを 2 回）
+    { id: '9-2', area: 9, mode: 'hand', recut: true, merge: true, example: { boards: 0, pieces: Array(8).fill(10), gaps: [80], signs: [{ n: 8, d: 12 }], limits: [2], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'merge', raw: true, ks: [4], dens: [12] }, { part: 'merge', raw: true, ks: [4], dens: [8], n: 2 }] },
+    // いちばん大きな数を探す（6 ずつ・5 ずつ）
+    { id: '9-3', area: 9, mode: 'hand', recut: true, merge: true, example: { boards: 0, pieces: Array(5).fill(12).concat(Array(6).fill(10)), gaps: [60, 60], signs: [{ n: 5, d: 10 }, { n: 6, d: 12 }], limits: [1, 1], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'merge', raw: true, qs: [2], dens: [10, 12], n: 2, distinctD: true }, { part: 'merge', raw: true, qs: [2], dens: [6, 8, 10, 12] }] },
+    // 谷ごとにまとめる数が違う
+    { id: '9-4', area: 9, mode: 'hand', recut: true, merge: true, example: { boards: 0, pieces: Array(10).fill(10), gaps: [40, 60], signs: [{ n: 4, d: 12 }, { n: 6, d: 12 }], limits: [1, 1], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'merge', raw: true, dens: [12], n: 2, sameD: true, distinctK: true, p1: true }, { part: 'merge', raw: true, dens: [8, 10], n: 2, sameD: true, distinctK: true, p1: true }] },
+    // まとめてから切り直す（3/6 → 1/2 → 2/4）
+    { id: '9-5', area: 9, mode: 'hand', recut: true, merge: true, example: { boards: 0, pieces: [20, 20, 20], gaps: [30, 30], signs: [{ n: 2, d: 8 }, { n: 3, d: 12 }], limits: [1, 1], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'mergeRecut', pairs: [[6, 4], [12, 8], [10, 4]] }, { part: 'mergeRecut', pairs: [[4, 6], [8, 6], [8, 12], [10, 6]] }] },
+    // まとめ
+    { id: '9-6', area: 9, mode: 'hand', recut: true, merge: true, tries: 3, example: { boards: 0, pieces: Array(8).fill(10).concat([20, 20, 20], Array(4).fill(15)), gaps: [80, 30, 30, 60], signs: [{ n: 8, d: 12 }, { n: 2, d: 8 }, { n: 3, d: 12 }, { n: 4, d: 8 }], limits: [2, 1, 1, 1], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'seq', maxPieces: 12, parts: [{ part: 'merge', raw: true, ks: [4], dens: [12] }, { part: 'mergeRecut', pairs: [[6, 4], [12, 8]] }, { part: 'merge', raw: true, qs: [2], dens: [6, 8, 10] }] },
+              { part: 'seq', maxPieces: 12, parts: [{ part: 'mergeRecut', pairs: [[4, 6], [8, 6]] }, { part: 'merge', raw: true, dens: [12], n: 2, sameD: true, distinctK: true, p1: true }] }] },
+
+    // ---- エリア 10: きりの なか（谷は霧で見えない。切る・まとめるの両方） ----
+    { id: '10-1', area: 10, mode: 'fog', recut: true, merge: true, example: { boards: 0, pieces: Array(8).fill(10), gaps: [80], signs: [{ n: 8, d: 12 }], limits: [2], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'merge', raw: true, ks: [4], dens: [12] }, { part: 'merge', raw: true, ks: [4], dens: [8], n: 2 }] },
+    { id: '10-2', area: 10, mode: 'fog', recut: true, merge: true, example: { boards: 0, pieces: [20, 20, 20], gaps: [30, 30], signs: [{ n: 2, d: 8 }, { n: 3, d: 12 }], limits: [1, 1], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'mergeRecut', pairs: [[6, 4], [12, 8], [10, 4]] }, { part: 'mergeRecut', pairs: [[4, 6], [8, 6], [8, 12], [10, 6]] }] },
+    // 切るか、そのままか（上限なし）
+    { id: '10-3', area: 10, mode: 'fog', recut: true, merge: true, example: { boards: 0, pieces: [30, 30, 30], gaps: [60, 20], signs: [{ n: 4, d: 8 }, { n: 2, d: 12 }], limits: [0, 0], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'cutOrKeep', dens: [4] }, { part: 'cutOrKeep', dens: [2, 3] }] },
+    // 約して比べる分かれ道
+    { id: '10-4', area: 10, mode: 'fog', recut: true, merge: true, tries: 3, example: { boards: 0, pieces: Array(7).fill(15), gaps: [[48, 30], 75], signs: [[{ n: 4, d: 10 }, { n: 2, d: 8 }], { n: 5, d: 8 }], limits: [[2, 1], 5], aim: { keep: 0, forks: { 0: 'tight' } } },
+      cands: [{ part: 'forkReduce', dens: [8], counts: [5, 6, 7], qs: [3, 4, 5, 6] }, { part: 'forkReduce', dens: [12], counts: [8, 9, 10, 11], qs: [2, 3, 4, 5] }] },
+    // 長さの違う切れはしを、別々にまとめる
+    { id: '10-5', area: 10, mode: 'fog', recut: true, merge: true, example: { boards: 0, pieces: Array(4).fill(12).concat(Array(8).fill(10)), gaps: [48, 80], signs: [{ n: 4, d: 10 }, { n: 8, d: 12 }], limits: [2, 2], aim: { keep: 0, forks: {} } },
+      cands: [{ part: 'merge', raw: true, dens: [10, 12], n: 2, distinctD: true, maxPieces: 14 }, { part: 'merge', raw: true, dens: [6, 8, 10, 12], n: 2, distinctD: true, maxPieces: 14 }] },
+    // 編 3 のまとめ
+    { id: '10-6', area: 10, mode: 'fog', recut: true, merge: true, tries: 4, example: { boards: 0, pieces: Array(6).fill(15).concat(Array(4).fill(10)), gaps: [40, [24, 20], 70], signs: [{ n: 4, d: 12 }, [{ n: 2, d: 10 }, { n: 2, d: 12 }], { n: 7, d: 12 }], limits: [1, [1, 1], 7], aim: { keep: 0, forks: { 1: 'tight' } } },
+      cands: [{ part: 'seq', maxPieces: 12, parts: [{ part: 'merge', raw: true, ks: [4], dens: [12] }, { part: 'forkReduce', dens: [8], counts: [5, 6, 7], qs: [3, 4, 5, 6] }] },
+              { part: 'seq', maxPieces: 12, parts: [{ part: 'mergeRecut', pairs: [[6, 4], [12, 8]] }, { part: 'cutOrKeep', dens: [4] }, { part: 'merge', raw: true, dens: [10, 12], n: 1 }] }] },
   ];
 })();
 </script>
@@ -559,6 +631,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const fr = (n, d) => ({ kind: 'frac', n, d });
   // 1/d の切れはしを切り直せる数（切ったあとが 1/dk で、dk が切れる数）
   const kOf = (d, cfg) => cfg.cuts.filter((k) => cfg.cuts.includes(d * k));
+  // 約していない書き方（編 3 のエリア 9 から）: p/q を (p·x)/(q·x)（q·x は切れる数、x は 2 以上）。書けなければ p/q のまま
+  function unred(p, q, o, cfg) {
+    const xs = cfg.cuts.filter((e) => e > q && e % q === 0).map((e) => e / q);
+    if (!xs.length) return fr(p, q);
+    const x = Game.rng.pick(o, xs);
+    return fr(p * x, q * x);
+  }
 
   // 部品: (c: 候補, o: 乱数の状態, cfg) → { boards, pieces, gaps: [長さ…] } か null（決め直し）
   const PARTS = {
@@ -652,15 +731,16 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       if (a > n - 2 && n > 2 && R.int(o, 2)) return null;
       return { boards: 1, pieces: [], gaps: [((n - a) * U) / n, (a * U) / n], signs: [{ kind: 'sub', a, d: n }, { kind: 'frac', n: a, d: n }], aim: { keep: 0, forks: {} } };
     },
-    // つなぐ: 部品を順につなぐ（c.parts。aim を返す部品だけ）
+    // つなぐ: 部品を順につなぐ（c.parts。aim を返す部品だけ）。c.maxPieces: 切れはしの数の上限
     seq(c, o, cfg) {
-      const out = { boards: 0, pieces: [], gaps: [], signs: [], aim: { keep: 0, forks: {} } };
+      const out = { boards: 0, pieces: [], gaps: [], signs: [], limits: [], aim: { keep: 0, forks: {} } };
       for (const p of c.parts) {
         const r = PARTS[p.part](p, o, cfg);
         if (!r || !r.aim) return null;
         for (const k of Object.keys(r.aim.forks)) out.aim.forks[+k + out.gaps.length] = r.aim.forks[k];
-        out.boards += r.boards; out.pieces.push(...r.pieces); out.gaps.push(...r.gaps); out.signs.push(...r.signs); out.aim.keep += r.aim.keep;
+        out.boards += r.boards; out.pieces.push(...r.pieces); out.gaps.push(...r.gaps); out.signs.push(...r.signs); out.limits.push(...(r.limits || r.gaps.map(() => 0))); out.aim.keep += r.aim.keep;
       }
+      if (c.maxPieces && out.pieces.length > c.maxPieces) return null; // 編 3: 置き場の切れはしが多すぎないように
       out.pieces.sort((x, y) => y - x);
       return out;
     },
@@ -724,6 +804,58 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       if (rest < 1 || rest > cfg.gen.maxNum + 1 || Math.max(a, cu) > T + (boards ? e : 0)) return null;
       return { boards, pieces: Array(m).fill(U / d), gaps: [pair.map((x) => x.len), (rest * U) / e], signs: [pair.map((x) => x.sg), fr(rest, e)], aim: { keep: boards, forks: { 0: boards ? 'loose' : 'tight' } } };
     },
+    // ---- 編 3（設計書③ 3.1）: 台の切れはしを k ずつまとめる。谷に枚数の上限（約した分子） ----
+    // まとめる: 谷ごとに、1/d の切れはしを k ずつまとめた 1/q（q = d/k）が p 枚（上限 p）。手持ちは 1/d が p·k 枚ずつ。
+    //   c.n: 谷の数、c.dens・c.ks: 選べる d と k（ks がなければ、まとめられる数全部）、c.raw: 立て札を約さない（p·k/d）、c.p1: p は 1 だけ、
+    //   c.qs: まとめたあとの分母 q の候補、c.sameD: どの谷も同じ d、c.distinctD・c.distinctK: 谷ごとに違う d・k、c.free: 1 つの谷は上限なし
+    merge(c, o, cfg) {
+      const R = Game.rng, U = cfg.unit, n = c.n || 1, gaps = [], signs = [], limits = [], pieces = [], ds = new Set(), ks0 = new Set();
+      const free = c.free ? R.int(o, n) : -1, d0 = R.pick(o, c.dens);
+      for (let i = 0; i < n; i++) {
+        const d = c.sameD ? d0 : R.pick(o, c.dens), ks = (c.ks || cfg.cuts).filter((k) => k >= 2 && d % k === 0 && d / k >= 2 && (!c.qs || c.qs.includes(d / k)));
+        if (!ks.length || (c.distinctD && ds.has(d))) return null;
+        const k = R.pick(o, ks);
+        if (c.distinctK && ks0.has(k)) return null;
+        ds.add(d); ks0.add(k);
+        const q = d / k, ps = [];
+        for (let p = 1; p < q; p++) if (gcd(p, q) === 1 && (!c.p1 || p === 1)) ps.push(p);
+        const p = R.pick(o, ps);
+        gaps.push((p * U) / q); signs.push(c.raw ? fr(p * k, d) : fr(p, q)); limits.push(i === free ? 0 : p);
+        for (let j = 0; j < p * k; j++) pieces.push(U / d);
+      }
+      if (pieces.length > (c.maxPieces || 12)) return null;
+      return { boards: 0, pieces: pieces.sort((x, y) => y - x), gaps, signs, limits, aim: { keep: 0, forks: {} } };
+    },
+    // まとめてから切り直す: 1/a の切れはしを 1/g（g = a と b の公約数）にまとめ、1/b に切り直す。谷はどれも 1/b（上限 1）。
+    //   b は a の倍数でも約数でもない（切るだけ・まとめるだけでは作れない）。c.pairs: [a, b] の候補
+    mergeRecut(c, o, cfg) {
+      const R = Game.rng, U = cfg.unit, [a, b] = R.pick(o, c.pairs), g = gcd(a, b);
+      if (g < 2 || a % b === 0 || b % a === 0) return null;
+      const gaps = Array(b / g).fill(U / b);
+      return { boards: 0, pieces: Array(a / g).fill(U / a), gaps, signs: gaps.map(() => unred(1, b, o, cfg)), limits: gaps.map(() => 1), aim: { keep: 0, forks: {} } };
+    },
+    // きるか、そのままか: 1/a の切れはし。1 つの谷は j/a（約さずに書く。そのまま置ける）、もう 1 つは r/(a·k)（r は k で割り切れない。切らないと渡れない）。上限なし
+    cutOrKeep(c, o, cfg) {
+      const R = Game.rng, U = cfg.unit, a = R.pick(o, c.dens), k = R.pick(o, kOf(a, cfg)), e = a * k, j = 1 + R.int(o, 2), r = 1 + R.int(o, 2 * k - 1);
+      if (!k || r % k === 0 || r > cfg.gen.maxNum || j >= a) return null;
+      const g1 = { len: (j * U) / a, sg: unred(j, a, o, cfg) }, g2 = { len: (r * U) / e, sg: fr(r, e) }, two = R.int(o, 2) ? [g1, g2] : [g2, g1];
+      return { boards: 0, pieces: Array(j + Math.ceil(r / k)).fill(U / a), gaps: two.map((x) => x.len), signs: two.map((x) => x.sg), limits: [0, 0], aim: { keep: 0, forks: {} } };
+    },
+    // やくして くらべる: 分かれ道の 2 つは約していない書き方（6/8 と 8/12）。約すと比べられる。上限はどれも約した分子。
+    //   正しい道（o.long なら長いほう）を選ぶと、余りがちょうど次の谷になる（次の谷も約さずに書き、上限は約した分子）
+    forkReduce(c, o, cfg) {
+      const R = Game.rng, U = cfg.unit, d = R.pick(o, c.dens), m = R.pick(o, c.counts), T = (m * U) / d;
+      const val = () => { const q = R.pick(o, c.qs), ps = []; for (let p = 1; p < q; p++) if (gcd(p, q) === 1) ps.push(p); const p = R.pick(o, ps); return { p, q, len: (p * U) / q }; };
+      const A = val(), B = val(), [lo, hi] = A.len < B.len ? [A, B] : [B, A];
+      if (A.q === B.q || A.len === B.len || lo.len * 2 <= hi.len) return null;
+      const right = o.long ? hi : lo, rest = T - right.len;
+      if (rest <= 0) return null;
+      const rf = fracOf(rest, U);
+      if (!cfg.cuts.includes(rf.d)) return null;
+      const pair = R.int(o, 2) ? [A, B] : [B, A];
+      return { boards: 0, pieces: Array(m).fill(U / d), gaps: [pair.map((x) => x.len), rest], signs: [pair.map((x) => unred(x.p, x.q, o, cfg)), unred(rf.n, rf.d, o, cfg)], limits: [pair.map((x) => x.p), rf.n],
+        aim: { keep: 0, forks: { 0: 'tight' + (o.long ? '-long' : '') } } };
+    },
     // われた板: 板 1 枚と、不ぞろいに割れた切れはし n 個（合わせて板 1 枚ぶん）。谷は 1/n が 2 つ
     broken(c, o, cfg) {
       const R = Game.rng, n = R.pick(o, c.dens), unit = cfg.unit, part = unit / n;
@@ -765,23 +897,25 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // 立て札どおりに渡すときの枚数（あわせる は a＋b、とる は d−a）
   const signN = (sg) => (sg.kind === 'add' ? sg.a + sg.b : sg.kind === 'sub' ? sg.d - sg.a : sg.n);
   // 解き手に渡す形（立て札のあるステージでは、谷ごとに minPar を付ける）
+  // 谷 i（分かれ道は道 o）の枚数の上限（0: なし）。raw.limits は谷と並べる（分かれ道は [上, 下]）
+  const limitOf = (raw, i, o) => { const x = raw.limits && raw.limits[i]; return (Array.isArray(x) ? x[o] : x) || 0; };
   function gapsOf(def, raw, cfg) {
-    const one = (len, i, o) => ({ len, minPar: def.mode === 'overlay' ? 0 : signN(signOf(raw, i, o, cfg)) });
+    const one = (len, i, o) => ({ len, limit: limitOf(raw, i, o), minPar: def.mode === 'overlay' ? 0 : signN(signOf(raw, i, o, cfg)) });
     return raw.gaps.map((x, i) => (isFork(x) ? { fork: x.map((len, o) => one(len, i, o)) } : one(x, i, 0)));
   }
   // 同じ数字は何度も出るので、解き手の答えを覚えておく
   const memo = new Map();
   function analyze(def, raw, cfg) {
-    const stage = { boards: raw.boards, pieces: raw.pieces, gaps: gapsOf(def, raw, cfg), recut: !!def.recut };
+    const stage = { boards: raw.boards, pieces: raw.pieces, gaps: gapsOf(def, raw, cfg), recut: !!def.recut, merge: !!def.merge };
     if (cfg !== Game.config) return Game.solver.analyze(stage, cfg);
-    const key = (def.recut ? 'r' : '') + raw.boards + ':' + raw.pieces.join(',') + ':' + JSON.stringify(stage.gaps);
+    const key = (def.recut ? 'r' : '') + (def.merge ? 'm' : '') + raw.boards + ':' + raw.pieces.join(',') + ':' + JSON.stringify(stage.gaps);
     let an = memo.get(key);
     if (!an) { an = Game.solver.analyze(stage, cfg); memo.set(key, an); }
     return an;
   }
   // 分かれ道 gi で、道 o しか選べないとしたときの答え
   function analyzeRoute(def, raw, gi, o, cfg) {
-    const r2 = Object.assign({}, raw, { gaps: raw.gaps.map((x, i) => (i === gi ? x[o] : x)), signs: raw.signs && raw.signs.map((x, i) => (i === gi && x ? x[o] : x)) });
+    const r2 = Object.assign({}, raw, { gaps: raw.gaps.map((x, i) => (i === gi ? x[o] : x)), signs: raw.signs && raw.signs.map((x, i) => (i === gi && x ? x[o] : x)), limits: raw.limits && raw.limits.map((x, i) => (i === gi && Array.isArray(x) ? x[o] : x)) });
     return analyze(def, r2, cfg);
   }
 
@@ -816,25 +950,33 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     recutKeep: (raw, an, cfg, def) => byAim(raw, an, cfg, def) && noRecut(def, raw, cfg).keep < raw.aim.keep, // 切り直さないと板は残せない
     same: (raw, an, cfg, def) => byAim(raw, an, cfg, def) && noRecut(def, raw, cfg).ok,                      // 切らなくても渡りきれる
     pick: (raw, an, cfg, def) => byAim(raw, an, cfg, def) && an.pars.every((p) => p === 1) && !noRecut(def, raw, cfg).ok, // どの谷も 1 枚
+    // 編 3
+    merge: (raw, an, cfg, def) => byAim(raw, an, cfg, def) && !noMerge(def, raw, cfg).ok,                    // まとめないと渡りきれない
+    mergeRecut: (raw, an, cfg, def) => byAim(raw, an, cfg, def) && !noMerge(def, raw, cfg).ok && flat(raw).every((l) => l % raw.pieces[0] !== 0), // まとめるだけでも作れない
+    cutOrKeep: (raw, an, cfg, def) => byAim(raw, an, cfg, def) && !noRecut(def, raw, cfg).ok,                 // 切らないと渡りきれない谷がある
+    forkReduce: byAim,
     forkRecut: byAim, // 分かれ道は、言い換えて比べるのがねらい（短いほうが粗い書き方なら、切らずに渡れることもある）
   };
   // 切り直しができないとしたときの答え
-  function noRecut(def, raw, cfg) { return analyze(Object.assign({}, def, { recut: false }), raw, cfg); }
+  function noRecut(def, raw, cfg) { return analyze(Object.assign({}, def, { recut: false, merge: false }), raw, cfg); }
+  // まとめ直しができないとしたときの答え（切り直しはできる）
+  function noMerge(def, raw, cfg) { return analyze(Object.assign({}, def, { merge: false }), raw, cfg); }
 
   function finish(def, raw, an, extra, cfg = Game.config) {
-    const one = (len, i, o, par, min) => { const sg = signOf(raw, i, o, cfg); return { len, par, min: def.recut ? min : 0, minPar: def.mode === 'overlay' ? 0 : signN(sg), sign: def.mode === 'overlay' ? { kind: 'none' } : sg }; };
+    const one = (len, i, o, par, min) => { const sg = signOf(raw, i, o, cfg); return { len, par, min: def.recut ? min : 0, limit: limitOf(raw, i, o), minPar: def.mode === 'overlay' ? 0 : signN(sg), sign: def.mode === 'overlay' ? { kind: 'none' } : sg }; };
     return Object.assign({
       id: def.id, mode: def.mode, boards: raw.boards, pieces: raw.pieces.slice(),
       // 立て札: かさねて測るときはなし
       gaps: raw.gaps.map((x, i) => (isFork(x) ? { fork: x.map((len, o) => one(len, i, o, an.pars[i][o], an.mins[i][o])) } : one(x, i, 0, an.pars[i], an.mins[i]))),
       caption: !!def.caption,
       recut: !!def.recut,
+      merge: !!def.merge,
       keep: an.keep,
       aim: raw.aim || null,
     }, extra);
   }
   // 作ったステージから、部品が返した形に戻す（テストがねらいを確かめ直すのに使う）
-  const rawOf = (st) => ({ boards: st.boards, pieces: st.pieces, gaps: st.gaps.map((g) => (g.fork ? g.fork.map((f) => f.len) : g.len)), signs: st.mode === 'overlay' ? null : st.gaps.map((g) => (g.fork ? g.fork.map((f) => f.sign) : g.sign)), aim: st.aim });
+  const rawOf = (st) => ({ boards: st.boards, pieces: st.pieces, gaps: st.gaps.map((g) => (g.fork ? g.fork.map((f) => f.len) : g.len)), signs: st.mode === 'overlay' ? null : st.gaps.map((g) => (g.fork ? g.fork.map((f) => f.sign) : g.sign)), limits: st.gaps.map((g) => (g.fork ? g.fork.map((f) => f.limit || 0) : g.limit || 0)), aim: st.aim });
   const sig = (st) => st.cand + ':' + st.boards + ':' + st.pieces.join(',') + ':' + st.gaps.map((g) => (g.fork ? g.fork.map((f) => f.len).join('|') : g.len)).join(',');
   // かざして見分けられる谷か: 谷の分母より粗い切り方の線が、谷の右の端のすぐそば（cfg.gen.lineGap ドット未満）に来ない。
   // 遊ぶ人は粗いほうから順に試すので、先に出会う粗い切り方がそろって見えるとまちがえる。細かい側の近い線は、正しい切り方に先に出会うので構わない
@@ -880,6 +1022,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 // 操作は一瞬で進み、起きたことを出来事の列で返す（歩く・落ちるの時間は main が演出として持つ）。
 // stage = { id, mode: 'overlay' | 'hand' | 'fog', boards, pieces: [長さ…], gaps: [{ len, par, sign } | { fork: [{ len, par, sign } × 2] }], keep, recut }（gen.js が作る）
 //   recut: 切れはしを切る台にのせて切り直せるステージ（設計書② 2 章）
+//   merge: 台の切れはしを k ずつまとめられるステージ（設計書③ 2 章）。谷（道）の limit: 置ける枚数の上限
 // 長さは 1/unit を単位にした整数
 (function () {
   const Game = (window.Game = window.Game || {});
@@ -894,7 +1037,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       route: 0,                  // 分かれ道で選んでいる道（0: 上、1: 下）
       hand, bridge: [],          // bridge: 谷に並べた切れはし（左から）
       bench: [],                 // 切る台にのせた切れはし（左から。全部同じ長さ）。recut のステージだけ
-      cutN: 1,                   // 手つかずの板（台に切れはしがあれば、その 1 枚ずつ）に入れている線の数（1 は切らない）
+      cutN: 1,                   // 手つかずの板（台に切れはしがあれば、その 1 枚ずつ）に入れている線の数（1 は切らない）。負の数 −k は「k ずつ まとめる」
       falls: stage.gaps.map(() => 0),
       helpOn: false, helpUsed: false, // 「かさねて みる」を今の谷で使っているか、このステージで一度でも使ったか
       sturdy: [],                // 渡った谷ごと: がっしりだったか
@@ -909,6 +1052,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // 今の谷（分かれ道なら、選んでいる道の谷）
   const gap = (s) => { const g = s.stage.gaps[s.gi]; return g && g.fork ? g.fork[s.route] : g; };
   const fork = (s) => { const g = s.stage.gaps[s.gi]; return !s.done && g && g.fork ? g.fork : null; };
+  // 今の谷（道）に置ける枚数の上限（なければ 0）
+  const limitOf = (s) => { const g = gap(s); return (g && g.limit) || 0; };
   const busy = (s) => s.done || !!s.crossing;
   const canHelp = (s, cfg = Game.config) => !s.done && s.falls[s.gi] >= cfg.help.falls;
   // 板を谷にかざせるか（かさねて測る、または助け舟）
@@ -931,10 +1076,27 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     return s.hand.boards > 0 ? cfg.cuts.slice() : [];
   }
 
-  // 切る数を決める（まだ切れていない）
+  // まとめる数の候補（小さい順）。まとめられない数も選べる（だめな理由は mergeFrames で見せる）。板 1 枚に戻る数（分母と同じ）は除く
+  function mergeOptions(s, cfg = Game.config) {
+    if (!s.stage.merge || !s.bench.length) return [];
+    const d = cfg.unit / s.bench[0], out = [];
+    for (let k = 2; k <= s.bench.length; k++) if (k !== d) out.push(k);
+    return out;
+  }
+  // まとめられるか: k が枚数と分母の両方を割り切る（公約数）。まとめた 1 枚は 1/2 以下
+  const mergeable = (count, d, k) => k >= 2 && count % k === 0 && d % k === 0 && d / k >= 2;
+  // 台のマス（切れはし count 枚と、板 1 枚ぶんの残り。全部で d マス）を k マスずつ区切った枠。
+  // bad: 切れはしの終わりをまたぐ枠（k が枚数を割り切らない）、右の端で k マスに足りない枠（k が分母を割り切らない）
+  function mergeFrames(count, d, k) {
+    const out = [];
+    for (let from = 0; from < d; from += k) { const to = from + k; out.push({ from, to: Math.min(to, d), bad: (from < count && count < to) || to > d }); }
+    return out;
+  }
+
+  // 切る数を決める（まだ切れていない）。負の数は「まとめる数」
   function setCut(s, n, cfg = Game.config) {
     if (busy(s)) return [];
-    if (n !== 1 && !cutOptions(s, cfg).includes(n)) return [];
+    if (n !== 1 && !(n > 0 ? cutOptions(s, cfg).includes(n) : mergeOptions(s, cfg).includes(-n))) return [];
     if (n === s.cutN || (n === 1 && !s.bench.length && s.hand.boards < 1)) return [];
     s.cutN = n;
     return [{ type: 'cutn', n }];
@@ -943,6 +1105,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // 切る: 手つかずの板 1 枚を cutN 個の等しい切れはしにする。
   // 台に切れはしがあれば、その 1 枚ずつを cutN 個に切る（切れはしは台に残る）
   function cut(s, cfg = Game.config) {
+    if (s.cutN < 0) return merge(s, cfg);
     if (busy(s) || s.cutN < 2 || !cutOptions(s, cfg).includes(s.cutN)) return [];
     const n = s.cutN;
     s.cutN = 1;
@@ -956,6 +1119,18 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     for (let i = 0; i < n; i++) s.hand.pieces.push(len);
     desc(s.hand.pieces);
     return [{ type: 'cut', n, len }].concat(checkStuck(s, cfg));
+  }
+
+  // まとめる: 台の切れはしを k 枚ずつ 1 枚に（cutN = −k）。まとめられなければ何も変えない（選んだ数もそのまま）
+  function merge(s, cfg = Game.config) {
+    const k = -s.cutN;
+    if (busy(s) || !mergeOptions(s, cfg).includes(k)) return [];
+    const count = s.bench.length, d = cfg.unit / s.bench[0];
+    if (!mergeable(count, d, k)) return [{ type: 'mergeNo', k, bad: mergeFrames(count, d, k).flatMap((f, i) => (f.bad ? [i] : [])) }];
+    const len = s.bench[0] * k;
+    s.bench = Array(count / k).fill(len);
+    s.cutN = 1;
+    return [{ type: 'merge', k, len, count }].concat(checkStuck(s, cfg));
   }
 
   // 台にのせる: 長さ len の切れはしを 1 枚、置き場から台へ（左からつめる）。
@@ -985,7 +1160,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (busy(s)) return [];
     const from = bench ? s.bench : s.hand.pieces, i = from.indexOf(len);
     if (i < 0) return [];
-    const at = sum(s.bridge);
+    const at = sum(s.bridge), lim = limitOf(s);
+    if (lim && s.bridge.length >= lim) return [{ type: 'limit', gi: s.gi, limit: lim }];
     if (at + len > cfg.unit) return [{ type: 'full' }];
     from.splice(i, 1);
     if (bench && !s.bench.length) s.cutN = 1;
@@ -1091,7 +1267,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     };
   }
 
-  Game.rules = { start, gap, fork, route, busy, canHelp, overlay, cutOptions, setCut, cut, toBench, fromBench, place, take, cross, settle, retryGap, help, seeds, cheek, outcome, sum };
+  Game.rules = { start, gap, fork, route, busy, canHelp, overlay, cutOptions, mergeOptions, mergeable, mergeFrames, limitOf, setCut, cut, toBench, fromBench, place, take, cross, settle, retryGap, help, seeds, cheek, outcome, sum };
 })();
 </script>
 <script>
@@ -1429,7 +1605,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     ja: {
       btn: { retry: 'やりなおす', help: 'かさねて みる' },
       title: { name1: 'HOPPE', name2: 'BRIDGE', tap: 'タップで はじめる' },
-      select: { area: 'エリア {n}', sub: ['かさねて はかる', 'てもとで きる', 'くらべる あわせる', 'きごうだけ', 'きりなおす', 'いいかえて くらべる', 'きりの なか'], locked: '?', story: 'おはなし' },
+      select: { area: 'エリア {n}', sub: ['かさねて はかる', 'てもとで きる', 'くらべる あわせる', 'きごうだけ', 'きりなおす', 'いいかえて くらべる', 'きりの なか', 'まとめる', 'いちばん おおきく', 'きりの なか'], locked: '?', story: 'おはなし' },
       // おはなし（はじめて遊ぶときに 1 回。ステージ選びの「おはなし」でまた見られる）。1 枚に 2 行
       story: { pages: [
         ['たにの むこうに', 'ほうせきが あるらしい'],
@@ -1437,16 +1613,17 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
         ['いたを きって すきまに', 'ぴったり わたそう'],
         ['つなぎめが すくないほど', 'がっしりした はしに なる'],
       ] },
-      demo: { route: 'はしを タップすると うつれるよ', recut: 'きれはしも だいに のせて きれるよ' },
+      demo: { route: 'はしを タップすると うつれるよ', recut: 'きれはしも だいに のせて きれるよ', merge: 'みぎへ なぞると まとめられるよ' },
+      merge: '{k}ずつ', limit: 'この はしは {n}まいまで',
       sign: { cut: '{d}つに きって {n}まい', and: 'と', wo: 'を', add: 'あわせた ながさ', from: 'から', sub: 'とった ながさ' },
       sound: { on: 'おと オン', off: 'おと オフ' },
       haptics: { on: 'ぶるぶる オン', off: 'ぶるぶる オフ' },
       menu: { resume: 'つづける', restart: 'さいしょから', select: 'ステージえらび' },
       stuck: { gap: 'この たにから やりなおそう', start: 'さいしょから やりなおそう' },
       reward: { gems: 'ほうせき ぜんぶ そろった!', stamps: 'あしあと ぜんぶ そろった!' },
-      clear: { title: 'クリア!', next: 'つぎへ', again: 'もういちど', select: 'ステージえらび' },
+      clear: { title: 'クリア!', next: 'つぎへ', again: 'もういちど', select: 'ステージえらび', gold: 'すくない まいすうで わたると', gold2: 'きんの たね', star: 'ぜんぶ きんなら' },
       // 擬音
-      fx: { click: 'カチ', saw: 'ザクッ', put: 'コトン', step: 'トン', fit: 'ピタッ', sturdy: 'がっしり!', creak: 'ギシ', miss: 'スカッ', trip: 'ガッ', kyu: 'キュウ', back: 'スッ', munch: 'もぐっ', pon: 'ポンッ' },
+      fx: { click: 'カチ', saw: 'ザクッ', put: 'コトン', step: 'トン', fit: 'ピタッ', sturdy: 'がっしり!', creak: 'ギシ', miss: 'スカッ', trip: 'ガッ', kyu: 'キュウ', back: 'スッ', munch: 'もぐっ', pon: 'ポンッ', petta: 'ペタッ' },
     },
   };
 })();
@@ -2045,7 +2222,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     function on(e) {
       if (!enabled()) return;
       switch (e.type) {
-        case 'cutn': play('click', { step: Math.max(0, [1].concat(cfg.cuts).indexOf(e.n)) }); break;
+        case 'cutn': play('click', { step: e.n < 0 ? 1 + e.n : Math.max(0, [1].concat(cfg.cuts).indexOf(e.n)) }); break; // まとめる側（負の数）は、そのままより低く
+        case 'merge': play('petta'); break;
+        case 'mergeNo': play('trip'); break;
+        case 'limit': play('back'); break;
         case 'cut': play('saw'); for (let i = 0; i < Math.min(e.n, 6); i++) play('knock', { len: e.len, gain: 0.5, delay: cfg.audio.sfx.saw[0].ms / 1000 + i * 0.03 }); break;
         case 'place': play('knock', { len: e.len }); break;
         case 'take': case 'unbench': play('knock', { len: e.len, gain: 0.5 }); break;
@@ -2187,7 +2367,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   // 出来事 → 型の名前（無いものは震わせない）
   const ON = {
-    cutn: 'click', cut: 'saw', place: 'place', take: 'take', route: 'route', bench: 'place', unbench: 'take',
+    cutn: 'click', cut: 'saw', place: 'place', take: 'take', route: 'route', bench: 'place', unbench: 'take', merge: 'merge',
     fx_step: 'step', fx_creak: 'creak', fx_fit: 'fit', fx_sturdy: 'sturdy', fx_gem: 'gem', fx_stamp: 'stamp',
   };
 
@@ -2301,8 +2481,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       const R = Game.render, s = app.rules, h = app.ham;
       const hx = h.x, top = L.deckY - 24;
       switch (e.type) {
-        case 'cutn': { const b = R.boardRect(s), bn = s.bench.length > 0; pop(lt('fx.click'), '#c0cbdc', b.x + b.w - (bn ? 34 : 6), b.y - (bn ? 14 : 20) - R.routeDy(s), 'S'); break; } // 台の札（分数）は背が高いので、札の左に出す
+        case 'cutn': { const b = R.boardRect(s), bn = s.bench.length > 0; pop(lt('fx.click'), '#c0cbdc', b.x + b.w - (bn ? (s.cutN < 0 ? 64 : 34) : 6), b.y - (bn ? 14 : 20) - R.routeDy(s), 'S'); break; } // 台の札（分数）は背が高いので、札の左に出す
         case 'cut': { const b = R.boardRect(s); pop(lt('fx.saw'), '#fee761', b.x + b.w / 2, b.y - 14 - R.routeDy(s), 'M'); break; }
+        case 'merge': { const b = R.boardRect(s); pop(lt('fx.petta'), '#ead4aa', b.x + (e.count / e.k) * e.len / 2, b.y - 14 - R.routeDy(s), 'M'); break; }
+        case 'mergeNo': { const b = R.boardRect(s); pop(lt('fx.trip'), '#e43b44', b.x + b.w / 2, b.y - 14 - R.routeDy(s), 'M'); break; }
         case 'bench': { const b = R.boardRect(s); pop(lt('fx.put'), '#ead4aa', b.x + (e.i + 0.5) * e.len, b.y - 12 - R.routeDy(s), 'S'); break; }
         case 'place': { const x = L.gapX + R.sumBefore(s.bridge, s.bridge.length - 1) + e.len / 2; pop(lt('fx.put'), '#ead4aa', x, L.deckY - 12, 'S'); break; }
         case 'fx_step': pop(lt('fx.step'), '#c0cbdc', hx + 4, L.deckY + L.deckH + 7, 'S'); break;
@@ -2478,8 +2660,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     // 橋の上の i 枚目より前の長さの合計
     sumBefore(bridge, i) { let a = 0; for (let k = 0; k < i; k++) a += bridge[k]; return a; },
     // 切る数を 1 段ずらす（dir: +1 細かく / -1 粗く）
+    // 並び: まとめる（負の数。大きくまとめるほど左）・そのまま・切る数（細かいほど右）。左へなぞる（dir 1）と細かく、右へなぞると粗く
     cutStep(s, dir) {
-      const ns = [1].concat(Game.rules.cutOptions(s));
+      const ns = Game.rules.mergeOptions(s).slice().reverse().map((k) => -k).concat([1], Game.rules.cutOptions(s));
       return ns[Math.max(0, Math.min(ns.length - 1, ns.indexOf(s.cutN) + dir))];
     },
     // 切る相手があるか（手つかずの板か、台にのせた切れはし）
@@ -2500,7 +2683,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       g.save();
       g.translate(R.fx, R.fy);
 
-      R.labels = !!(app.rules && app.rules.stage.mode !== 'overlay'); // 切れはしに記号を付けるか（かさねて測るステージでは付けない）
+      R.labels = !!(app.rules && app.rules.stage.mode !== 'overlay');
+      limitGlow = app.limitT != null && app.time - app.limitT < cfg.anim.limitGlow ? pulse(app.time - app.limitT, cfg.anim.limitGlow / 2) : 0; // 上限で置けなかった: 上限の印がゆっくり光る // 切れはしに記号を付けるか（かさねて測るステージでは付けない）
       drawBack(g, app, app.mode === 'title' || app.mode === 'select' || app.mode === 'story');
       if (app.mode === 'story') { drawStory(g, app); g.restore(); return; }
       if (app.mode === 'title') { drawTitle(g, app); g.restore(); return; }
@@ -2543,6 +2727,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     },
   };
 
+  let limitGlow = 0;
   const center = (g, str, y, color) => B.text(g, str, Math.round((Game.config.view.w - B.textW(str)) / 2), y, color, INK);
   // ゆっくり明るくなったり暗くなったりする 0〜1（速い点滅は使わない）
   const pulse = (t, sec = 1.2) => 0.5 - 0.5 * Math.cos((t * 2 * Math.PI) / sec);
@@ -2752,6 +2937,13 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       ry += rh + 2;
     }
     // 言葉（記号と結びつける最初のステージ）
+    // 枚数の上限の印（板の絵 ×N）: 札の右に（はみ出すなら左に）。霧の中でも出す
+    if (gap.limit) {
+      const A = B.all(), str = 'x' + gap.limit, mw = 12 + B.textW(str), mx = x + w + 2 + mw <= V.w - 1 ? x + w + 2 : x - 2 - mw, mty = y + Math.floor(h / 2) - 4;
+      if (limitGlow > 0) { g.globalAlpha = 0.25 + 0.6 * limitGlow; g.fillStyle = '#fee761'; g.fillRect(mx - 2, mty - 2, mw + 4, 11); g.globalAlpha = 1; }
+      g.drawImage(A.boardIcon, mx, mty + 1);
+      B.text(g, str, mx + 12, mty, '#ffffff', INK);
+    }
     if (o.caption && sg.kind === 'frac') { const str = lt('sign.cut', { d: sg.d, n: sg.n }); B.text(g, str, Math.max(2, Math.min(V.w - B.textW(str) - 2, cx - Math.round(B.textW(str) / 2))), y + h + 3, '#ffffff', INK); }
     if (!o.marker) return;
     // 幅の印: ├───┤
@@ -2786,6 +2978,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       });
       g.fillStyle = INK;
       s.bench.forEach((len, i) => { for (let k = 1; k < s.cutN; k++) g.fillRect(r.x + i * len + (k * len) / s.cutN, r.y + bounce - 1, 1, r.h + 2); });
+      if (s.stage.merge) drawMerge(g, app, r, th);
     } else {
       wood(g, r.x, r.y + bounce, r.w, th, L.boardFront, WOOD.piece);
       for (let i = 0; i <= s.cutN; i++) marks.push((i * cfg.unit) / s.cutN);
@@ -2803,11 +2996,14 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     // 札（右上）: 板なら切る数。台の切れはしなら、のっている合計を分数で（線を入れると、上も下も同じ数だけ増える）
     const hot = d && d.kind === 'count' ? '#fee761' : '#ead4aa';
     if (bench) {
-      const n = s.bench.length * s.cutN, dn = (cfg.unit / s.bench[0]) * s.cutN, fw = B.fracW(n, dn);
+      // まとめる数を選んでいる間は、まとめられるならまとめたあとの分数（まとめられないなら今のまま）
+      const cnt = s.bench.length, d0 = cfg.unit / s.bench[0], mk = s.cutN < 0 ? -s.cutN : 0, mok = mk && Game.rules.mergeable(cnt, d0, mk);
+      const n = mk ? (mok ? cnt / mk : cnt) : cnt * s.cutN, dn = mk ? (mok ? d0 / mk : d0) : d0 * s.cutN, fw = B.fracW(n, dn);
       const tx = r.x + r.w - fw - 6, ty = r.y - B.FRAC_H - 8 + (app.time - app.cutT < cfg.anim.tagHop ? -1 : 0);
       g.fillStyle = INK; g.fillRect(tx, ty, fw + 6, B.FRAC_H + 4);
       g.fillStyle = hot; g.fillRect(tx + 1, ty + 1, fw + 4, B.FRAC_H + 2);
       B.frac(g, n, dn, tx + 3, ty + 2, INK);
+      if (mk) { const str = lt('merge', { k: mk }); B.text(g, str, tx - B.textW(str) - 3, ty + 3, mok ? '#ffffff' : '#e43b44', INK); }
     } else {
       const tag = String(s.cutN), tw = B.textW(tag), tx = r.x + r.w - tw - 6, ty = r.y - 13;
       g.fillStyle = INK; g.fillRect(tx, ty, tw + 6, 11);
@@ -2817,19 +3013,54 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     // まだ線がないとき: 左へなぞれることを、指と矢印で知らせる（指が板の上を左へ動いては、右に戻る）
     // 台の切れはしは、はじめて切るまで同じ手本を出す（切れない長さのときは出さない）
     const w0 = bench ? Game.rules.sum(s.bench) : r.w, tipCut = bench ? 'recut' : 'cut';
-    if (s.cutN === 1 && (bench ? tip(app, 'recut') && Game.rules.cutOptions(s).length : tip(app, 'count'))) {
+    // まとめられる切れはしが台にあるときは、まとめる手本（右へなぞる）を先に出す
+    const mergeTip = bench && s.stage.merge && tip(app, 'merge') && Game.rules.mergeOptions(s).some((k) => Game.rules.mergeable(s.bench.length, cfg.unit / s.bench[0], k));
+    if (s.cutN === 1 && mergeTip) {
+      const k = (app.time * 0.8) % 1, fx = r.x + Math.min(w0 - 4, 20) + Math.round(Math.min(1, k * 1.5) * 32);
+      g.drawImage(A.arrowR, fx + 8, r.y - 8);
+      g.drawImage(A.finger, fx, r.y - 9);
+      center(g, lt('demo.merge'), L.pieces.y + 34, '#ffffff');
+    } else if (s.cutN === 1 && (bench ? tip(app, 'recut') && Game.rules.cutOptions(s).length : tip(app, 'count'))) {
       const k = (app.time * 0.8) % 1, fx = r.x + Math.max(44, w0 - 30) - Math.round(Math.min(1, k * 1.5) * 32);
       g.drawImage(A.arrowL, fx - 8, r.y - 8);
       g.drawImage(A.finger, fx, r.y - 9);
     }
     // 線が入っているとき: 上から下へ切れることを矢印で知らせる
-    if (s.cutN > 1 && !d) g.drawImage(A.arrowD, r.x + Math.round(r.w / 2) - 3, r.y - 15 + Math.round(2 * pulse(app.time, 0.8)));
+    if (s.cutN !== 1 && !d) g.drawImage(A.arrowD, r.x + Math.round(r.w / 2) - 3, r.y - 15 + Math.round(2 * pulse(app.time, 0.8)));
+    if (s.cutN < 0 && mergeTip) fingerMove(g, app, r.x + Math.round(r.w / 2) + 6, r.y - 12, r.x + Math.round(r.w / 2) + 6, r.y + r.h + 6);
     if (s.cutN > 1 && tip(app, tipCut)) fingerMove(g, app, r.x + Math.round(r.w / 2) + 6, r.y - 12, r.x + Math.round(r.w / 2) + 6, r.y + r.h + 6);
     // 板を横切ろうとしている指のあと
     if (d && d.kind === 'slash') { g.fillStyle = '#ffffff'; g.fillRect(Math.round(d.x), Math.round(d.y0), 1, Math.max(1, Math.round(d.y - d.y0))); }
   }
 
   // 切った直後: 切れはしが 1 ドットずつ離れて少し跳ね、手持ちの山へ落ちていく
+  // まとめ直し（設計書③ 4.1）: 板 1 枚ぶんの残りの点線のマス、まとめた線が消える動き、k マスずつの枠（まとめられないところは赤）
+  function drawMerge(g, app, r, th) {
+    const cfg = Game.config, L = cfg.layout, AN = cfg.anim, s = app.rules, len = s.bench[0], d = cfg.unit / len, cnt = s.bench.length;
+    g.fillStyle = '#8b9bb4';
+    for (let j = cnt; j < d; j++) {
+      const x = r.x + j * len, w = len, h = th + L.boardFront;
+      for (let i = 0; i < w; i += 2) { g.fillRect(x + i, r.y, 1, 1); g.fillRect(x + i, r.y + h - 1, 1, 1); }
+      for (let i = 0; i < h; i += 2) { g.fillRect(x, r.y + i, 1, 1); g.fillRect(x + w - 1, r.y + i, 1, 1); }
+    }
+    const mf = app.mergeFx;
+    if (mf && app.time - mf.t0 < AN.merge) {
+      g.globalAlpha = 1 - (app.time - mf.t0) / AN.merge; g.fillStyle = INK;
+      for (let i = 1; i < mf.count; i++) if (i % mf.k) g.fillRect(r.x + i * mf.len, r.y - 1, 1, r.h + 2);
+      g.globalAlpha = 1;
+    }
+    if (s.cutN >= 0) return;
+    const k = -s.cutN, M = L.merge, nt = app.time - (app.mergeNoT != null ? app.mergeNoT : -9);
+    const shake = nt < AN.mergeNo ? Math.round(1.5 * Math.sin((nt / AN.mergeNo) * Math.PI * 3)) : 0;
+    for (const f of Game.rules.mergeFrames(cnt, d, k)) {
+      const x = r.x + f.from * len + (f.bad ? shake : 0), w = (f.to - f.from) * len, y = r.y - M.frameUp, h = r.h + M.frameUp + M.frameDown;
+      g.globalAlpha = f.bad ? 0.55 + 0.45 * pulse(app.time, 1.4) : 1;
+      g.fillStyle = f.bad ? '#e43b44' : '#ffffff';
+      g.fillRect(x, y, w, 1); g.fillRect(x, y + h - 1, w, 1); g.fillRect(x, y, 1, h); g.fillRect(x + w - 1, y, 1, h);
+    }
+    g.globalAlpha = 1;
+  }
+
   function drawCutFx(g, app) {
     const cfg = Game.config, L = cfg.layout, c = app.cutFx, AN = cfg.anim;
     const t = app.time - c.t0, th = L.boardH - L.boardFront;
@@ -2959,6 +3190,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       if (i === s.gi) { g.fillStyle = '#fee761'; g.fillRect(x, my + 5, 17, 1); }
       // 立て札のあるステージ: 先の谷の立て札も、地図に全部出す（先を読んで計画できる）
       if (s.stage.mode !== 'overlay' && i >= s.gi) mapSign(g, opts, x + 8, my + 8, i === s.gi ? INK : '#3a4466');
+      // 枚数の上限（ふつうの谷だけ）: 小さい数字を札の右下に
+      if (i >= s.gi && !gp.fork && gp.limit) B.small(g, gp.limit, x + 16, my + 15, limitGlow > 0 && i === s.gi ? '#fee761' : '#feae34');
     });
     if (s.stuck && !app.anim) { const str = lt('stuck.' + s.stuck); B.text(g, str, Math.round((cfg.view.w - B.textW(str)) / 2), my + (s.stage.mode !== 'overlay' ? 24 : 12), '#fee761', INK); }
   }
@@ -2973,6 +3206,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       g.strokeRect(Math.round(p.x) - r + 0.5, Math.round(p.y - dy) - r + 0.5, r * 2, r * 2);
       g.globalAlpha = 1;
     }
+    // 上限の印がはじめて出る谷: 文を一度だけ（その谷を渡るまで）
+    const lim = s && !s.done && app.mode === 'play' ? Game.rules.limitOf(s) : 0;
+    if (lim && tip(app, 'limit')) center(g, lt('limit', { n: lim }), L.trayY - 12 - dy, '#ffffff');
     if (!d || app.mode !== 'play') return;
     if (d.step < 2 || d.t < D.move * 2 + D.press * 2 + D.hold + 0.25) {
       // 1 回目は もう 1 本の橋へ、2 回目は元の橋へ。上から近づき、すっと押して、少し浮く
@@ -3145,6 +3381,19 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     }
     for (const b of R.buttons(app)) button(g, b, app, b.id === 'next' ? '#3e8948' : null);
     if (app.reward) drawReward(g, app);
+    else if (o && app.def.recut && !o.star && t >= AN.clearWait + AN.gemEvery * 6) drawStarHint(g, app);
+  }
+  // 編 2 で星を取れなかったとき: 谷ごとのたね（金か）と、星の条件を、クリアの札の下に出す（「がっしり」と星の違いが伝わらなかった）
+  function drawStarHint(g, app) {
+    const A = B.all(), W = RW(), gold = app.rules.gold, n = gold.length, x0 = Math.round(Game.config.view.w / 2 - (n * 10 - 3) / 2);
+    panel(g, W.x, W.y, W.w, 50);
+    for (let i = 0; i < n; i++) { g.globalAlpha = gold[i] ? 1 : 0.35; g.drawImage(gold[i] ? A.seedGold : A.seed, x0 + i * 10, W.y + 6); }
+    g.globalAlpha = 1;
+    center(g, lt('clear.gold'), W.y + 17, '#ffffff');
+    const s2 = lt('clear.gold2'), w2 = B.textW(s2), x2 = Math.round((Game.config.view.w - w2 - 9) / 2);
+    g.drawImage(A.seedGold, x2, W.y + 27); B.text(g, s2, x2 + 9, W.y + 26, '#fee761', INK);
+    const s3 = lt('clear.star'), w3 = B.textW(s3), x3 = Math.round((Game.config.view.w - w3 - 10) / 2);
+    B.text(g, s3, x3, W.y + 36, '#ffffff', INK); g.drawImage(A.star, x3 + w3 + 3, W.y + 37);
   }
 
   // ---- ごほうび（エリアの宝石・足あとを集めきった）: クリアの札の下の空いた所に、小さな舞台を出す ----
@@ -3259,7 +3508,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   // さいしょから（数字は変えない）
   function start() {
     app.rules = RU.start(structuredClone(app.stage));
-    app.mode = 'play'; app.menu = false; app.result = null; app.reward = null; app.rewards = []; app.anim = null; app.drag = null; app.cutFx = null; app.demo = null;
+    app.mode = 'play'; app.menu = false; app.result = null; app.reward = null; app.rewards = []; app.anim = null; app.drag = null; app.cutFx = null; app.demo = null; app.mergeFx = null; app.mergeNoT = -9; app.limitT = -9;
     if (app.fx) app.fx.clear();
     Object.assign(app.ham, { x: HOME, y: 0, pose: 'idle', visible: true, bubble: null, skull: false });
   }
@@ -3274,6 +3523,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       emit(e);
       if (e.type === 'cut' && e.bench) seenTip('recut'); // 台の切れはしを切った（板を切る手本とは別に数える）
       else if (TIP[e.type]) seenTip(TIP[e.type]);
+      if (e.type === 'merge') { seenTip('merge'); app.cutT = app.time; app.mergeFx = { t0: app.time, len: e.len / e.k, count: e.count, k: e.k }; }
+      else if (e.type === 'mergeNo') app.mergeNoT = app.time;
+      else if (e.type === 'limit') app.limitT = app.time;
+      else if (e.type === 'passed') { const g = app.rules.stage.gaps[e.gi]; if ((g.fork || [g]).some((f) => f.limit)) seenTip('limit'); }
       if (e.type === 'cutn') app.cutT = app.time;
       else if (e.type === 'place') app.placeT = app.time;
       else if (e.type === 'cross') startCross(e);
