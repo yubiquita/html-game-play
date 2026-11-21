@@ -249,6 +249,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
     // きろく（端末の中のリーダーボード）。設計書: docs/specs/2026-11-03-hoppe-dive-board-design.md
     board: { version: 1, key: 'hoppe-dive.board', size: 8 },
+    // スピードランのいちばん速いタイム（speedrun.js）。quitSec: B のキャンプの「やめる」を 2 回目に押せる秒。設計書: docs/specs/2026-11-20-hoppe-dive-speedrun-design.md
+    speedrun: { version: 1, key: 'hoppe-dive.speedrun', quitSec: 2 },
 
     // 操作説明（キャンプの あそびかた のページとタイトル）。設計書: docs/specs/2026-11-03-hoppe-dive-howto-design.md
     // rows の scene: 見本の場面（0 ジャンプ / 1 よこに はらう / 2 たてに はらう）。sub: 灰色の添え書き。文は text.js の howto（rows[i] がこの行。after: 場面 1・2 の添え書き）
@@ -1908,6 +1910,63 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 })();
 </script>
 <script>
+// スピードラン: 実時間の時計（宝と脱出の区切り）と、いちばん速いタイム。ただのデータで、DOM・localStorage・言語には触らない（読み書きは save.js）。
+// 時計を進める（実時間・隠れている間は止める）のは main.js。設計書: docs/specs/2026-11-20-hoppe-dive-speedrun-design.md
+// best: { v, run: { treasure, escape }（A: ふつうのラン。{ t, mult, crown, date }）, full: { treasure, escape }（B: まっさらから通し。{ t, date }） }
+(function () {
+  const Game = (window.Game = window.Game || {});
+  const C = (cfg) => (cfg || Game.config).speedrun;
+  const KS = ['treasure', 'escape'];
+
+  // ---- 時計 ----
+  const timer = () => ({ t: 0, splits: { treasure: null, escape: null } });
+  function tick(tm, dt) { tm.t += dt; }
+  // 区切りを入れる。最初の 1 回だけ（入れたら true）
+  function split(tm, k) {
+    if (!KS.includes(k) || tm.splits[k] != null) return false;
+    tm.splits[k] = tm.t;
+    return true;
+  }
+
+  // 表示の形 m:ss.s（0.1 秒より下は切り捨て。分は 60 を超えても伸ばす）。数だけで文ではないので、ここに置く
+  function fmt(t) {
+    const d = Math.floor(Math.max(0, t) * 10 + 1e-6), m = Math.floor(d / 600), r = d % 600;
+    return m + ':' + String(Math.floor(r / 10)).padStart(2, '0') + '.' + (r % 10);
+  }
+
+  // ---- いちばん速いタイム ----
+  const fresh = (cfg) => ({ v: C(cfg).version, run: { treasure: null, escape: null }, full: { treasure: null, escape: null } });
+  const pos = (x) => typeof x === 'number' && Number.isFinite(x) && x > 0;
+  const date = (x) => typeof x === 'string' && x.length <= 10;
+  const pickRun = (e) => (e && typeof e === 'object' && pos(e.t) && pos(e.mult) && typeof e.crown === 'boolean' && date(e.date) ? { t: e.t, mult: e.mult, crown: e.crown, date: e.date } : null);
+  const pickFull = (e) => (e && typeof e === 'object' && pos(e.t) && date(e.date) ? { t: e.t, date: e.date } : null);
+  const PICK = { run: pickRun, full: pickFull };
+
+  // 保存データの検め方。読めない・壊れている・版が違うときは空。形の違う記録は null
+  function parse(raw, cfg) {
+    let d;
+    try { d = typeof raw === 'string' ? JSON.parse(raw) : null; } catch (e) { return fresh(cfg); }
+    if (!d || typeof d !== 'object' || d.v !== C(cfg).version) return fresh(cfg);
+    const b = fresh(cfg);
+    for (const cat of ['run', 'full']) {
+      const o = d[cat] && typeof d[cat] === 'object' ? d[cat] : {};
+      for (const k of KS) b[cat][k] = PICK[cat](o[k]);
+    }
+    return b;
+  }
+
+  // cat（run / full）の区切り k の記録より速ければ入れて true（新記録）。同じタイムは前のまま
+  function record(best, cat, k, entry) {
+    const cur = best[cat][k], e = PICK[cat](entry);
+    if (!e || (cur && cur.t <= e.t)) return false;
+    best[cat][k] = e;
+    return true;
+  }
+
+  Game.speedrun = { timer, tick, split, fmt, fresh, parse, record };
+})();
+</script>
+<script>
 // 5×7 の自作ドット文字。1文字 = 7行×5桁の文字列（'#' が点）。濁点・半濁点は bake.js で重ねる
 (function () {
   const Game = (window.Game = window.Game || {});
@@ -2226,6 +2285,12 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       achCount: 'じっせき {n} / {m}', achHelp: 'メダルを タップで せつめい', got: 'とった!',
       boardEmpty: 'まだ きろくが ない', boardEscaped: 'だっしゅつ', boardCleared: 'クリア', mapTreasure: 'たから',
     },
+    // スピードラン。設計書: docs/specs/2026-11-20-hoppe-dive-speedrun-design.md
+    sr: {
+      button: 'スピードラン', quit: 'やめる', quitAgain: 'もういちど おすと やめる', fast: 'はやい!', none: '--:--.-',
+      treasure: 'たから {t}', escape: 'だっしゅつ {t}', best: 'いちばん {t}', clear: 'スピードラン クリア!', tapToTitle: 'タップで タイトルへ',
+      runTitle: 'ふつうの ラン', fullTitle: 'スピードラン', tr: 'たから', esc: 'だっしゅつ',
+    },
     msg: { ach: 'じっせき: {name}', achMore: 'じっせき: {name} ほか {n}', unlocked: '{list}が つかえる!', unlockedLong: '{list}が つかえるように なった!', and: 'と ' },
     // 擬音・掛け声（fx.js）
     fx: {
@@ -2329,6 +2394,11 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       notYet: 'Not yet', on: 'On', off: 'Off', unlockLocked: 'Max it out in a run to unlock',
       achCount: 'Medals {n} / {m}', achHelp: 'Tap a medal for details', got: 'Got it!',
       boardEmpty: 'No records yet', boardEscaped: 'Escaped', boardCleared: 'Clear', mapTreasure: 'Treasure',
+    },
+    sr: {
+      button: 'Speedrun', quit: 'Quit', quitAgain: 'Tap again to quit', fast: 'BEST!', none: '--:--.-',
+      treasure: 'Treasure {t}', escape: 'Escape {t}', best: 'Best {t}', clear: 'SPEEDRUN CLEAR!', tapToTitle: 'Tap for title',
+      runTitle: 'Normal runs', fullTitle: 'Speedrun', tr: 'Treasure', esc: 'Escape',
     },
     msg: { ach: 'Medal: {name}', achMore: 'Medal: {name} +{n}', unlocked: '{list} unlocked!', unlockedLong: '{list} now unlocked!', and: ' and ' },
     fx: {
@@ -4275,7 +4345,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   // タイトルの言語の切り替え（右下の JA EN）。box: タップの範囲、ja / en: 文字の位置
   // haptics: 振動のオン・オフ（JA EN の左。電話の絵）。sound: 音のオン・オフ（振動の左。スピーカーの絵）。icon: 絵の位置
-  R.titleLayout = () => ({ lang: { x: 158, y: 93, w: 34, h: 15, ja: { x: 164, y: 99 }, en: { x: 179, y: 99 } }, haptics: { x: 143, y: 93, w: 15, h: 15, icon: { x: 148, y: 99 } }, sound: { x: 128, y: 93, w: 15, h: 15, icon: { x: 132, y: 99 } } });
+  R.titleLayout = () => ({ lang: { x: 158, y: 93, w: 34, h: 15, ja: { x: 164, y: 99 }, en: { x: 179, y: 99 } }, haptics: { x: 143, y: 93, w: 15, h: 15, icon: { x: 148, y: 99 } }, sound: { x: 128, y: 93, w: 15, h: 15, icon: { x: 132, y: 99 } }, speedrun: { x: 3, y: 95, w: 50, h: 11 } });
 
   // 位置（窓の中のドット）: 左に見本の枠、右に一覧（1行 8 ドット）
   R.howtoLayout = function () {
@@ -4601,8 +4671,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       };
       toggle(R.titleLayout().haptics.icon, !app.haptics || app.haptics.enabled(), A.vibOn, A.vibOff, A.vibInk);
       toggle(R.titleLayout().sound.icon, !app.audio || app.audio.enabled(), A.sndOn, A.sndOff, A.sndInk);
+      button(g, R.titleLayout().speedrun, lt('sr.button'), true, '#2ce8f5'); // 左下: スピードラン（B）
       return;
     }
+    if (app.mode === 'srResult') return drawSrResult(g, app);
     if (!s) return;
     // 上の帯: 階（④エクストラでは だっしゅつ あと N）、点、残機、経験値
     const E = s.extra, XT = lt('extra');
@@ -4613,6 +4685,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const lx = Math.max(30, B.textW(label) + 8);
     for (let i = 0; i < s.lives; i++) g.drawImage(A.seed, lx + i * 7, 3);
     if (app.maxDiff) g.drawImage(A.crown, V.w - 3 - B.textW(sc) - 15, 3); // 最大難易度の印（ランの始めに決まる）
+    if (app.sr) drawSrClock(g, app, s); // スピードラン B の時計（王冠は出ない）
     if (app.achFlash > 0 && Math.floor(app.achFlash * 6) % 2 === 0) g.drawImage(A.medalS, lx + 2 + s.lives * 7, 2); // 実績を取った（名前はあとで）
     const prev = E ? s.xpNeed - cfg.extra.xpPer : s.level === 0 ? 0 : s.xpNeed - cfg.xpBase * Math.pow(cfg.xpGrowth, s.level);
     const k = Math.max(0, Math.min(1, (s.xp - prev) / (s.xpNeed - prev)));
@@ -4620,6 +4693,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     g.fillStyle = GOLD; g.fillRect(3, 12, Math.round((V.w - 6) * k), 2);
 
     if (s.phase === 'choose') drawCards(g, app, s);
+    if ((s.phase === 'clear' || s.phase === 'escaped') && app.mode !== 'result') drawSplitNow(g, app, s.phase === 'clear' ? 'treasure' : 'escape');
     // ④宝の間のあと: 崩れ始め の文字 / 入れないときのヒント
     if (s.phase === 'clear' && app.mode !== 'result') {
       const U = cfg.ui, t = app.clearT;
@@ -4684,21 +4758,23 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const clear = s.cleared, E = s.extra, XT = lt('extra');
     centerText(g, clear ? lt('ui.clear') : lt('ui.gameOver'), 14, clear ? GOLD : WHITE, INK, 2);
     let y = 36;
+    // 脱出してクリアし、アンロックも出たときは行が 1 つ多いので、行の間を 10 → 9 に詰め、脱出の行も 1 上げる（アンロックの行が 87。いちばん下の行が「タップで〜」に重ならないように）
+    const tight = !!(E && clear && res && res.gain.unlocked.length), ls = tight ? 9 : 10;
     // ④エクストラ: だっしゅつ せいこう / だっしゅつ しっぱい (B○F)
-    if (E) { centerText(g, E.escaped ? XT.ok : XT.ng + ' (B' + s.floor + 'F)', 33, E.escaped ? '#63c74d' : '#f6757a', INK); y = 43; }
+    if (E) { centerText(g, E.escaped ? XT.ok : XT.ng + ' (B' + s.floor + 'F)', tight ? 32 : 33, E.escaped ? '#63c74d' : '#f6757a', INK); y = tight ? 41 : 43; }
     if (res) {
       // 追いつきの罰があれば、倍率の横に「けはい -N%」（倍率は罰を含めた値）
-      centerText(g, lt('ui.score', { n: s.score }) + '  ' + fmtMul(res.mult) + (res.boost > 0 ? '  ' + lt('ui.kehaiMinus', { n: Math.round(Game.config.meta.catchup.k * res.boost * 100) }) : ''), y, WHITE, INK); y += 10;
+      centerText(g, lt('ui.score', { n: s.score }) + '  ' + fmtMul(res.mult) + (res.boost > 0 ? '  ' + lt('ui.kehaiMinus', { n: Math.round(Game.config.meta.catchup.k * res.boost * 100) }) : ''), y, WHITE, INK); y += ls;
       // きろくの順位: 1 位は しんきろく!（赤、点滅）、2〜8 位は N い
       const fl = lt('ui.final', { n: res.final }), rk = res.rank === 1 ? lt('ui.newRecord') : res.rank ? lt('ui.rank', { n: res.rank }) : '';
       const tw = B.textW(fl) + (rk ? 6 + B.textW(rk) : 0), fx0 = Math.floor((V.w - tw) / 2);
       B.text(g, fl, fx0, y, GOLD, INK);
       if (rk && (res.rank > 1 || Math.floor(app.time * 3) % 3 !== 2)) B.text(g, rk, fx0 + B.textW(fl) + 6, y, res.rank === 1 ? '#e43b44' : WHITE, INK);
-      y += 10;
+      y += ls;
     } else { centerText(g, lt('ui.score', { n: s.score }), y, WHITE, INK); y += 10; }
-    if (clear) { centerText(g, E && E.escaped ? lt('ui.bonusEscape', { t: s.timeBonus, b: E.bonus }) : lt('ui.bonusTime', { t: s.timeBonus }), y, '#8b9bb4', INK); y += 10; }
-    if (res) { centerText(g, lt('ui.gain', { n: res.gain.gain }), y + 2, '#2ce8f5', INK); y += 12; }
-    centerText(g, (E ? '' : 'B' + s.floor + 'F  ') + fmtTime(s.t), y, WHITE, INK); y += 10;
+    if (clear) { centerText(g, E && E.escaped ? lt('ui.bonusEscape', { t: s.timeBonus, b: E.bonus }) : lt('ui.bonusTime', { t: s.timeBonus }), y, '#8b9bb4', INK); y += ls; }
+    if (res) { centerText(g, lt('ui.gain', { n: res.gain.gain }), y + ls - 8, '#2ce8f5', INK); y += ls + 2; }
+    drawSplits(g, app, s, res, y); y += ls;
     if (res && res.gain.unlocked.length) centerText(g, unlockText(res.gain.unlocked), y, GOLD, INK);
     B.text(g, 'SEED ' + s.seed, 3, 3, '#5a6988'); // 左上（9けたの SEED が下の「タップで キャンプへ」に重ならないように）
     if (res && res.ach && res.ach.length) {
@@ -4706,7 +4782,78 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       g.drawImage(Game.bake.all().medalS, V.w - 13 - B.textW(at), V.h - 11);
       B.text(g, at, V.w - 3 - B.textW(at), V.h - 10, GOLD, INK);
     }
-    if (app.resultT > 0.8 && Math.floor(app.time * 2) % 2 === 0) centerText(g, lt('ui.tapToCamp'), 97, WHITE, INK);
+    if (app.sr) drawSrClock(g, app, s); // B の時計（上の帯と同じ場所に、暗くせずに）
+    if (app.resultT > 0.8 && Math.floor(app.time * 2) % 2 === 0) centerText(g, lt(app.sr && app.sr.done ? 'tips.next' : 'ui.tapToCamp'), 97, WHITE, INK); // B で脱出したら、次は B の結果
+  }
+
+  // ---- スピードラン。設計書: docs/specs/2026-11-20-hoppe-dive-speedrun-design.md ----
+  const SRF = (t) => Game.speedrun.fmt(t);
+  // B の時計: 上の帯の点の左
+  function drawSrClock(g, app, s) {
+    const V = Game.config.view, sc = String(s.score), ck = SRF(app.sr.clock.t);
+    B.text(g, ck, V.w - 3 - B.textW(sc) - 6 - B.textW(ck), 3, '#2ce8f5', INK);
+  }
+  // 宝の間・脱出の場面: そのタイムを下に出しておく（B は通しの時計の区切り。A でいちばん速ければ はやい!）
+  function drawSplitNow(g, app, k) {
+    const V = Game.config.view, t = app.sr ? app.sr.clock.splits[k] : app.runClock && app.runClock.splits[k];
+    if (t == null) return;
+    const line = lt(k === 'treasure' ? 'sr.treasure' : 'sr.escape', { t: SRF(t) }), fast = !app.sr && app.splitNew[k];
+    const fs = fast ? lt('sr.fast') : '', w = B.textW(line) + (fast ? 6 + B.textW(fs) : 0), x = Math.floor((V.w - w) / 2);
+    B.text(g, line, x, 92, WHITE, INK);
+    if (fast && Math.floor(app.time * 3) % 3 !== 2) B.text(g, fs, x + B.textW(line) + 6, 92, '#e43b44', INK);
+  }
+  // 結果画面の時刻の行: 宝・脱出の区切り（いちばん速い区切りは赤く点滅、入れば はやい!）。区切りがないランは B○F と実時間
+  function drawSplits(g, app, s, res, y) {
+    const V = Game.config.view, sp = res ? res.splits : {}, nw = (res && res.splitNew) || {};
+    const parts = [];
+    if (sp.treasure != null) parts.push({ str: lt('sr.treasure', { t: SRF(sp.treasure) }), fast: !!nw.treasure });
+    if (sp.escape != null) parts.push({ str: lt('sr.escape', { t: SRF(sp.escape) }), fast: !!nw.escape });
+    if (!parts.length) parts.push({ str: 'B' + s.floor + 'F  ' + SRF(res ? res.runT : 0), fast: false });
+    const gap = 8, fastStr = lt('sr.fast'), anyFast = parts.some((p) => p.fast);
+    let w = parts.reduce((n, p) => n + B.textW(p.str), 0) + gap * (parts.length - 1);
+    const withFast = anyFast && w + 6 + B.textW(fastStr) <= V.w - 4;
+    if (withFast) w += 6 + B.textW(fastStr);
+    const blink = Math.floor(app.time * 3) % 3 !== 2;
+    let x = Math.floor((V.w - w) / 2);
+    for (const p of parts) { if (!p.fast || blink) B.text(g, p.str, x, y, p.fast ? '#e43b44' : WHITE, INK); x += B.textW(p.str) + gap; }
+    if (withFast && blink) B.text(g, fastStr, x - gap + 6, y, '#e43b44', INK);
+  }
+  // B の結果: スピードラン クリア!、宝と脱出のタイム、それぞれのいちばん速いタイム（今回が新記録なら はやい!）
+  function drawSrResult(g, app) {
+    const V = Game.config.view, sr = app.sr, best = app.srBest.full;
+    g.fillStyle = 'rgba(24,20,37,0.9)'; g.fillRect(0, 0, V.w, V.h);
+    centerText(g, lt('sr.clear'), 12, GOLD, INK, 2);
+    if (!sr) return;
+    let y = 38;
+    for (const k of ['treasure', 'escape']) {
+      const t = sr.clock.splits[k], fast = !!(sr.newFull && sr.newFull[k]);
+      const line = lt(k === 'treasure' ? 'sr.treasure' : 'sr.escape', { t: t != null ? SRF(t) : lt('sr.none') });
+      const fs = fast ? lt('sr.fast') : '', w = B.textW(line) + (fast ? 6 + B.textW(fs) : 0), x = Math.floor((V.w - w) / 2);
+      B.text(g, line, x, y, WHITE, INK);
+      if (fast && Math.floor(app.time * 3) % 3 !== 2) B.text(g, fs, x + B.textW(line) + 6, y, '#e43b44', INK);
+      if (best[k]) centerText(g, lt('sr.best', { t: SRF(best[k].t) }), y + 10, '#8b9bb4', INK);
+      y += 26;
+    }
+    if (app.resultT > 0.8 && Math.floor(app.time * 2) % 2 === 0) centerText(g, lt('sr.tapToTitle'), 97, WHITE, INK);
+  }
+  // タイムのページ: ふつうのラン（A）とスピードラン（B）の、宝・脱出のいちばん速いタイム。A は倍率・王冠も
+  function drawTimes(g, app, A) {
+    const b = app.srBest || Game.speedrun.fresh(), x0 = 6, y0 = 31, w = 180, GRAY = '#8b9bb4', CYAN = '#2ce8f5';
+    g.fillStyle = INK; g.fillRect(x0 - 1, y0 - 1, w + 2, 68);
+    g.fillStyle = '#262b44'; g.fillRect(x0, y0, w, 66);
+    const right = (str, x, y, c) => B.text(g, str, x - B.textW(str), y, c);
+    const md = (d) => d.slice(5).replace('-', '/');
+    [['run', 'sr.runTitle', 2], ['full', 'sr.fullTitle', 34]].forEach(([cat, title, ty]) => {
+      B.text(g, lt(title), x0 + 3, y0 + ty, CYAN);
+      [['treasure', 'sr.tr'], ['escape', 'sr.esc']].forEach(([k, label], i) => {
+        const e = b[cat][k], y = y0 + ty + 9 + i * 9;
+        B.text(g, lt(label), x0 + 9, y, WHITE);
+        if (!e) { right(lt('sr.none'), x0 + 96, y, GRAY); return; }
+        right(SRF(e.t), x0 + 96, y, GOLD);
+        if (cat === 'run') { if (e.crown) g.drawImage(A.crown, x0 + 99, y); B.text(g, fmtMul(e.mult), x0 + 115, y, GRAY); }
+        right(md(e.date), x0 + w - 3, y, GRAY);
+      });
+    });
   }
 
   const fmtMul = (m) => 'x' + (Math.floor(m * 100 + 1e-6) / 100).toFixed(2);
@@ -4716,10 +4863,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   // ---- キャンプ ----
   // 位置（窓の中のドット）: 上の帯、◀ しゅっぱつ ▶、カード（3択と同じ位置）、カードの下半分の − ＋
-  const CAMP = { prev: { x: 4, y: 13, w: 30, h: 15 }, go: { x: 48, y: 13, w: 96, h: 15 }, next: { x: 158, y: 13, w: 30, h: 15 }, perPage: 3 };
+  const CAMP = { prev: { x: 4, y: 13, w: 30, h: 15 }, go: { x: 48, y: 13, w: 96, h: 15 }, next: { x: 158, y: 13, w: 30, h: 15 }, quit: { x: 156, y: 97, w: 33, h: 10 }, perPage: 3 };
   R.campLayout = function (n) {
     return {
-      prev: CAMP.prev, go: CAMP.go, next: CAMP.next,
+      prev: CAMP.prev, go: CAMP.go, next: CAMP.next, quit: CAMP.quit,
       cards: R.cards(n).map((c) => Object.assign({}, c, { minus: { x: c.x, y: c.y + 43, w: 28, h: c.h - 43 }, plus: { x: c.x + 30, y: c.y + 43, w: c.w - 30, h: c.h - 43 } })),
     };
   };
@@ -4733,8 +4880,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   R.achPages = () => Math.ceil(Game.config.achieve.list.length / ACH.perPage);
   // あそびかた: いちばん最後のページ（1ページ目から ◀ で開く）
   R.boardPage = () => R.campPerkPages() + R.achPages(); // きろく（実績のあと）
-  R.howtoPage = () => R.boardPage() + 1;
-  R.campPages = () => R.howtoPage() + 1;
+  R.timePage = () => R.boardPage() + 1; // タイム（スピードランのいちばん速いタイム。きろくのあと）
+  R.howtoPage = () => R.timePage() + 1;
+  // スピードラン B の間は、恒久強化とアンロックのページだけ
+  R.campPages = () => (Game.app && Game.app.sr ? R.campPerkPages() : R.howtoPage() + 1);
   R.campIds = (page) => {
     const P = CAMP.perPage;
     if (page < perkPages()) return Game.meta.perkIds(Game.config).slice(page * P, (page + 1) * P);
@@ -4791,8 +4940,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     g.drawImage(A.gem, 3, 3);
     B.text(g, String(shown), 12, 3, GOLD, INK);
     B.text(g, lt('ui.unspent', { n: M.unspent(view, cfg) }), 14 + B.textW(String(shown)) + 3, 3, WHITE, INK);
-    const mul = lt('ui.mul', { m: fmtMul(M.multiplier(view, cfg)) }), mx = V.w - 3 - B.textW(mul);
-    B.text(g, mul, mx, 3, GOLD, INK);
+    // スピードラン B: 倍率の代わりに時計（点は競わない）
+    if (app.sr) { const ck = SRF(app.sr.clock.t); B.text(g, ck, V.w - 3 - B.textW(ck), 3, '#2ce8f5', INK); }
+    else { const mul = lt('ui.mul', { m: fmtMul(M.multiplier(view, cfg)) }), mx = V.w - 3 - B.textW(mul); B.text(g, mul, mx, 3, GOLD, INK); }
 
     // ◀ しゅっぱつ ▶
     const ids = R.campIds(cp.page), L = R.campLayout(ids.length);
@@ -4805,6 +4955,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (achIds.length) drawAchPage(g, app, A, achIds);
     if (cp.page === R.howtoPage()) { drawHowto(g, app, A); button(g, R.storyLayout().replay, lt('ui.story'), true, GOLD); }
     if (cp.page === R.boardPage()) drawBoard(g, app);
+    if (cp.page === R.timePage() && !app.sr) drawTimes(g, app, A);
     // 下: ページの印、または新しく使えるようになったアンロック
     if (cp.msg && cp.msg.t > 0) centerText(g, cp.msg.text, 99, GOLD, INK);
     else {
@@ -4812,17 +4963,18 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       for (let p = 0; p < n; p++) { g.fillStyle = p === cp.page ? GOLD : '#3a4466'; g.fillRect(x0 + p * 6, 101, 4, 3); }
       // 最大難易度の印（右下）: 何も振らず、まえうしろ・レーンを入れているとき。宝の量・さいしょの はやさ・連敗は関係ない
       // （ページの印と重ならないよう、王冠＋「さいだい」。ランの上の帯と同じ王冠）
-      if (M.isMaxDifficulty(save, cfg)) { const mt = lt('ui.max'), tx = V.w - 3 - B.textW(mt); B.text(g, mt, tx, 99, GOLD, INK); g.drawImage(A.crown, tx - 14, 99); }
+      if (!app.sr && M.isMaxDifficulty(save, cfg)) { const mt = lt('ui.max'), tx = V.w - 3 - B.textW(mt); B.text(g, mt, tx, 99, GOLD, INK); g.drawImage(A.crown, tx - 14, 99); }
       // アンロックのページは、左下に見出し（けはい の代わり）
       if (R.isUnlockPage(cp.page)) B.text(g, lt('ui.unlockPage'), 3, 99, '#2ce8f5', INK);
       // 追いつき（おたからの けはい）: 連敗があれば左下に、出やすさを 3 つの丸で（p を 0.3 ごとに丸める）。上の帯の倍率は罰を含めた値
-      const kp = R.isUnlockPage(cp.page) ? 0 : M.boost(save, cfg);
+      const kp = R.isUnlockPage(cp.page) || app.sr ? 0 : M.boost(save, cfg);
       if (kp > 0) {
         const dots = Math.max(1, Math.min(3, Math.round(kp / 0.3))), kx = 4 + B.textW(lt('ui.kehai')) + 3;
         B.text(g, lt('ui.kehai'), 3, 99, '#feae34', INK);
         for (let i = 0; i < 3; i++) { g.fillStyle = INK; g.fillRect(kx + i * 5 - 1, 100, 5, 5); g.fillStyle = i < dots ? '#feae34' : '#3a4466'; g.fillRect(kx + i * 5, 101, 3, 3); }
       }
     }
+    if (app.sr) button(g, L.quit, lt('sr.quit'), true, app.sr.quit > 0 ? '#e43b44' : WHITE); // スピードラン B: やめる（2 回で）
     if (app.paused) { g.fillStyle = INK; g.fillRect(0, 0, V.w, V.h); centerText(g, lt('ui.pause'), 50, WHITE, INK); }
   }
 
@@ -4913,7 +5065,6 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     }
   }
 
-  const fmtTime = (t) => Math.floor(t / 60) + ':' + String(Math.floor(t % 60)).padStart(2, '0');
 
   R.laneY = laneY;
   R.laneDx = laneDx;
@@ -4921,7 +5072,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 })();
 </script>
 <script>
-// 保存データの読み書き。②の恒久強化（hoppe-dive.meta、検め方は meta.parse）、③の実績（hoppe-dive.records、検め方は achieve.parse）、きろく（hoppe-dive.board、board.parse）、ヒントを見たか（hoppe-dive.tips、parseTips）、言語（hoppe-dive.lang、parseLang）、音のオン・オフ（hoppe-dive.sound、parseSound）、振動のオン・オフ（hoppe-dive.haptics、parseHaptics）。
+// 保存データの読み書き。②の恒久強化（hoppe-dive.meta、検め方は meta.parse）、③の実績（hoppe-dive.records、検め方は achieve.parse）、きろく（hoppe-dive.board、board.parse）、スピードランのタイム（hoppe-dive.speedrun、speedrun.parse）、ヒントを見たか（hoppe-dive.tips、parseTips）、言語（hoppe-dive.lang、parseLang）、音のオン・オフ（hoppe-dive.sound、parseSound）、振動のオン・オフ（hoppe-dive.haptics、parseHaptics）。
 // 読めない・壊れている・版が違うときは最初の状態から始める。書けない（容量・プライベートモード）ときは黙って続ける
 (function () {
   const Game = (window.Game = window.Game || {});
@@ -4940,6 +5091,10 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   const loadBoard = (cfg = Game.config) => Game.board.parse(read(cfg.board.key), cfg);
   const storeBoard = (board, cfg = Game.config) => write(cfg.board.key, board);
+
+  // スピードランのいちばん速いタイム（hoppe-dive.speedrun、speedrun.parse）
+  const loadSpeedrun = (cfg = Game.config) => Game.speedrun.parse(read(cfg.speedrun.key), cfg);
+  const storeSpeedrun = (best, cfg = Game.config) => write(cfg.speedrun.key, best);
 
   // はじめて取ったときの操作の紹介（ヒント）を見たか。{ v, seen: { move: true, lane: true } }（見たものだけ）
   const freshTips = (cfg = Game.config) => ({ v: cfg.tips.version, seen: {} });
@@ -4975,7 +5130,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const loadSound = (cfg = Game.config) => parseSound(read(cfg.audio.key));
   const storeSound = (on, cfg = Game.config) => write(cfg.audio.key, !!on);
 
-  Game.save = { load, store, loadRecords, storeRecords, loadBoard, storeBoard, freshTips, parseTips, loadTips, storeTips, parseLang, loadLang, storeLang, parseHaptics, loadHaptics, storeHaptics, parseSound, loadSound, storeSound };
+  Game.save = { load, store, loadRecords, storeRecords, loadBoard, storeBoard, loadSpeedrun, storeSpeedrun, freshTips, parseTips, loadTips, storeTips, parseLang, loadLang, storeLang, parseHaptics, loadHaptics, storeHaptics, parseSound, loadSound, storeSound };
 })();
 </script>
 <script>
@@ -4991,15 +5146,20 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const q = new URLSearchParams(location.search);
   const T = window.HOPPE_TEST || {};
   const A = Game.achieve;
+  const SR = Game.speedrun;
 
   const app = (Game.app = {
-    mode: 'title',          // title | story | camp | run | tip | countdown | result
+    mode: 'title',          // title | story | camp | run | tip | countdown | result | srResult（スピードラン B の結果）
     tips: null,             // ヒントを見たか（save.parseTips）
     tip: null,              // 今出しているヒント: { queue: ['move', 'lane'] の先頭を出している, t: 出してからの秒 }。ランは止まる
     story: null,            // おはなし: { page, t: その 1 枚を開いてからの秒, from: 'title' | 'camp' }
     save: null,             // ②の保存データ（meta.js）
     rec: null,              // ③の実績の記録（achieve.js）
     board: null,            // きろく（board.js）
+    srBest: null,           // スピードランのいちばん速いタイム（speedrun.js）
+    runClock: null, splitNew: {}, // A: このランの実時間の時計（宝・脱出の区切り）、区切りがいちばん速いか
+    sr: null,               // B（まっさらから通し）の間: { keep: 退けた保存, clock, on: 時計が動いているか, done: 脱出した, quit: やめるの 2 回目を待つ秒, newFull }
+    clockSkip: false,       // 隠れから戻った直後のコマは時計に足さない
     tr: null, maxDiff: false, runAch: [], achFlash: 0, // 1回のランの数え、始めに最大難易度だったか、このランで取った実績、上の帯の印の残り秒
     batGone: {},            // てんじょうの コウモリ: 飛び去った番号 → 時刻（描画だけ。ルールに入れない）
     camp: { page: 0, count: null, msg: null, sel: null, howto: null, boardNew: 0 }, // boardNew: きろくのページで点滅させる行（今のランの順位。0 なし） // howto: あそびかたの見本 { scene: 選んだ場面, t0: 選んだ時刻 } // sel: 実績のページで選んだ実績 // count: 宝の数え上げ { from, to, t, dur, n }、msg: 下に出す知らせ { text, t }
@@ -5035,7 +5195,8 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.bot = q.get('bot') ? makeBot(q.get('bot'), app.rules.seed) : app.bot && app.botForce ? makeBot('near', app.rules.seed) : null;
     app.mode = 'run';
     app.result = null;
-    app.tr = A.tracker(); app.maxDiff = Game.meta.isMaxDifficulty(app.save, cfg); app.runAch = []; app.achFlash = 0; app.batGone = {};
+    app.tr = A.tracker(); app.maxDiff = !app.sr && Game.meta.isMaxDifficulty(app.save, cfg); app.runAch = []; app.achFlash = 0; app.batGone = {};
+    app.runClock = SR.timer(); app.splitNew = {};
     app.acc = 0; app.cmds = []; app.chooseT = 0; app.hitT = 0; app.landT = 0; app.resultT = 0; app.clearT = 0;
     app.clearPath = null; app.escT = 0;
     app.fx.reset();
@@ -5060,7 +5221,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   function tipInput(e) {
     if (!(e.type === 'tap' || e.type === 'key' || e.type === 'cmd' || e.type === 'esc') || app.tip.t < cfg.tips.closeSec) return;
     app.tips.seen[app.tip.queue.shift()] = true;
-    if (!T.noStore) Game.save.storeTips(app.tips, cfg);
+    if (!noStore()) Game.save.storeTips(app.tips, cfg);
     if (app.tip.queue.length) { app.tip.t = 0; sfx({ type: 'camp_page' }); return; }
     app.tip = null;
     app.mode = 'run';
@@ -5081,27 +5242,44 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   }
 
   // ランの終わり: 倍率はランで使った設定で計算してから、宝を足して保存する
+  // スピードラン B の間は、実績・きろく・A のタイムに入れない（宝とアンロックは B のメモリの中の保存に入る）。脱出したら B を終える
   function finishRun() {
-    const s = app.rules;
+    const s = app.rules, sr = app.sr;
     const before = app.save.treasure;
     const p = s.assist.lootBoost || 0; // そのランの追いつきの p（連敗はこのあと applyRun で変わる）
     const mult = Game.meta.multiplier(app.save, cfg, p), final = Game.meta.finalScore(s.score, app.save, cfg, p);
     const gain = Game.meta.applyRun(app.save, s, cfg);
     persist();
-    gainAch(A.update(app.rec, { s, tr: app.tr, maxDiff: app.maxDiff, final, gain: gain.gain }, cfg), true);
+    if (!sr) gainAch(A.update(app.rec, { s, tr: app.tr, maxDiff: app.maxDiff, final, gain: gain.gain }, cfg), true);
     // きろく: ランの終わりに必ず1回入れる
     const d = new Date(), date = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
-    const rank = Game.board.add(app.board, { final, score: s.score, mult, cleared: !!s.cleared, escaped: !!(s.extra && s.extra.escaped), floor: s.floor, t: s.t, date, seed: s.seed }, cfg);
-    if (!T.noStore) Game.save.storeBoard(app.board, cfg);
-    app.result = { mult, final, gain, before, ach: app.runAch.slice(), rank, boost: s.assist.lootBoost || 0 };
+    const rank = sr ? 0 : Game.board.add(app.board, { final, score: s.score, mult, cleared: !!s.cleared, escaped: !!(s.extra && s.extra.escaped), floor: s.floor, t: s.t, date, seed: s.seed }, cfg);
+    if (!noStore()) Game.save.storeBoard(app.board, cfg);
+    // スピードラン A: 入った区切りごとに、いちばん速いタイムと比べる
+    const splits = Object.assign({}, app.runClock.splits);
+    let fast = false;
+    if (!sr) {
+      for (const k of SR_KEYS) if (splits[k] != null && SR.record(app.srBest, 'run', k, { t: splits[k], mult, crown: app.maxDiff, date })) fast = true;
+      if (fast && !T.noStore) Game.save.storeSpeedrun(app.srBest, cfg);
+    }
+    // スピードラン B: 脱出したら終わり。B で保存するのは、いちばん速いタイムだけ
+    if (sr && s.extra && s.extra.escaped) {
+      sr.done = true; sr.newFull = {};
+      for (const k of SR_KEYS) if (sr.clock.splits[k] != null) sr.newFull[k] = SR.record(app.srBest, 'full', k, { t: sr.clock.splits[k], date });
+      if (!T.noStore) Game.save.storeSpeedrun(app.srBest, cfg);
+    }
+    app.result = { mult, final, gain, before, ach: app.runAch.slice(), rank, boost: s.assist.lootBoost || 0, splits, splitNew: sr ? {} : Object.assign({}, app.splitNew), runT: app.runClock.t };
     app.mode = 'result'; app.resultT = 0;
     if (gain.unlocked.length) sfx({ type: 'unlock_new' });
-    else if (rank) sfx({ type: rank === 1 ? 'record_new' : 'record_rank' });
+    else if (rank === 1 || fast) sfx({ type: 'record_new' });
+    else if (rank) sfx({ type: 'record_rank' });
   }
 
   // 保存（確かめ用の HTML では保存しない）
-  function persist() { if (!T.noStore) Game.save.store(app.save, cfg); }
-  function persistRec() { if (!T.noStore) Game.save.storeRecords(app.rec, cfg); }
+  // スピードラン B の間は、差し替えたまっさらな保存なので書かない
+  const noStore = () => !!(T.noStore || app.sr);
+  function persist() { if (!noStore()) Game.save.store(app.save, cfg); }
+  function persistRec() { if (!noStore()) Game.save.storeRecords(app.rec, cfg); }
 
   // ---- 実績 ----
   // 新しく取った実績（記録には付けてある）。ランの最中は上の帯の印と小さな音だけ
@@ -5119,6 +5297,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
   const achMsg = (ids) => Game.lang.t(ids.length > 1 ? 'msg.achMore' : 'msg.ach', { name: Game.lang.t('ach.' + ids[0] + '.name'), n: ids.length - 1 });
 
   function campAch() {
+    if (app.sr) return; // B では実績を数えない
     const ids = A.update(app.rec, { save: app.save }, cfg);
     if (!ids.length) return;
     persistRec();
@@ -5133,7 +5312,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.batGone[b.i] = app.time;
     app.fx.on({ type: 'bat', x: b.x, y: b.y }, app);
     sfx({ type: 'bat' });
-    if (A.grant(app.rec, 'bat')) gainAch(['bat'].concat(A.update(app.rec, {}, cfg))); // コウモリで全部そろったときのため
+    if (!app.sr && A.grant(app.rec, 'bat')) gainAch(['bat'].concat(A.update(app.rec, {}, cfg))); // コウモリで全部そろったときのため
     return true;
   }
 
@@ -5156,7 +5335,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       app.camp.page = Game.render.achPageOf(res.ach[0]); // 実績のページを開く
     }
     // はじめての人（保存データがまっさら）には、あそびかたを開いて見せる
-    if (!res && isFresh()) { app.camp.page = Game.render.howtoPage(); app.camp.howto = { scene: 0, t0: app.time }; }
+    if (!res && !app.sr && isFresh()) { app.camp.page = Game.render.howtoPage(); app.camp.howto = { scene: 0, t0: app.time }; }
     app.result = null;
     campAch(); // 前からの保存データで、もう満たしているもの
   }
@@ -5219,6 +5398,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     leavePage();
     persist();
     sfx({ type: 'camp_go' });
+    if (app.sr) app.sr.on = true; // B の時計は最初の しゅっぱつ から
     start();
   }
 
@@ -5245,6 +5425,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const p = Game.render.toField(e.x, e.y);
     const inR = (r) => p.x >= r.x && p.x < r.x + r.w && p.y >= r.y && p.y < r.y + r.h;
     const ids = Game.render.campIds(app.camp.page), L = Game.render.campLayout(ids.length);
+    if (app.sr && inR(L.quit)) return campQuit();
     if (inR(L.go)) return campGo();
     if (inR(L.prev)) return campPage(-1);
     if (inR(L.next)) return campPage(1);
@@ -5264,6 +5445,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
 
   function updateCamp(dt) {
     const c = app.camp.count;
+    if (app.sr && app.sr.quit > 0) app.sr.quit = Math.max(0, app.sr.quit - dt);
     if (app.camp.msg && app.camp.msg.t > 0) app.camp.msg.t -= dt;
     if (!c) return;
     c.t += dt;
@@ -5281,12 +5463,54 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
       if (e.type === 'levelup_start') app.chooseT = 0;
       if (e.type === 'levelup_land' || e.type === 'land') app.landT = cfg.ui.landSec;
       if (e.type === 'hit') app.hitT = e.fatal ? cfg.ui.hitFreeze : 0.25;
+      if (e.type === 'clear' || e.type === 'escape') onSplit(e.type === 'clear' ? 'treasure' : 'escape');
     }
     // 実績（ランの最中に満たしたもの）
-    if (app.tr && app.rules) {
+    if (app.tr && app.rules && !app.sr) {
       A.observe(app.tr, events);
       gainAch(A.update(app.rec, { s: app.rules, tr: app.tr, maxDiff: app.maxDiff }, cfg));
     }
+  }
+
+  // ---- スピードラン。設計書: docs/specs/2026-11-20-hoppe-dive-speedrun-design.md ----
+  const SR_KEYS = ['treasure', 'escape'];
+  // 宝に着いた・脱出した: ランの時計（A）と B の時計に区切りを入れる。A はいちばん速いか もここで決める（宝の間・脱出の場面に出す。render の drawSplitNow）
+  function onSplit(k) {
+    if (app.runClock && SR.split(app.runClock, k) && !app.sr) { const b = app.srBest.run[k]; app.splitNew[k] = !b || app.runClock.t < b.t; }
+    if (app.sr && app.sr.on) SR.split(app.sr.clock, k);
+  }
+  // 時計を進める（実時間。隠れている間は update まで来ない。戻った直後のコマと 3・2・1 は足さない）
+  function tickClocks(raw) {
+    if (app.clockSkip) { app.clockSkip = false; return; }
+    if (app.mode === 'countdown') return;
+    if (app.runClock && (app.mode === 'run' || app.mode === 'tip')) SR.tick(app.runClock, raw);
+    if (app.sr && app.sr.on && app.sr.clock.splits.escape == null) SR.tick(app.sr.clock, raw); // B は脱出の区切りで止まる（表示とタイムをそろえる）
+  }
+  // B に入る: 今の保存を退けて、まっさらな保存（メモリの中だけ）に差し替える。ヒントは全部見たことにする
+  function enterSpeedrun() {
+    const seen = {};
+    for (const id of cfg.tips.order.concat(cfg.tips.rare)) seen[id] = true;
+    app.sr = { keep: { save: app.save, rec: app.rec, board: app.board, tips: app.tips }, clock: SR.timer(), on: false, done: false, quit: 0, newFull: null };
+    app.save = Game.meta.fresh(cfg); app.rec = A.fresh(cfg); app.board = Game.board.fresh(cfg); app.tips = { v: cfg.tips.version, seen };
+    app.result = null; app.rules = null; app.camp.page = 0;
+    sfx({ type: 'camp_go' });
+    enterCamp();
+  }
+  // B を抜けてタイトルへ（元の保存に戻す）
+  function exitSpeedrun() {
+    const k = app.sr.keep;
+    app.save = k.save; app.rec = k.rec; app.board = k.board; app.tips = k.tips;
+    app.sr = null; app.result = null; app.rules = null; app.runClock = null;
+    app.camp.page = 0; app.camp.msg = null; app.camp.count = null; app.camp.boardNew = 0;
+    app.mode = 'title'; app.fx.reset();
+    sfx({ type: 'camp_page' });
+  }
+  // キャンプの「やめる」: 1 回目は知らせだけ。quitSec 秒のうちにもう 1 回でタイトルへ
+  function campQuit() {
+    if (app.sr.quit > 0) return exitSpeedrun();
+    app.sr.quit = cfg.speedrun.quitSec;
+    app.camp.msg = { text: Game.lang.t('sr.quitAgain'), t: cfg.speedrun.quitSec };
+    sfx({ type: 'camp_deny' });
   }
 
   function pick(i) {
@@ -5327,6 +5551,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     const s = app.rules;
     if (app.mode === 'title') {
       // 右下の JA EN（キーは L）: 言語を切り替えて端末に覚える。その左の電話の絵: 振動のオン・オフ。さらに左のスピーカー: 音のオン・オフ。どれもゲームは始めない
+      if (e.type === 'tap' && inRect(Game.render.toField(e.x, e.y), Game.render.titleLayout().speedrun)) return enterSpeedrun(); // 左下: スピードラン（B）
       if (e.type === 'tap' && inRect(Game.render.toField(e.x, e.y), Game.render.titleLayout().haptics)) return toggleHaptics();
       if (e.type === 'tap' && inRect(Game.render.toField(e.x, e.y), Game.render.titleLayout().sound)) return toggleSound();
       if (e.type === 'lang' || (e.type === 'tap' && inRect(Game.render.toField(e.x, e.y), Game.render.titleLayout().lang))) return toggleLang();
@@ -5336,7 +5561,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (app.mode === 'story') return storyInput(e);
     if (app.mode === 'tip') return tipInput(e);
     if (app.mode === 'camp') return campInput(e);
-    if (app.mode === 'result') { if ((e.type === 'tap' || e.type === 'key') && app.resultT > 0.8) enterCamp(); return; }
+    // B で脱出したランの結果のあとは、キャンプではなく B の結果へ。そのあとタイトルへ
+    if (app.mode === 'result') { if ((e.type === 'tap' || e.type === 'key') && app.resultT > 0.8) { if (app.sr && app.sr.done) { app.mode = 'srResult'; app.resultT = 0; sfx({ type: 'camp_page' }); } else enterCamp(); } return; }
+    if (app.mode === 'srResult') { if ((e.type === 'tap' || e.type === 'key') && app.resultT > 0.8) exitSpeedrun(); return; }
     if (!s) return;
     // ④入れないとき: ヒントが出てから少しあとのタップで結果へ
     if (s.phase === 'clear') {
@@ -5380,19 +5607,21 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.warmDone = Game.patterns.warmStep(app.warm, cfg, () => performance.now() >= end);
   }
 
-  function update(dt) {
+  // raw: 頭打ちのない実時間の秒（スピードランの時計）。省くと dt（テストの手動の刻み）
+  function update(dt, raw = dt) {
     app.time += dt;
     app.fx.update(dt);
     app.audio.music(musicKey());
     app.audio.tick();
     if (app.paused) return;
+    tickClocks(raw);
     warmTick();
     if (app.mode === 'title') { app.titleDist += 40 * dt; return; }
     if (app.mode === 'story') { app.story.t += dt; return; }
     if (app.mode === 'tip') { app.tip.t += dt; return; }
     if (app.mode === 'camp') return updateCamp(dt);
     if (app.mode === 'countdown') { app.countdown -= dt; if (app.countdown <= 0) app.mode = 'run'; return; }
-    if (app.mode === 'result') { app.resultT += dt; return; }
+    if (app.mode === 'result' || app.mode === 'srResult') { app.resultT += dt; return; }
     const s = app.rules;
     if (app.landT > 0) app.landT -= dt;
     if (app.achFlash > 0) app.achFlash -= dt;
@@ -5435,6 +5664,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     if (h) { app.paused = true; return; }
     if (!app.paused) return;
     app.paused = false;
+    app.clockSkip = true; // 隠れていた時間を、戻った直後のコマで時計に入れない
     if (app.mode === 'run' && app.rules && app.rules.phase === 'run') { app.mode = 'countdown'; app.countdown = cfg.ui.countdown; }
   }
 
@@ -5467,6 +5697,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     app.save = T.preset ? presetSave(T.preset) : Game.save.load(cfg);
     app.rec = T.noStore ? A.fresh(cfg) : Game.save.loadRecords(cfg);
     app.board = T.noStore ? Game.board.fresh(cfg) : Game.save.loadBoard(cfg);
+    app.srBest = T.noStore ? SR.fresh(cfg) : Game.save.loadSpeedrun(cfg);
     app.tips = T.noStore ? Game.save.freshTips(cfg) : Game.save.loadTips(cfg);
     const canvas = document.getElementById('c');
     Game.render.init(canvas);
@@ -5482,9 +5713,9 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     document.addEventListener('visibilitychange', () => setHidden(document.hidden));
     let last = performance.now();
     const frame = (now) => {
-      const dt = Math.max(0, Math.min(0.1, (now - last) / 1000));
+      const raw = Math.max(0, (now - last) / 1000), dt = Math.min(0.1, raw);
       last = now;
-      if (!app.manual) update(dt);
+      if (!app.manual) update(dt, raw);
       Game.render.draw(app);
       requestAnimationFrame(frame);
     };
@@ -5508,7 +5739,7 @@ canvas { display: block; width: 100vw; height: 100dvh; image-rendering: pixelate
     start() { start(); },
     nearClear() { nearClear(); },
     camp() { enterCamp(); },
-    reload() { app.save = Game.save.load(cfg); app.rec = Game.save.loadRecords(cfg); app.board = Game.save.loadBoard(cfg); app.tips = Game.save.loadTips(cfg); },
+    reload() { app.save = Game.save.load(cfg); app.rec = Game.save.loadRecords(cfg); app.board = Game.save.loadBoard(cfg); app.tips = Game.save.loadTips(cfg); app.srBest = Game.save.loadSpeedrun(cfg); },
     input: onInput,
     setHidden,
   };
